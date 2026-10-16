@@ -1,0 +1,15 @@
+# ffmpeg tree (shallow clone, upstream master baseline)
+/ffmpeg/
+
+# build artifacts
+*.o
+*.a
+*.so
+*.dylib
+build/
+DerivedData/
+
+# scratch / temp
+*.tmp
+*.log
+.DS_Store
