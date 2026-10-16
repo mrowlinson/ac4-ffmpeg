@@ -84,8 +84,8 @@ ffmpeg additions follow the descriptive pattern only:
 
 ## Owner
 
-No decision needed. Mail still UNSENT; `[OWNER NAME]` fill stays
-owner-only (untouched). If a maintainer ever asks about the
+No decision needed. Mail still UNSENT; owner-name fill done on
+ff/doc-mail1-r2 (this branch). If a maintainer ever asks about the
 `c-ac4enc` banner, point here: independent reimplementation whose
 CLI help reproduces reference wording for compatibility; no
 Dolby SDK/code/bytes in the tool chain or the clips.

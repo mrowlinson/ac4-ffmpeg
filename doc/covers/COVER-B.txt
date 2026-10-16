@@ -30,4 +30,4 @@ independent cleanroom implementation (ETSI TS 103 190-1 V1.4.1 /
 -2 V1.3.1, value-only tables, no Dolby SDK/reference/disassembly).
 AC-4 patent note from Series A applies.
 
-Signed-off-by on each patch: [OWNER NAME] <[OWNER EMAIL]>
+Signed-off-by on each patch: Michael Rowlinson <mrowlinson@gmail.com>
