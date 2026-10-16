@@ -27,10 +27,10 @@ hunks. No out-of-tree link, no extra libs/flags.
 
 - ffmpeg tree: master `3e6cd5e` (raw `ac4` demuxer/muxer already
   upstream; no parser, no `dac4`, no lavc `ac4*`).
-- dec-lib: `0fc894c` tree `d2d641a`
-  (`ff/dec-lib-merged` content, REVIEW-DEC-LIB APPROVE-WRAP;
-  dec-lib/ identical `d505b36..0fc894c`). `core/` is the in-tree
-  port of exactly this rev (see Q1).
+- dec-lib: `7ba72eb` tree `8cdccea`
+  (`ff/dec-cleanfiles-merged` content: ngis-bounds + fuzzfix
+  FINDING-1 fixes in; dec-lib/ identical `018cbf8..7ba72eb`).
+  `core/` is the in-tree port of exactly this rev (see Q1).
 
 ## Q1 resolution (DEC-WRAPDESIGN Q1, CLOSED by `ff/dec-wrap-q1`)
 
@@ -69,7 +69,7 @@ Answer:
   `#include`s, `wiring.patch` OBJS, and sibling comments; include
   guards and dec-lib-provenance `src/*` comments keep the old
   spelling). Nothing else: no hygiene changes, no behavior edits.
-  Provenance pin: dec-lib tree `d2d641a`.
+  Provenance pin: dec-lib tree `8cdccea`.
   The rename dodges `libavcodec/Makefile CLEANFILES =
   *_tables.c *_tables.h` (plus the matching `libavcodec/.gitignore`
   lines), which otherwise deletes the committed sources on `make

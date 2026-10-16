@@ -1,6 +1,6 @@
-From 1837ae6363e1d480af4e600f208f69d2d45ee6c6 Mon Sep 17 00:00:00 2001
+From ccea3d262d0e6b74730dfb3a39b91d95fad98b0f Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
-Date: Fri, 16 Oct 2026 11:31:44 -0400
+Date: Fri, 16 Oct 2026 13:29:25 -0400
 Subject: [PATCH 1/2] avcodec: add native AC-4 decoder core
 
 Vendored streaming decoder core (bit reader, entropy, IMDCT, QMF,
@@ -36,7 +36,7 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  libavcodec/aspx_noise.h  |   39 +
  libavcodec/aspx_tab.c    |  361 ++
  libavcodec/aspx_tab.h    |   95 +
- libavcodec/dec_lib.c     | 7675 ++++++++++++++++++++++++++++++++++++++
+ libavcodec/dec_lib.c     | 7689 ++++++++++++++++++++++++++++++++++++++
  libavcodec/entropy.c     | 1226 ++++++
  libavcodec/entropy.h     |  118 +
  libavcodec/huffman_tab.c | 1153 ++++++
@@ -51,7 +51,7 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  libavcodec/sfb_offsets.h |   34 +
  libavcodec/snf_tab.c     |   69 +
  libavcodec/snf_tab.h     |   38 +
- 24 files changed, 13725 insertions(+)
+ 24 files changed, 13739 insertions(+)
  create mode 100644 libavcodec/ac4_stages.h
  create mode 100644 libavcodec/ac4d.h
  create mode 100644 libavcodec/acpl.c
@@ -2220,10 +2220,10 @@ index 0000000..6ad24c6
 +#endif
 diff --git a/libavcodec/dec_lib.c b/libavcodec/dec_lib.c
 new file mode 100644
-index 0000000..705426e
+index 0000000..e1c5c58
 --- /dev/null
 +++ b/libavcodec/dec_lib.c
-@@ -0,0 +1,7675 @@
+@@ -0,0 +1,7689 @@
 +/*
 + * AC-4 decoder streaming core (in-tree port; CLI/shim stripped at vendor)
 + * Copyright (c) 2026 Michael Rowlinson
@@ -3250,6 +3250,11 @@ index 0000000..705426e
 + * pres ndot. Returns 0 ok, -1 reject (err or cap). */
 +static int br_pres_v1(br_t *b, int rate, int *gis, int *ngi, int *frf,
 +                      int *pver, int *pndot) {
++    /* FUZZ-DEC-1: cfg==6 early path skipped the else block that assigns
++     * ngi and frf, leaving caller stack garbage (UBSan OOB at the gis
++     * row scan). Initialize all outputs up front. */
++    *ngi = 0;
++    *frf = 1;
 +    *pndot = 0;
 +    int single = (int)br_u(b, 1);
 +    int cfg = -1;
@@ -3562,11 +3567,20 @@ index 0000000..705426e
 +        if (br_pres_v1(&b, rate, gis[i], &ngis[i], &frfs[i], &pvers[i],
 +                       &pndots[i]) != 0)
 +            return -1;
++        /* FINDING-1: belt-and-braces — never trust the count against
++         * gis[i][E4_MAXGRP]; over-range fails loud (frame reject). */
++        if (ngis[i] < 0 || ngis[i] > E4_MAXGRP)
++            return -1;
 +        for (int k = 0; k < ngis[i]; k++)
 +            if (gis[i][k] > maxg)
 +                maxg = gis[i][k];
 +    }
 +    if (maxg < 0 || maxg >= E4_MAXGRP)
++        return -1;
++    /* FUZZ-DEC-1: fail loud when the selected presentation carries no
++     * groups (cfg==6 EMDF-only shape). Init alone would yield
++     * bed_si=-1 downstream (sizes[-1] OOB); reject instead. */
++    if (ngis[sel] <= 0)
 +        return -1;
 +    int frfsel = frfs[sel];
 +    if (frfsel < 1 || frfsel > 4)
@@ -13953,9 +13967,10 @@ index 0000000..a393435
 -- 
 2.56.0
 
-From c2c4aefa1c9ae725027d5db35377b2f3e459b962 Mon Sep 17 00:00:00 2001
+
+From 82a49d842221ea4ddf81f46c7358d55d25e26331 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
-Date: Fri, 16 Oct 2026 11:31:44 -0400
+Date: Fri, 16 Oct 2026 13:29:25 -0400
 Subject: [PATCH 2/2] avcodec: wire ff_ac4_decoder
 
 AVCodec wrapper over the 1/2 core: init/decode/flush/close against
