@@ -11,11 +11,11 @@ hunks. No out-of-tree link, no extra libs/flags.
   `libavcodec/ac4dec.c`. UNCHANGED by the Q1 port (it already calls
   only the public `ac4d_*` API; the port swaps the provider, not the
   wrapper logic).
-- `core/` — the 24 vendored dec-lib sources (11 `.c` + 13 `.h`),
-  landing flat in `libavcodec/`. Filenames kept except the 8 static
+- `core/` — the 24 vendored dec-lib sources (11 `.c` + 13 `.h`,
+  `ac4_src.h` included: N5 s5.11 count rules, header-only, no OBJS),  landing flat in `libavcodec/`. Filenames kept except the 8 static
   table files, renamed `*_tables.c/h` → `*_tab.c/h` (zero collisions
   at `3e6cd5e` either way); port delta is headers + CLI strip +
-  that rename (see Q1).
+  that rename + the scripted ASCII map (see Q1).
 - `wiring.patch` — `allcodecs.c` extern + `Makefile` OBJS hunks, vs
   ffmpeg master `3e6cd5e`. Apply with `git apply` inside the tree,
   then copy `ac4dec.c` + `core/*` in. `configure` auto-detects
@@ -27,10 +27,10 @@ hunks. No out-of-tree link, no extra libs/flags.
 
 - ffmpeg tree: master `3e6cd5e` (raw `ac4` demuxer/muxer already
   upstream; no parser, no `dac4`, no lavc `ac4*`).
-- dec-lib: master `2436f47` tree `8e27f25`
-  (`ff/merged: N5fix` content: N5 rate semantics + s5.11 converter
-  + 4-arg flush; N5fix-r2 `a7d1036..63dd7eb`).
-  `core/` is the in-tree port of exactly this rev (see Q1).
+- dec-lib: `2436f47` tree `8e27f25`
+  (`ff/merged` content: FINDING-1 fixes + N5 rate semantics
+  (`ff/dec-n5fix-r2`: base_fs x sf_mult, s5.11 converter, 4-arg
+  flush) in; dec-lib/ identical `63dd7eb..2436f47`).  `core/` is the in-tree port of exactly this rev (see Q1).
 
 ## Q1 resolution (DEC-WRAPDESIGN Q1, CLOSED by `ff/dec-wrap-q1`)
 
@@ -68,8 +68,9 @@ Answer:
   `aspx/huffman/qwin/snf _tables.c/h` → `*_tab.c/h` (with their
   `#include`s, `wiring.patch` OBJS, and sibling comments; include
   guards and dec-lib-provenance `src/*` comments keep the old
-  spelling). Nothing else: no hygiene changes, no behavior edits.
-  Provenance pin: dec-lib tree `8e27f25`.
+  spelling) + the scripted ASCII map (the `5c8740a` 8-char comment
+  map + entropy-tail rule: dec-lib keeps comment UTF-8, `core/`
+  ships pure ASCII). Nothing else: no behavior edits.  Provenance pin: dec-lib tree `8e27f25`.
   The rename dodges `libavcodec/Makefile CLEANFILES =
   *_tables.c *_tables.h` (plus the matching `libavcodec/.gitignore`
   lines), which otherwise deletes the committed sources on `make
@@ -77,9 +78,9 @@ Answer:
 - RE-VENDOR RULE (mechanical): take `dec-lib/src/*` at the new pin
   → apply the delta above (headers, strip, then the rename map
   `s/_tables\./_tab./` on filenames + `#include`s + OBJS + sibling
-  comments only — never on `src/*` provenance or guard macros) →
-  diff against staged `core/` (expect DSP changes only) → update
-  the pin → re-run the full gate table below.
+  comments only — never on `src/*` provenance or guard macros,
+  then the ASCII map) → diff against staged `core/` (expect DSP
+  changes only) → update the pin → re-run the full gate table below.
   Never hand-edit `core/` (generate, then diff); never re-prepend
   headers over headed files (always regenerate from dec-lib source).
 - SUB-ISSUE (already settled): 24-bit packing pinned s16LE+`0x00`
@@ -104,9 +105,10 @@ extras — the Q1 close is visible in the artifact itself.
 - Drain-per-feed loop-until-NEED_MORE (`ac4_drain`): after every
   accepted feed; ready frames wait in a wrapper FIFO. Flush loops
   `ac4d_flush` until NEED_MORE (`ac4_drain_flush`) — never
-  flush-once; flush reports the drained frame's actual count in
-  `fi` (N5 4-arg flush), shape verified against the latch at emit.
-- Process-wide serialization: `static AVMutex ac4d_mutex` around
+  flush-once; flush fills `fi` with the drained frame's actual
+  count (N5 4-arg form), and emit checks read per-frame `fi->spf`
+  against the `get_info` latched max (fractional rows roam the
+  Table-70 pattern at/below it).- Process-wide serialization: `static AVMutex ac4d_mutex` around
   EVERY `ac4d_*` call (REVIEW MAJOR-3; header overclaims MT).
 - Seek = close + reopen (`ac4_decode_flush`): feed-after-flush is
   `AC4D_ERR`, no reset API. Flush drops FIFO/pts/sticky error and
@@ -225,23 +227,27 @@ extras — the Q1 close is visible in the artifact itself.
 
 ## N5 interplay (N5fix LANDED — wrap re-vendored + re-gated)
 
-N5fix is in (`dec-lib` at this pin): the lib reports/stamps
-`base_fs x sf_mult` + s5.11-converter output counts on every fri
-row (e.g. the gpac vector: 48000 Hz, 1601/1602-sample frames,
-5727312 B), and the A0-demux-vs-lib timing contradiction is gone
-(container and lib agree at 48 kHz). `core/` is re-vendored from
-the fixed sources (pin `8e27f25`, + `ac4_src.h`); `wiring.patch`
-is unchanged (no new `.c`).
+N5fix (`ff/dec-n5fix-r2`, dec-lib tree `8e27f25`) is lib-owned: output
+rate = `base_fs x sf_mult` on all fri rows, the s5.11 converter maps
+each internal frame to Table-70 output counts locked to
+`sequence_counter`, and `ac4d_flush` grew a 4th `fi` arg (the drained
+frame's actual count, NULL-ok, keyed by `AC4D_FLUSH_FI`). `get_info`
+reports the latched max; each `get_frame`/`flush` `fi` reports that
+frame's actual count.
 
-The fix changed the lib contract, so the wrapper adapted (not
-pure passthrough): `ac4d_flush` takes the drained frame's `fi`
-(4th arg); per-frame `spf` varies on fractional rows, so the
-latch keeps the `get_info` max and emit checks each frame's
-actual count against it (`frame_size` = max, `nb_samples` =
-actual). Channels still latch once. Gate goldens/refs are
-re-recorded POST bytes (`fate-n5/pins.txt` pins gpac + the
-g-fri2 pair); the gpac tripwire now guards the fixed labels.
-
+The fix changed the lib contract, so the wrapper adapted: `ac4dec.c`
+takes the flush `fi` (the old get-info-after-flush fallback is gone),
+latches `spf` from the `get_info` max instead of the first frame's
+actual count, lets per-frame `spf` roam at/below the max (fractional
+rows), sizes byte checks per frame (`frame_size` = max, `nb_samples` =
+actual), and bumps the drain-scratch max to 8ch x `AC4_SRC_OMAX` 8192.
+Channels still latch once. `wiring.patch` is unchanged (no new `.c`).
+Rate labels stay straight passthrough, now OUTPUT values (gpac: 48000
+Hz, 1601/1602-sample frames, 5727312 B); the A0-demux-vs-lib timing
+contradiction is gone (container and lib agree at 48 kHz). Gate
+goldens/refs are re-recorded POST bytes (`fate-n5/pins.txt` pins gpac +
+the g-fri2 pair); the gpac tripwire now guards the fixed labels. The
+GAP/pace contract is unchanged.
 ## Tracked follow-ups (not this wave)
 
 D5 `priming` + D2 delay/trim (re-vendor + re-gate per the Q1 rule when
