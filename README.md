@@ -2,7 +2,7 @@
 
 Goal: AC-4 decoder for ffmpeg upstream.
 
-Scope: decoder-only.
+Scope: decoder+encoder.
 
 Notes:
 - Plain C port stays in dolby-ac4-cleanroom, untouched.
