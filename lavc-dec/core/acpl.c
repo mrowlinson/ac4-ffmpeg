@@ -35,7 +35,7 @@
 
 #include "acpl.h"
 #include "entropy.h"
-#include "huffman_tables.h"
+#include "huffman_tab.h"
 #include "qmf.h"
 
 /* Table 203: fine alpha (alpha_q 0..32 -> ibeta, dq). */

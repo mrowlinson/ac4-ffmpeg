@@ -31,7 +31,7 @@
 #include <string.h>
 
 #include "qmf.h"
-#include "qwin_tables.h"
+#include "qwin_tab.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846

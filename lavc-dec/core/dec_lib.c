@@ -55,9 +55,9 @@
 #include <unistd.h>
 
 #include "acpl.h"
-#include "aspx_tables.h"
+#include "aspx_tab.h"
 #include "entropy.h"
-#include "huffman_tables.h"
+#include "huffman_tab.h"
 #include "imdct.h"
 #include "qmf.h"
 #include "sfb_offsets.h"

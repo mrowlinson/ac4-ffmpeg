@@ -33,9 +33,9 @@ int ac4e_sgn_n = 0;
 char ac4e_sgn_buf[33];
 long ac4e_frame_no = 0; /* feeds kept SAPDUMP (A-test-hygiene-1) */
 
-#include "huffman_tables.h"
+#include "huffman_tab.h"
 #include "sfb_offsets.h"
-#include "snf_tables.h"
+#include "snf_tab.h"
 
 void ebr_init(ac4_ebr_t *b, const uint8_t *buf, size_t len) {
     b->buf = buf;
@@ -332,7 +332,7 @@ static int grp_maxsfb(const asf_info_t *info, int g) {
 
 /* ---- SNF noise RNG (clause 5.2.8.3 state/step + 5.1.4.2 reseed) ----
  * Own code from the clause pseudocode numbers; table from
- * snf_tables.h (generated). State bytes wrap mod 256 (masked
+ * snf_tab.h (generated). State bytes wrap mod 256 (masked
  * explicitly). The clause step spells two increments in `x = x++`
  * form; read as plain increments (the bare `x++` lines beside them
  * show the author's increment intent; a store-back reading would

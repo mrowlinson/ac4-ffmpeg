@@ -91,7 +91,7 @@ typedef struct {
  * 49-52 DE ABS_0/DIFF_0/ABS_1/DIFF_1) +
  * per-book ASF_HCB_* arrays. Codewords: low LEN bits, MSB first. */
 #if AC4_HAVE_HUFFMAN
-#include "huffman_tables.h" /* e0's header, lands via merge */
+#include "huffman_tab.h" /* e0's header, lands via merge */
 #endif
 
 /* ---- e1-C: entropy decode (followup; e1 wave05 = Python) ----
