@@ -36,10 +36,11 @@ extern "C" {
 
 /* Open-time options (CLI flag mirrors). Zero-init; pointer may be NULL
  * for all defaults. Preselect matches --sel/--pres-index (-1 = default
- * presentation 0). sr_override/ch_override match --sr/--ch (0 = none).
- * bits = 16/24/32f output width (as 16/24/32; 32 means float32).
- * log wires the decode-core diagnostics (stderr in the CLI); NULL =
- * quiet (default). */
+ * presentation 0). sr_override/ch_override match --sr/--ch (0 = none);
+ * sr_override relabels sample_rate only -- output counts stay
+ * stream-determined. bits = 16/24/32f output width (as 16/24/32; 32
+ * means float32). log wires the decode-core diagnostics (stderr in
+ * the CLI); NULL = quiet (default). */
 typedef struct {
     int pres_sel;
     int drc_on;
@@ -56,10 +57,16 @@ typedef struct {
     void *log_u;
 } ac4d_opts;
 
-/* Stream info, valid after the first successful feed (latch). spf =
- * samples/frame/channel. bed_cm = TOC ch_mode. ch_layout_mask uses
- * ffmpeg AV_CH_* bit values (mono 0x4, stereo 0x3, 5.1 0x3F, 7.1 0x63F).
- * real = 1 when the latched class decodes real PCM. */
+/* Stream info, valid after the first successful feed (latch).
+ * sample_rate = OUTPUT (post-s5.11-converter) rate = base_fs x
+ * sf_mult on every fri row (44100/48000 x 1/2/4), or the sr_override
+ * when set. spf = per-frame OUTPUT samples/channel: get_info reports
+ * the latched max (ceil over fractional rows); each get_frame/flush
+ * fi reports that frame's actual count (Table-70 pattern on
+ * fractional rows, constant elsewhere). bed_cm = TOC ch_mode.
+ * ch_layout_mask uses ffmpeg AV_CH_* bit values (mono 0x4, stereo
+ * 0x3, 5.1 0x3F, 7.1 0x63F). real = 1 when the latched class decodes
+ * real PCM. */
 typedef struct {
     int sample_rate, channels, bits, spf;
     int bed_cm;
@@ -75,17 +82,25 @@ int ac4d_feed(ac4d_ctx *c, const uint8_t *pkt, size_t len);
  * out (caller demuxes); AC41 CRC is checked inside. */
 int ac4d_get_frame(ac4d_ctx *c, void *pcm, size_t cap, ac4d_info *fi);
 /* Next ready frame: interleaved s16 (bits=16), 3-byte LE s24 (bits=24),
- * or float32 (bits=32) per the open bits option; channels*spf samples.
- * Returns AC4D_OK / AC4D_NEED_MORE / AC4D_GAP (silence written, note
- * set) / <0 hard error. pcm may be NULL with cap 0 to poll. fi may be
- * NULL. Required cap = channels*spf*(bits/8) (24 -> x3).
+ * or float32 (bits=32) per the open bits option; channels*fi->spf
+ * samples (fi->spf = this frame's actual output count, which varies
+ * on fractional rows -- always read it back, never assume the latched
+ * max). Returns AC4D_OK / AC4D_NEED_MORE / AC4D_GAP (silence written,
+ * note set) / <0 hard error. pcm may be NULL with cap 0 to poll. fi
+ * may be NULL. Required cap = channels*fi->spf*(bits/8) (24 -> x3);
+ * size caller buffers with channels*get_info-spf (the max).
  * Drain contract (H1): call get_frame until AC4D_NEED_MORE after each
  * feed; the instance holds only a few frames, so unbounded undrained
  * feeds fail cleanly with AC4D_ERR (ring overrun), never grow. */
-int ac4d_flush(ac4d_ctx *c, void *pcm, size_t cap);
+/* N5: flush takes fi (the drained frame's actual output count,
+ * NULL-ok). Consumers compiling against both old and new headers can
+ * key on AC4D_FLUSH_FI. */
+#define AC4D_FLUSH_FI 1
+int ac4d_flush(ac4d_ctx *c, void *pcm, size_t cap, ac4d_info *fi);
 /* End of stream: drain the pipeline (skeleton tail, post-pass tails,
  * compand tail, OLA ring). Call repeatedly until AC4D_NEED_MORE; each
- * OK/GAP return emits one trailing frame (same layout as get_frame). */
+ * OK/GAP return emits one trailing frame (same layout as get_frame;
+ * fi carries that frame's actual count, NULL-ok). */
 void ac4d_close(ac4d_ctx *c);
 const char *ac4d_strerror(int rc);
 const char *ac4d_gap_note(const ac4d_ctx *c); /* never NULL after GAP */
