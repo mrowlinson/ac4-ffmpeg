@@ -3,6 +3,7 @@
 Compares byte-exact frames; records neutral divergences separately.
 """
 import csv
+import hashlib
 import math
 import os
 import re
@@ -26,6 +27,32 @@ VEC = os.environ.get("ENC_PARITY_VEC",
 OUT = os.environ.get("ENC_PARITY_OUT",
                      os.path.join(S, "parity-out"))
 TIMEOUT = 180
+GOLDP = os.environ.get(
+    "ENC_PARITY_GOLDENS",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                 "..", "parity", "s5fu_goldens.txt"))
+
+# S5FU-STABLE: stereo cases whose bytes are gain-invariant
+# (coded silence: no spectrum quantized, so x2.0 vs x3.0
+# never materializes). They keep expect="PASS".
+S5FU_STABLE = frozenset([
+    "st_silence_2049.wav",
+    "st_silence_24000.wav",
+    "st_silence_240000.wav",
+    "m8_silence_2049.wav_8stereo",
+])
+
+
+def load_goldens():
+    gold = {}
+    try:
+        for line in open(GOLDP):
+            p = line.split()
+            if len(p) == 2 and not p[0].startswith("#"):
+                gold[p[0]] = p[1]
+    except OSError:
+        pass
+    return gold
 
 
 def iframe_expect(nframes, interval, forced):
@@ -303,6 +330,19 @@ def build_cases():
              fmt="wav", ch=2, layout="stereo", rate=64,
              bake="12.0", expect="BOTH-FAIL"),
     ]
+    # S5FU: the fixed lib (stereo x2.0 DEE staging) must
+    # DIFFER from the frozen x3.0 CLI on stereo spectral
+    # content (identical CBR lengths, clean iframes, golden
+    # lib bytes). Gain-invariant silence keeps PASS.
+    for c in cases:
+        if c["tag"] == "var:refuse-bake60":
+            continue  # m8 fallback BOTH-FAIL pin, not S5FU
+        if c["layout"] == "stereo" and not c.get("neutral") \
+                and "expect" not in c:
+            c["expect"] = "S5FU-FIXED"
+    for c in cases:
+        if c["tag"] in S5FU_STABLE:
+            c["expect"] = "PASS"
     # Neutral divergence docs (not parity).
     for fn, ch, lay, rate in (
             ("st_sweep_24000.wav", 2, "stereo", 64),
@@ -468,6 +508,35 @@ def run_case(i, c):
             return (tag, "FAIL", "%s ndiff=%d first=%d %s" %
                     (detail, nd, off, ifmeta), "")
         return (tag, "FAIL", detail + " " + ifmeta, "")
+    if c.get("expect") == "S5FU-FIXED":
+        # Fixed stereo staging: identical CBR lengths, bytes
+        # must differ (x2.0 refs vs frozen x3.0), iframes
+        # clean, lib bytes match the committed golden.
+        if len(lib) != len(ob):
+            return (tag, "FAIL",
+                    "S5FU-FIXED len %s" % detail, "")
+        if lib == ob:
+            return (tag, "FAIL",
+                    "S5FU-FIXED unmet (identical) %s %s" %
+                    (detail, ifmeta), "")
+        if ifmeta != "iframe-ok":
+            return (tag, "FAIL",
+                    "S5FU-FIXED %s %s" % (detail, ifmeta),
+                    "")
+        nd = sum(1 for a, b in zip(lib, ob) if a != b)
+        gold = load_goldens().get(c["tag"])
+        lh = hashlib.sha256(lib).hexdigest()
+        if gold is None:
+            return (tag, "FAIL",
+                    "S5FU-FIXED golden-missing %s ndiff=%d" %
+                    (detail, nd), "")
+        if lh != gold:
+            return (tag, "FAIL",
+                    "S5FU-FIXED golden-mismatch %s ndiff=%d" %
+                    (detail, nd), "")
+        return (tag, "S5FU-FIXED",
+                "%s ndiff=%d sha=%s" % (detail, nd,
+                                        lh[:16]), "")
     # Divergence-doc case: record stats, never FAIL on bytes.
     if len(lib) == len(ob):
         nd = sum(1 for a, b in zip(lib, ob) if a != b)
@@ -493,8 +562,10 @@ def main():
     npass = sum(1 for r in rows if r[1] == "PASS")
     nboth = sum(1 for r in rows if r[1] == "BOTH-FAIL")
     nahead = sum(1 for r in rows if r[1] == "LIB-AHEAD")
+    ns5fu = sum(1 for r in rows if r[1] == "S5FU-FIXED")
     nfail = sum(1 for r in rows if r[1] not in
                 ("PASS", "BOTH-FAIL", "LIB-AHEAD",
+                 "S5FU-FIXED",
                  "DIVERGE-neutral",
                  "DIVERGE-neutral-LEN"))
     print("BOTH-FAIL (consistent refusal): %d" % nboth)
@@ -502,6 +573,8 @@ def main():
           sum(1 for r in rows if r[1] == "CAUSE-MISMATCH"))
     print("LIB-AHEAD (oracle S1 refusal, lib encodes): %d" %
           nahead)
+    print("S5FU-FIXED (stereo x2.0, golden lib bytes): %d" %
+          ns5fu)
     print("PASS %d/%d, non-parity %d" %
           (npass, sum(1 for r in rows
                       if not r[1].startswith("DIVERGE")), nfail))

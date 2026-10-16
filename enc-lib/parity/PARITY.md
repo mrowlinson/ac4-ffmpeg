@@ -93,10 +93,43 @@ ndiff counts unchanged), **0 CAUSE-MISMATCH**. Only CSV delta
 vs the per-side pins: `var:refuse-bake60`'s detail now also
 carries the R3 `detail=[baked peak gate: ...]` string.
 
+## Rerun (ff/enc-s5fu, S5FU stereo staging, 2026-10-16): 114 runs, 0 non-parity
+
+Root cause (S5-FU): the uniform spectral gain 3.0 is wrong
+for stereo. DEE stages stereo coefficients at x2.0 of the
+forward correlation (pre-IMDCT CODUMP DEE/forward = 1.9934
+on G7 997Hz) and 5.1 at x3.0 (G5 spectral ratio ours/DEE =
+0.99): every stereo file decoded exactly 3/2 (+3.52 dB)
+hot on all correct decoders at the same dialnorm (G7:
+DRP -30.17, frozen CLI -30.12 vs our monly -26.56).
+Fix: `ENC_CORE_DIG_GAIN_STEREO 2.0` at the 6 stereo
+spectral sites (`try_fit`, `try_fit_mixed`,
+legs `quantize_frame`); all 6 multichannel sites keep 3.0.
+Truth check (splice fixed bare frames into sync framing,
+decode with `c-ac4dec`): 997 -30.08 vs DEE -30.12,
+multitone-ext -33.05 vs -33.07, pseudomusic -33.67 vs
+-33.71 (pre-fix: -26.56/-29.53/-30.15).
+
+114 runs (111 + 3 new `st_sine997` pin vectors):
+**34 PASS** (every 5.1/fold-851 case byte-identical — the
+MC staging is untouched — plus 4 gain-invariant stereo
+silences), **69 S5FU-FIXED** (both encode, identical CBR
+lengths, bytes differ, iframes clean, lib bytes match
+`parity/s5fu_goldens.txt`), **3 BOTH-FAIL**,
+**2 LIB-AHEAD**, **6 DIVERGE-neutral**, **0
+CAUSE-MISMATCH**. Stereo neutral ndiffs move with the
+refs (sweep 3329->3059, sparse 279->306, clicks
+2165->2247; silence stays 30, MC unchanged). Unit
+`t_s5fu` pins the constants, the x2.0 legs ratio, and a
+lib-bytes golden. Full unit + battery also pass under
+ASan. The frozen CLI keeps x3.0, so S5FU-FIXED stays the
+expectation until upstream syncs (see VENDOR.md).
+
 ## Matrix (all PASS unless noted)
 
-- Stereo s16 wav: 10 contents x {2049, 0.5s, 5s} + 8
-  length edges (1..96000 samples) + 4 extras = 42 runs.
+- Stereo s16 wav: 11 contents x {2049, 0.5s, 5s} + 8
+  length edges (1..96000 samples) + 4 extras = 45 runs
+  (s5fu adds `sine997` dual-mono).
 - 5.1 s16 wav: 6 contents x {2049, 0.5s, 2s} = 18 runs.
 - Raw stereo s16/s24/f32 (ingest scaling incl. s24
   floor-div and f32 round-half-even clamp) = 8 runs.
@@ -129,9 +162,9 @@ floor flag (when f > 0.3):
 | Case | ndiff/total | frames differing |
 |---|---|---|
 | st_silence_24000 | 30/4779 | 1 (stamp only; gain 0, flat 0 both) |
-| st_sparse_24000 | 279/4779 | 2 |
-| st_clicks_24000 | 2165/4779 | 13 |
-| st_sweep_24000 | 3329/4779 | 13 |
+| st_sparse_24000 | 306/4779 | 2 (s5fu: was 279) |
+| st_clicks_24000 | 2247/4779 | 13 (s5fu: was 2165) |
+| st_sweep_24000 | 3059/4779 | 13 (s5fu: was 3329) |
 | mc_noise_24000 | 7356/9557 | 13 |
 | mc_sweep_96000 | 23713/33451 | 48 |
 
@@ -144,8 +177,9 @@ in the priming frame differ. All else follows the bake gain.
 make && make harness OUTDIR=$SCRATCH && make unit OUTDIR=$SCRATCH
 python3 tests/gen_vectors.py $VECDIR   # or reuse an existing set
 ENC_PARITY_S=$SCRATCH ENC_PARITY_VEC=$VECDIR \
-  python3 tests/parity_run.py   # expect 100 PASS + 3 BOTH-FAIL +
-                                # 2 LIB-AHEAD + 6 neutral, 0 non-parity
+  python3 tests/parity_run.py   # expect 34 PASS + 69 S5FU-FIXED +
+                                # 3 BOTH-FAIL + 2 LIB-AHEAD +
+                                # 6 neutral, 0 non-parity
 ```
 
 Full per-run rows: `parity_results.csv` (copied beside this

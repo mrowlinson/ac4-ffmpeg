@@ -129,3 +129,30 @@ left untouched.
 - m14: file-header comments no longer carry "C port of
   encoder/*.py" provenance (comment-only, no code change;
   deeper behavioral Python notes stay).
+
+## s5fu delta (ff/enc-s5fu: stereo spectral gain, ours)
+
+Behavioral, truthward, intentionally divergent from
+upstream `dolby-ac4-cleanroom` (left untouched,
+read-only oracle):
+
+- `enc_core.h`: new `ENC_CORE_DIG_GAIN_STEREO 2.0`
+  (uniform `ENC_CORE_DIG_GAIN 3.0` kept for
+  multichannel).
+- `enc_core_enc.c`: the 6 stereo spectral sites take
+  the stereo gain (`try_fit` x2, `try_fit_mixed` x2,
+  legs `quantize_frame` x2); the 6 multichannel sites
+  (`try_fit_51`/`try_fit_51_mixed`/long51 packs) keep
+  3.0.
+- `tests/`: unit `t_s5fu` (constants + x2.0 legs
+  ratio + lib-bytes golden), `sine997` vectors,
+  `parity_run.py` `S5FU-FIXED` expectation with
+  `parity/s5fu_goldens.txt` (69 lib-bytes goldens).
+- Upstream follow-up (not done here): cleanroom
+  `encoder/enc.py` `DIG_GAIN` needs the same stereo
+  split (legs/fullband/mixed stereo call sites to
+  2.0), then the C port re-sync; until then the
+  frozen CLI keeps x3.0 and S5FU-FIXED stays the
+  parity expectation for stereo spectral content.
+  `diff` vs upstream gains 6 one-line hunks + the
+  header block on top of the S1/R3/minors deltas.
