@@ -37,7 +37,7 @@ fri-5/6/10/11/12 positives exact pts/dur, B1-NOPTS unvisited
 seek via a byte-seek driver. SUITE-REQUIRED: fri-0-4/7-9
 positives (one first-frame TOC with real mult-info per row
 family: 2-bit rows 2-4, 1-bit rows 0/1/7/8/9) + trio samples.
-Mechanism: timestamp-seek NOPTS pin infeasible —
+Mechanism: timestamp-seek NOPTS pin infeasible --
 seek_frame_generic forward-scans to target, so only byte seeks
 land unvisited; current seek.mak cannot express that.
 
@@ -49,10 +49,7 @@ table/clause number only. Note AC-4 is covered by Dolby patents; this
 submission addresses copyright-clean code only and
 implementers/distributors should consider patent licensing.
 
-Branch state (draft, unposted): ac4/A0-submit@c22b0fe over
-baseline 3e6cd5e (1-commit squash; supersedes ee82042 with the peek
-re-review: bounded two-stage peek + malformed single-probe skip).
-Dev branch ac4/A0-demux-params@bbad279 (adds 38b8721 + bbad279 +
-FATE 2f7e33f).
+Branch state (draft, unposted): ac4/A0-submit-r2@fc4866b over
+baseline 3e6cd5e (1 commit; ASCII-only comments re-cut of c22b0fe).
 
 Signed-off-by: [OWNER NAME] <[OWNER EMAIL]>
