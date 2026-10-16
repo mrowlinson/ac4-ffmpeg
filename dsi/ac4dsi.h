@@ -25,10 +25,22 @@
 extern "C" {
 #endif
 
-/* Error codes (negative returns from ac4dsi_serialize and helpers). */
+/* Error codes (negative returns from ac4dsi_serialize and helpers).
+ * Numeric values match errno EINVAL/ENOSPC so strerror(-rc) also works,
+ * but prefer ac4dsi_strerror() (stable across the sibling libs' mapping).
+ * NOTE vs sibling enc-lib (ac4enc_lib.h H8: only -EINVAL/-ENOMEM/-EIO):
+ * this module keeps a distinct -ENOSPC for short buffers so callers can
+ * tell "retry with the reported size" apart from "bad parameters".
+ * Mapping for shared plumbing: ENOSPC ~ EINVAL-with-size (like enc-lib's
+ * short-buffer -EINVAL + required size); never -ENOMEM/-EIO here. */
 #define AC4DSI_OK      0
 #define AC4DSI_EINVAL (-22)  /* bad parameter / unsupported shape */
 #define AC4DSI_ENOSPC (-28)  /* output buffer too small */
+
+/* Human-readable name for an AC4DSI_* return code ("ok",
+ * "invalid argument / unsupported shape", "output buffer too small",
+ * "unknown error"). Never returns NULL. */
+const char *ac4dsi_strerror(int rc);
 
 #define AC4DSI_DSI_VERSION 1
 #define AC4DSI_MAX_OPAQUE  (255u + 65535u) /* pres_bytes 0xFF escape limit */
@@ -77,7 +89,13 @@ typedef struct {
      * language_tag=NULL for classifier-only. */
     int         b_content_type;     /* Default 1. */
     uint8_t     content_classifier; /* 3 bits. Default 0. */
-    const char *language_tag;       /* Default "en". NULL = no tag. */
+    /* Wire format is ISO 639-1 (2 letters, e.g. "en"), up to 63 bytes.
+     * Default "en". NULL = classifier-only, no tag. lavc-side warning:
+     * container/codec metadata usually carries ISO 639-2 ("eng") — the
+     * caller MUST map 639-2 -> 639-1 before wiring this field; writing
+     * "eng" raw emits a corrupt 3-letter tag, and truncating to "en"
+     * without a table is wrong for codes whose 639-1 differs. */
+    const char *language_tag;
     int de_indicator;               /* Default 1 (all vectors). */
     int immersive_indicator;        /* Default 0 (believer v1 entry: 1). */
     /* --- opaque passthrough (pv >= 2 only) --- */
@@ -108,7 +126,13 @@ int ac4dsi_mode_for_wait_frames(int wait_frames);
  *  out    output buffer (non-NULL), out_cap its size in bytes
  *  out_len receives the payload length in bytes (may be NULL)
  * Returns AC4DSI_OK, AC4DSI_EINVAL (bad/unsupported field), or
- * AC4DSI_ENOSPC (out_cap too small; *out_len still set to needed size). */
+ * AC4DSI_ENOSPC (out_cap too small; *out_len still set to needed size).
+ * Two-call sizing pattern: pass a small/empty buffer, then realloc to
+ * *out_len and retry (validation precedes all writes, so ENOSPC is
+ * purely about sizing — a retry with the reported size cannot fail).
+ * Failure semantics: on EINVAL, out is untouched and *out_len (if any)
+ * is left unchanged; on ENOSPC, out holds the zero-padded partial
+ * payload (out_cap bytes, truncated) and *out_len is the full need. */
 int ac4dsi_serialize(const ac4dsi_stream_t *s, const ac4dsi_pres_t *pres,
                      size_t n_pres, uint8_t *out, size_t out_cap,
                      size_t *out_len);

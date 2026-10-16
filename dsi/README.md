@@ -30,6 +30,13 @@ int rc = ac4dsi_serialize(&s, &p, 1, out, sizeof(out), &len);
   `ac4dsi_pres_set_layout(&p, "stereo" | "5.1")`.
 - `presentation_version >= 2`: `opaque`/`opaque_len` copied verbatim
   under pv/pres_bytes framing (opaque round-trip, never parsed).
+  Rationale: our encoder TOC emits pv=1 only, and the MP4 muxer wraps
+  encoder bytes verbatim, so this path is currently exercised by
+  forward-compat shapes only (believer's pv2 entry pins it byte-exact).
+  It also serves future demux-roundtrip work (re-emit a parsed pv2+
+  block untouched). Kept deliberately; harmless when unused.
+- `language_tag` is wire ISO 639-1 ("en"). lavc metadata is usually
+  639-2 ("eng"): map 639-2 -> 639-1 before wiring (see header).
 - `presentation_version == 0`: rejected (legacy v0, do not emit).
 - Bitrate mode rule: `ac4dsi_mode_for_wait_frames()` (Table E.8).
 - Errors: `AC4DSI_EINVAL` (bad/unsupported field), `AC4DSI_ENOSPC`
@@ -50,8 +57,11 @@ those bits, so emitting them would be unverifiable.
 
 ## Gates
 
-- 3/3 goldens byte-exact (`dashif` 34 B, `livesim2` 34 B, `believer`
-  52 B with pv2-opaque + v1 entries).
+- 4/4 goldens byte-exact (`dashif` 34 B, `livesim2` 34 B, `believer`
+  52 B with pv2-opaque + v1 entries, `uuid` 50 B with program uuid).
+- Boundary pins: 63-char tag (max legal, bytes verbatim), 300 B opaque
+  pres_bytes escape (0xFF + u16), exact-fit / off-by-one, ch_mode 11-14
+  loop, out_len NULL, EINVAL-keeps-len.
 - Warning-clean: `-Wall -Wextra -Wpedantic` (+ `-Werror` in CI shape).
 - Unit negatives pass (NULLs, range violations, pv0, bsv1+prog,
   uuid-without-prog, 64-char tag, small-buffer ENOSPC with size).
