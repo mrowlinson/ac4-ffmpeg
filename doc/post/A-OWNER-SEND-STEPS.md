@@ -1,20 +1,22 @@
 # A-OWNER-SEND-STEPS — Series A decoder post (owner posts)
 
-Final pack re-cut 3, gated 2026-10-16 on master `cc42e2c` (contains
-`b86587f` re-vendored core + `5c8740a` hygiene; re-cut from the merged
-staging, supersedes the `a66f84e` pack). Pre-flight record:
-`doc/post/A-PREFLIGHT-CHECKLIST.md`. Background gates (re-cut 2,
-behavioral, carried via strip-identity proof):
-`doc/post/DEC-POST-CHECKLIST.md`.
+Final pack re-cut 4, gated 2026-10-16 on master `df3f2de`
+(re-vendor-N5 merged: `lavc-dec/` N5-current; supersedes the 606385-B
+re-cut-3 pack, which embeds the PRE-N5 core and is STALE).
+Pre-flight record: `doc/post/A-PREFLIGHT-CHECKLIST.md`.
+Behavioral gates re-proven on these bytes (smoke/F2) or carried via
+byte-identity from the revendor-N5 validation: see the checklist.
 
 Pack: `doc/post/series-A-decoder.mbox` (2 patches vs `3e6cd5e`,
-606385 B) + `doc/covers/COVER-A.txt` (`[PATCH 0/2]`, unchanged).
+620505 B) + `doc/covers/COVER-A.txt` (`[PATCH 0/2]`, N5 note flipped
+to LANDED in this re-cut — the re-cut-3 cover's pending-re-pin prose
+is false against this core).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
 ## 0. Preconditions (all true at gate time)
 
 - P3 confirmed: Series-A letter + decoder-first flip approved. (This
-  file existing on `ff/doc-A-post-r2` with READY-TO-POST = the flip
+  file existing on `ff/doc-A-post-r4` with READY-TO-POST = the flip
   is approved; runbook step 10 still says A0 first — stale, fix later.)
 - NOTHING sent yet: no SENT marker in repo; Series A and mail-1 both
   unsent. No suite/sample wait for this series (zero sample deps).
@@ -34,18 +36,21 @@ git send-email --to=ffmpeg-devel@ffmpeg.org \
   send/0000 send/0001 send/0002
 ```
 
+(`mailsplit` takes the attached `-o` form and needs the dir to exist;
+bare `-o send/` fails on this git — see `A-SENDSTEPS-NITFIX.md`.)
+
 Expected send order / threading:
 
 1. `[PATCH 0/2] native AC-4 decoder for raw .ac4 streams` (cover)
-2. `[PATCH 1/2] avcodec: add native AC-4 decoder core` (24 files:
-   Makefile OBJS + 23 core, builds inert under undefined
-   CONFIG_AC4_DECODER)
+2. `[PATCH 1/2] avcodec: add native AC-4 decoder core` (25 files:
+   Makefile OBJS + 24 core incl. new `ac4_src.h` s5.11 count header,
+   builds inert under undefined CONFIG_AC4_DECODER)
 3. `[PATCH 2/2] avcodec: wire ff_ac4_decoder` (ac4dec.c + allcodecs.c)
 
-Expect benign informational 8bit warnings from `git send-email`
-(3 non-ASCII lines total, no MIME headers in mbox: 1 em-dash in a
-1/2 code comment + the 2 long-carried cover em-dashes) — sends
-fine. The `entropy.c` whitespace wart is GONE (hygiene re-cut).
+Expect ZERO 8bit warnings from `git send-email`: mbox + cover are
+pure ASCII in this re-cut (the carried FINDING-1 em-dash is gone via
+the re-vendor ASCII map; the 2 cover em-dashes transliterated with
+the N5-note flip). No MIME headers in the mbox.
 Verify the archive/outbox shows 0/2 + 1/2 + 2/2 threaded
 in order, then record the Message-IDs + date in the checklist copy.
 
