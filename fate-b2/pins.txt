@@ -1,0 +1,11 @@
+# B2 pins validated vs merged dec-lib (ff/dec-b2; shim from d505b36).
+# Format: slot | sample sha256 | ref/pin sha256 | bytes | verdict
+# Samples: pack=ff-samples-pack (mail 1), built=ff-mak-samples (mail 2).
+stereo    | 254c7ebc319e43c93af835f19f9524fe0fcea625cbc3db5245f58a7087f95089 | 5fe8ef4c0748dc507c51ef1fb1d6f90bb65d6a12194c945224c09ac4201bb4ae | 16384 | PIN-OK
+51        | 0e7cf65e2c16e26bd5b308ab0a579e284afaf4448ef84334feb9013faf3b4a70 | 354f6e0cfb6179ec4dd82d3986475fe1bfca34ac5e8d16edfd52ec3235ad12c6 | 49152 | PIN-OK
+crc-bad   | 527fac3f4cae8e4c87bf931fd9af27652bd05fef5f8a14fce28d205b17dd8402 | 2ee1ade1b1bd4af89a3175225bee8d9aeb7834492a747d062e64b64f35ee0176 | 8192  | PIN-OK
+stereo51  | ace6ffc9657f7fbfe8c19167d741568ee3ae3dcd9cf37b342878bc999abcf776 | d91a4274aaae8a448568f7484f975a7f47c25cc5aa430ed9ba1867fdb80c2564 | 49152 | PIN-OK
+impulse   | 52a44f38348b20445599b7cf4b338aeb05a8c5393f617099a51704733fa02c32 | bab2cb61d61283c61826503f95d30f85b8c5246ab63af2abb3acb67250517c68 | 40960 | PIN-OK
+seek-slice| n/a (derived) | 2ee1ade1b1bd4af89a3175225bee8d9aeb7834492a747d062e64b64f35ee0176 | 8192 | PROP-OK (== stereo-ref 2nd half == crc-bad-ref)
+gap-trunc | e54faf833dcdfaa717748cdf007510a714dbdf7fd9d3b5fedda0f5121691f9b1 | lib: exit 3 note=no-sync, no output | 500 | LIB-OK (wrapper asserts SUITE-GATED)
+garbage   | b6c0fe397f4b8c644cd6e48beafddba62a637ac9086282bf5b008bd891075f10 | lib: exit 3 note=no-sync, no output | 1024 | LIB-OK (REF re-confirm SUITE-GATED)
