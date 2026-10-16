@@ -12,8 +12,10 @@ hunks. No out-of-tree link, no extra libs/flags.
   only the public `ac4d_*` API; the port swaps the provider, not the
   wrapper logic).
 - `core/` — the 23 vendored dec-lib sources (11 `.c` + 12 `.h`),
-  landing flat in `libavcodec/`. Filenames kept (zero collisions at
-  `3e6cd5e`); port delta is headers + CLI strip only (see Q1).
+  landing flat in `libavcodec/`. Filenames kept except the 8 static
+  table files, renamed `*_tables.c/h` → `*_tab.c/h` (zero collisions
+  at `3e6cd5e` either way); port delta is headers + CLI strip +
+  that rename (see Q1).
 - `wiring.patch` — `allcodecs.c` extern + `Makefile` OBJS hunks, vs
   ffmpeg master `3e6cd5e`. Apply with `git apply` inside the tree,
   then copy `ac4dec.c` + `core/*` in. `configure` auto-detects
@@ -46,10 +48,11 @@ Q1's exact text (DEC-WRAPDESIGN.md §8):
 
 Answer:
 
-- WHERE: in-tree, `libavcodec/` flat, same filenames (zero
-  collisions at `3e6cd5e`), built under `CONFIG_AC4_DECODER` with no
-  defines and no extra flags — the `AC4D_LIB_ONLY` behavior (no
-  `main`, callback logging) is unconditional in the ported copy.
+- WHERE: in-tree, `libavcodec/` flat, same filenames except the 8
+  table files below (zero collisions at `3e6cd5e`), built under
+  `CONFIG_AC4_DECODER` with no defines and no extra flags — the
+  `AC4D_LIB_ONLY` behavior (no `main`, callback logging) is
+  unconditional in the ported copy.
 - WHO OWNS: snapshot-vendoring, i.e. (b) before upstream acceptance
   and (a) after. Until the patch lands upstream, dec-lib stays
   authoritative for DSP and `core/` is a pinned snapshot, re-ported
@@ -61,11 +64,22 @@ Answer:
   (title = original title verbatim, DSI-L3 precedent) + `dec_lib.c`
   `AC4D_LIB_ONLY` strip (39 CLI/shim spans deleted, 2 lib spans
   spliced inline; guards verified else-free) + one provenance line
-  atop `dec_lib.c`. Nothing else: no renames, no hygiene changes,
-  no behavior edits. Provenance pin: dec-lib tree `d2d641a`.
+  atop `dec_lib.c` + rename of the 8 static table files
+  `aspx/huffman/qwin/snf _tables.c/h` → `*_tab.c/h` (with their
+  `#include`s, `wiring.patch` OBJS, and sibling comments; include
+  guards and dec-lib-provenance `src/*` comments keep the old
+  spelling). Nothing else: no hygiene changes, no behavior edits.
+  Provenance pin: dec-lib tree `d2d641a`.
+  The rename dodges `libavcodec/Makefile CLEANFILES =
+  *_tables.c *_tables.h` (plus the matching `libavcodec/.gitignore`
+  lines), which otherwise deletes the committed sources on `make
+  clean`; `*_tab` follows the in-tree `ac3tab`/`aactab` precedent.
 - RE-VENDOR RULE (mechanical): take `dec-lib/src/*` at the new pin
-  → apply the delta above → diff against staged `core/` (expect DSP
-  changes only) → update the pin → re-run the full gate table below.
+  → apply the delta above (headers, strip, then the rename map
+  `s/_tables\./_tab./` on filenames + `#include`s + OBJS + sibling
+  comments only — never on `src/*` provenance or guard macros) →
+  diff against staged `core/` (expect DSP changes only) → update
+  the pin → re-run the full gate table below.
   Never hand-edit `core/` (generate, then diff); never re-prepend
   headers over headed files (always regenerate from dec-lib source).
 - SUB-ISSUE (already settled): 24-bit packing pinned s16LE+`0x00`

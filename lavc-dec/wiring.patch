@@ -9,10 +9,10 @@ index 249b0fe..5343357 100644
 +# AC-4 decoder: wrapper + vendored dec-lib streaming core (in-tree port,
 +# Q1 closed; re-vendor rule in lavc-dec/README.md). No extra libs/flags.
 +OBJS-$(CONFIG_AC4_DECODER)             += ac4dec.o dec_lib.o entropy.o imdct.o \
-+                                          huffman_tables.o sfb_offsets.o \
-+                                          snf_tables.o aspx_tables.o \
++                                          huffman_tab.o sfb_offsets.o \
++                                          snf_tab.o aspx_tab.o \
 +                                          aspx_noise.o acpl.o qmf.o \
-+                                          qwin_tables.o
++                                          qwin_tab.o
  OBJS-$(CONFIG_ACELP_KELVIN_DECODER)    += g729dec.o lsp.o celp_filters.o acelp_filters.o acelp_pitch_delay.o acelp_vectors.o g729postfilter.o
  OBJS-$(CONFIG_AGM_DECODER)             += agm.o jpegquanttables.o
  OBJS-$(CONFIG_AHX_DECODER)             += mpegaudiodec_float.o

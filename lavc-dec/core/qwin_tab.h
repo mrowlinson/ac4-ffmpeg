@@ -1,5 +1,5 @@
 /*
- * qwin_tables.h - AC-4 decoder core (in-tree port of dec-lib)
+ * qwin_tab.h - AC-4 decoder core (in-tree port of dec-lib)
  * Copyright (c) 2026 Michael Rowlinson
  *
  * This file is part of FFmpeg.

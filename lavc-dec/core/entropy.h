@@ -30,7 +30,7 @@
  * Scope: mono/stereo SIMPLE ASF, 48k family, long + short blocks.
  * Stereo M/S + SAP application rides a followup (parse positions
  * exact here; application math = survey-coupling/clause-5.3 lane).
- * SNF: Table 42 + clause 5.1.4.2 implemented (snf_tables.h RNG
+ * SNF: Table 42 + clause 5.1.4.2 implemented (snf_tab.h RNG
  * table); AC4E_SNF retained for API compat, no longer returned.
  */
 #ifndef AC4_ENTROPY_H
