@@ -168,11 +168,11 @@ zero content change), with the E-track tail as the anchor:
 - Insert fate-b2/ac4.mak lines 151-369 (16 test stanzas + F6
   gates + F6 comment, byte-verbatim, single-blank separators)
   immediately BEFORE the `fate-ac4:` aggregate line. Do NOT land
-  lines 1-150 (draft header, staging-only), 371-417 (parser
-  staging block), or 422 (the staged file's own `fate-ac4:`).
+  lines 1-150 (draft header, staging-only), 371-420 (parser
+  staging block), or 425 (the staged file's own `fate-ac4:`).
 - Land the B2 wiring with the other wiring lines, just above the
   aggregate: `# --- B2 wiring (decode/demux only; ENC terms
-  re-added at C4) ---` + staged line 420 (`FATE_SAMPLES_AVCONV +=
+  re-added at C4) ---` + staged line 423 (`FATE_SAMPLES_AVCONV +=
   $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes)`).
 - The ONE aggregate gains the B2 vars (E vars first):
   `fate-ac4: $(FATE_AC4_MPEGTS_PMT-yes)

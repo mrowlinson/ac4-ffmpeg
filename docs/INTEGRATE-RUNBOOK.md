@@ -345,11 +345,11 @@ tests/Makefile, single aggregate, 18/18 tests expand):
 3. Insert fate-b2/ac4.mak lines 151-369 (16 test stanzas + F6
    gates + F6 comment, byte-verbatim, single-blank separators)
    immediately BEFORE the aggregate line. Do NOT land lines
-   1-150 (draft header, staging-only), 371-417 (parser staging
-   block), or 422 (the staged file's own `fate-ac4:` line).
+   1-150 (draft header, staging-only), 371-420 (parser staging
+   block), or 425 (the staged file's own `fate-ac4:` line).
 4. Land the B2 wiring with the other wiring lines, just above the
    aggregate: `# --- B2 wiring (decode/demux only; ENC terms
-   re-added at C4) ---` + staged line 420 (`FATE_SAMPLES_AVCONV +=
+   re-added at C4) ---` + staged line 423 (`FATE_SAMPLES_AVCONV +=
    $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes)`).
 5. Extend the ONE aggregate with the B2 vars (E vars first):
    `fate-ac4: $(FATE_AC4_MPEGTS_PMT-yes)
