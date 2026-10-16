@@ -96,6 +96,20 @@ int ac4dsi_pres_set_layout(ac4dsi_pres_t *p, const char *layout)
     return AC4DSI_EINVAL;
 }
 
+const char *ac4dsi_strerror(int rc)
+{
+    switch (rc) {
+    case AC4DSI_OK:
+        return "ok";
+    case AC4DSI_EINVAL:
+        return "invalid argument / unsupported shape";
+    case AC4DSI_ENOSPC:
+        return "output buffer too small";
+    default:
+        return "unknown error";
+    }
+}
+
 int ac4dsi_mode_for_wait_frames(int wait_frames)
 {
     if (wait_frames == 0)
@@ -107,7 +121,9 @@ int ac4dsi_mode_for_wait_frames(int wait_frames)
 
 /* Fixed v1 synthesis constants for the observed stereo/5.1 shape. */
 #define V1_CFG_SINGLE_GROUP 0x1Fu
-#define V1_TMP_SIZE 64u /* plenty: 18 B typical, tag<=63 -> <= 26 B */
+/* Worst case: 114 fixed bits + 63 tag bytes + align + 8 tail = 632 bits
+ * = 79 B, so 80 leaves 1 B margin. (Each tag byte adds a full byte.) */
+#define V1_TMP_SIZE 80u
 
 static size_t v1_cstrlen(const char *s)
 {
@@ -287,12 +303,18 @@ int ac4dsi_serialize(const ac4dsi_stream_t *s, const ac4dsi_pres_t *pres,
             v.over = 0;
             v1_write(&v, p);
             if (v.over || (v.nbits & 7u) != 0u)
-                return AC4DSI_EINVAL; /* cannot happen: checked shape */
+                return AC4DSI_EINVAL; /* defensive: v1_check bounds the
+                                       * shape to <= 79 B, so v1tmp (80 B)
+                                       * cannot overflow; kept in case the
+                                       * synthesis shape ever grows */
             pb = v.nbits >> 3;
             bw_put(&w, 1, 8);
             if (pb < 255u) {
                 bw_put(&w, (uint32_t)pb, 8);
             } else {
+                /* Dead today: pb <= 79 < 255 by the bound above. Kept
+                 * symmetric with the opaque path (where the escape is
+                 * live) so a future larger v1 shape stays correct. */
                 bw_put(&w, 255, 8);
                 bw_put(&w, (uint32_t)(pb - 255u), 16);
             }
