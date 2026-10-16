@@ -205,7 +205,7 @@ static void flush_storm(ac4d_ctx *c, rng_t *r, int n) {
         } else if (w == 1) {
             cap = rbelow(r, 100);
         }
-        int rc = ac4d_flush(c, pp, cap);
+        int rc = ac4d_flush(c, pp, cap, NULL);
         Gflushes++;
         if (rc == 1 && rbelow(r, 2))
             break; /* sometimes keep storming past NEED_MORE */
