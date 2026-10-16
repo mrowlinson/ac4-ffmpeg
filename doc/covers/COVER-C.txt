@@ -135,4 +135,4 @@ f36f407/f07df7f/e6f99ec/e017d9b/1ccd10a). Re-cut of r3
 all 11, ordered dates. Stereo md5 86828e84.. (98193 B), 5.1 md5
 53a44aca..; #extradata stereo 0xb7a30a0b, fold8 0xbafa0ae9.
 
-Signed-off-by on each patch: [OWNER NAME] <[OWNER EMAIL]>
+Signed-off-by on each patch: Michael Rowlinson <mrowlinson@gmail.com>

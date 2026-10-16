@@ -77,4 +77,4 @@ FATE); re-cut of r2 (fcc9dbe): sign-offs, 80-col, ASCII, 4/6-6/6
 append to the Series C tests/fate/ac4.mak. 6/6 build standalone,
 all three fates PASS.
 
-Signed-off-by on each patch: [OWNER NAME] <[OWNER EMAIL]>
+Signed-off-by on each patch: Michael Rowlinson <mrowlinson@gmail.com>
