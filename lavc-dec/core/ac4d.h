@@ -1,5 +1,5 @@
 /*
- * ac4d.h — streaming AC-4 decoder library API (opaque context).
+ * ac4d.h -- streaming AC-4 decoder library API (opaque context).
  * Copyright (c) 2026 Michael Rowlinson
  *
  * This file is part of FFmpeg.
@@ -19,7 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/* ac4d.h — streaming AC-4 decoder library API (opaque context).
+/* ac4d.h -- streaming AC-4 decoder library API (opaque context).
  *
  * Refactored from the c-ac4dec batch decoder (single TU, all-static) into
  * a heap-instance streaming API for ffmpeg integration. Design:
@@ -111,7 +111,7 @@ void ac4d_close(ac4d_ctx *c);
 const char *ac4d_strerror(int rc);
 const char *ac4d_gap_note(const ac4d_ctx *c); /* never NULL after GAP */
 int ac4d_get_info(const ac4d_ctx *c, ac4d_info *i);
-/* (design §1 names this ac4d_info; renamed: C forbids sharing the
+/* (design Sec. 1 names this ac4d_info; renamed: C forbids sharing the
  * name with the ac4d_info struct type) */
 
 #ifdef __cplusplus

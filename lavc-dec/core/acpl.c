@@ -1,5 +1,5 @@
 /*
- * acpl.c — A-CPL data parse + diff-decode + dequant (duet3-dec-writerB).
+ * acpl.c -- A-CPL data parse + diff-decode + dequant (duet3-dec-writerB).
  * Copyright (c) 2026 Michael Rowlinson
  *
  * This file is part of FFmpeg.
@@ -19,7 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/* acpl.c — A-CPL data parse + diff-decode + dequant (duet3-dec-writerB).
+/* acpl.c -- A-CPL data parse + diff-decode + dequant (duet3-dec-writerB).
  * Own code from ETSI P1 Tables 61/63/64/65 (syntax), Pseudocode 8
  * (book select), Pseudocode 121 (diff decode), Tables 203-206
  * (dequant). Probe phase: parse + print (alpha_dq, beta_dq); QMF

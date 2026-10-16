@@ -1,5 +1,5 @@
 /*
- * entropy.h — ASF spectral-frontend decode: sf_info + sections +
+ * entropy.h -- ASF spectral-frontend decode: sf_info + sections +
  * Copyright (c) 2026 Michael Rowlinson
  *
  * This file is part of FFmpeg.
@@ -19,7 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/* entropy.h — ASF spectral-frontend decode: sf_info + sections +
+/* entropy.h -- ASF spectral-frontend decode: sf_info + sections +
  * spectral + scalefactors + noise-fill + ungrouping -> per-window coeffs.
  *
  * Lane e3-pcm, wave6. Behavior pins (own words): ETSI P1 Tables
