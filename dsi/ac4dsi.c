@@ -81,9 +81,10 @@ void ac4dsi_pres_init_v1(ac4dsi_pres_t *p)
     p->immersive_indicator = 0;
 }
 
-/* lavc channel_layout mask -> DSI channel trio (DSI-12). Row order is
- * the stereo/5.1 pair the lavc encoder wrapper accepts; keep in sync
- * with the ac4dsi_chmask_t enum. */
+/* lavc channel_layout mask -> DSI channel trio (DSI-12). The accepted
+ * stereo/5.1 pair is golden-pinned (0x60f = lavc's SIDE 5POINT1; 0x3f
+ * BACK stays EINVAL: no wire vectors pin it); keep in sync with the
+ * ac4dsi_chmask_t enum. */
 const ac4dsi_layout_map_t ac4dsi_layout_map[AC4DSI_N_LAYOUTS] = {
     { AC4DSI_CHMASK_STEREO, 0, 1, 0x000001u },
     { AC4DSI_CHMASK_5POINT1, 1, 4, 0x000047u },
@@ -139,43 +140,9 @@ int ac4dsi_mode_for_wait_frames(int wait_frames)
     return 3;
 }
 
-size_t ac4dsi_v1_taglen(const char *s)
-{
-    size_t n = 0;
-    if (!s)
-        return 0;
-    while (s[n] != '\0')
-        n++;
-    return n;
-}
-
-/* Validate one v1 presentation's parameters. Shared with the PutBitContext
- * emitter (ac4dsi_priv.h) so both agree on legality. */
-int ac4dsi_v1_check(const ac4dsi_pres_t *p)
-{
-    size_t taglen;
-    if (p->md_compat > 7u)
-        return AC4DSI_EINVAL;
-    if (p->b_presentation_id && p->presentation_id > 31u)
-        return AC4DSI_EINVAL;
-    if (p->ch_mode > 31u)
-        return AC4DSI_EINVAL;
-    /* 11-14 need back/top modifier bits; no wire vectors pin them. */
-    if (p->ch_mode >= 11u && p->ch_mode <= 14u)
-        return AC4DSI_EINVAL;
-    if (p->channel_groups > 0x3FFFFu)
-        return AC4DSI_EINVAL;
-    if (p->content_classifier > 7u)
-        return AC4DSI_EINVAL;
-    taglen = ac4dsi_v1_taglen(p->language_tag);
-    if (taglen > AC4DSI_MAX_LANG)
-        return AC4DSI_EINVAL;
-    if ((p->de_indicator & ~1) != 0 || (p->immersive_indicator & ~1) != 0)
-        return AC4DSI_EINVAL;
-    if ((p->b_presentation_id & ~1) != 0 || (p->b_content_type & ~1) != 0)
-        return AC4DSI_EINVAL;
-    return AC4DSI_OK;
-}
+/* Validation (ac4dsi_v1_taglen, ac4dsi_v1_check, ac4dsi_stream_check)
+ * lives header-static in ac4dsi_priv.h, shared with the PutBitContext
+ * emitter so both agree on legality. */
 
 /* Write one synthesized v1 block (no pv/pb framing). w must have room. */
 static void v1_write(bitwriter_t *w, const ac4dsi_pres_t *p)
@@ -227,33 +194,6 @@ static void v1_write(bitwriter_t *w, const ac4dsi_pres_t *p)
     bw_put(w, 0, 4); /* reserved */
     bw_put(w, 0, 1); /* no extended presentation id */
     bw_put(w, 0, 1); /* pad */
-}
-
-int ac4dsi_stream_check(const ac4dsi_stream_t *s, size_t n_pres)
-{
-    if (n_pres < 1u || n_pres > AC4DSI_MAX_PRES)
-        return AC4DSI_EINVAL;
-    if (s->bitstream_version > 127u)
-        return AC4DSI_EINVAL;
-    if (s->fs_index > 1u || s->frame_rate_index > 15u)
-        return AC4DSI_EINVAL;
-    /* Table E.8 defines modes 1-3 only (DSI-15). */
-    if (s->bit_rate_mode == 0u || s->bit_rate_mode > 3u)
-        return AC4DSI_EINVAL;
-    /* Mode 2 (ABR) without a target rate is the init-default footgun:
-     * reject so a caller that forgot s.bit_rate fails loudly instead of
-     * emitting mode-2/rate-0 (DSI-7). Mode 3 (VBR) with rate 0 stays
-     * legal: wild vectors carry unknown rate. */
-    if (s->bit_rate_mode == 2u && s->bit_rate == 0u)
-        return AC4DSI_EINVAL;
-    if ((s->b_program_id & ~1) != 0 || (s->b_uuid & ~1) != 0)
-        return AC4DSI_EINVAL;
-    /* Program-id block exists on the wire only when bsv > 1. */
-    if (s->bitstream_version <= 1u && (s->b_program_id || s->b_uuid))
-        return AC4DSI_EINVAL;
-    if (!s->b_program_id && s->b_uuid)
-        return AC4DSI_EINVAL;
-    return AC4DSI_OK;
 }
 
 int ac4dsi_serialize(const ac4dsi_stream_t *s, const ac4dsi_pres_t *pres,

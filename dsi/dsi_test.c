@@ -149,8 +149,10 @@ static void test_opaque_escape(void)
 static void test_layout_masks(void)
 {
     /* Exotics: near-misses and real lavc layouts we must NOT map.
-     * 0x3f is the trap: AV_CH_LAYOUT_5POINT1_BACK (the wrapper takes
-     * the 0x60f SIDE variant, so 0x3f must stay EINVAL here too). */
+     * 0x3f is the trap: AV_CH_LAYOUT_5POINT1_BACK (accepted 5.1 is the
+     * 0x60f SIDE variant from lavc's own AV_CHANNEL_LAYOUT_5POINT1
+     * definition + goldens; BACK has no wire vectors, so it stays
+     * EINVAL — same policy as ch_mode 11-14). */
     static const uint64_t exotics[] = {
         0x0ULL, 0x1ULL, 0x2ULL, 0x4ULL /* mono */, 0x7ULL,
         0x33ULL /* quad */, 0x3fULL /* 5.1-back */,
