@@ -1,6 +1,7 @@
 /* unit.c: API-misuse negatives + _m-vs-original equivalence.
  * Exit 0 all pass; prints FAIL lines otherwise. Built to scratch. */
 #include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +9,8 @@
 
 #include "../src/ac4enc_lib.h"
 #include "../src/enc_core.h"
+
+#include <pthread.h>
 
 static int fails = 0;
 
@@ -233,11 +236,877 @@ t_equiv(void)
     }
 }
 
+/* M2: every option field validated at open. */
+static void
+t_open_neg2(void)
+{
+    ac4enc_ctx_t *c = NULL;
+    ac4enc_opts_t o;
+    ac4enc_drc_mode_t modes[1];
+    ac4enc_drc_t drc;
+    memset(&o, 0, sizeof o);
+    o.layout = "stereo";
+    o.rate_kbps = 64;
+    o.ns2_tone = 1;
+    o.shorts = 1;
+    o.priming = 1;
+    o.iframe_total = -1;
+    o.target_db = -24.0;
+    o.has_measure = 1;
+    o.m_db = -20.0;
+    o.f_flat = 0.1;
+    o.tf_tone = 0.9;
+    o.in_peak = 100;
+    CHECK(ac4enc_open(&c, &o) == 0, "neg2 baseline opens");
+    ac4enc_close(c);
+    c = NULL;
+    o.interval = "abc";
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "garbage interval rejected");
+    o.interval = "1";
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "interval step 1 rejected");
+    o.interval = "48";
+    CHECK(ac4enc_open(&c, &o) == 0, "decimal interval ok");
+    ac4enc_close(c);
+    c = NULL;
+    o.interval = NULL;
+    o.has_bake = 1;
+    o.bake_db = NAN;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "NaN bake_db rejected");
+    o.bake_db = 3.0;
+    CHECK(ac4enc_open(&c, &o) == 0, "explicit bake ok");
+    ac4enc_close(c);
+    c = NULL;
+    o.has_bake = 0;
+    o.f_flat = NAN;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "NaN f_flat rejected");
+    o.f_flat = 0.1;
+    o.tf_tone = NAN;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "NaN tf_tone rejected");
+    o.tf_tone = 0.9;
+    o.in_peak = -1;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "negative in_peak rejected");
+    o.in_peak = 100;
+    o.has_d_peak = 1;
+    o.d_peak = -2.0;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "negative d_peak rejected");
+    o.d_peak = NAN;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "NaN d_peak rejected");
+    o.d_peak = 100.0;
+    CHECK(ac4enc_open(&c, &o) == 0, "d_peak ok");
+    ac4enc_close(c);
+    c = NULL;
+    o.has_d_peak = 0;
+    o.has_bake = 2;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "has_bake=2 rejected");
+    o.has_bake = 0;
+    o.has_measure = 2;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "has_measure=2 rejected");
+    o.has_measure = 1;
+    o.has_bake = 1;
+    o.has_measure = 0;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "bake without measure rejected");
+    o.has_bake = 0;
+    o.has_measure = 1;
+    o.layout = "5.1";
+    o.rate_kbps = 128;
+    o.joint_shorts = 1;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "mc joint_shorts rejected");
+    o.joint_shorts = 0;
+    o.priming = 0;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "mc priming=0 rejected");
+    o.priming = 1;
+    o.layout = "stereo";
+    o.rate_kbps = 64;
+    o.sample_rate = 44100;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "44100 rejected");
+    o.sample_rate = 48000;
+    CHECK(ac4enc_open(&c, &o) == 0, "48000 ok");
+    ac4enc_close(c);
+    c = NULL;
+    o.sample_rate = 0;
+    o.has_spec_lines = 1;
+    o.n_spec_lines = 8;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "8 spec lines rejected");
+    o.n_spec_lines = 1;
+    o.spec_lines[0] = 2048;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "spec line 2048 rejected");
+    o.spec_lines[0] = -1;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "spec line -1 rejected");
+    o.spec_lines[0] = 100;
+    CHECK(ac4enc_open(&c, &o) == 0, "spec line ok");
+    ac4enc_close(c);
+    c = NULL;
+    o.has_spec_lines = 0;
+    memset(modes, 0, sizeof modes);
+    drc.eac3 = 0;
+    drc.modes = modes;
+    drc.nmodes = 0;
+    o.drc = &drc;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "drc nmodes=0 rejected");
+    drc.nmodes = 1;
+    modes[0].mid = 0;
+    modes[0].kind = 99;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "drc bad kind rejected");
+    modes[0].kind = AC4ENC_DRC_DEFAULT;
+    drc.eac3 = 8;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "drc eac3=8 rejected");
+    drc.eac3 = 0;
+    modes[0].mid = 9;
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "drc mid=9 rejected");
+    modes[0].mid = 0;
+    CHECK(ac4enc_open(&c, &o) == 0, "drc default ok");
+    ac4enc_close(c);
+    c = NULL;
+    o.drc = NULL;
+}
+
+/* M1: strerror/subcode/stage/frame detail. */
+static void
+t_diag(void)
+{
+    ac4enc_ctx_t *c = NULL;
+    ac4enc_opts_t o;
+    static uint8_t ob[AC4ENC_OUTCAP_SAFE];
+    int pcm[2048];
+    const int *rows[2] = { pcm, pcm };
+    size_t olen = 0;
+    CHECK(!strcmp(ac4enc_strerror(0), "ok"), "strerror ok");
+    CHECK(!strcmp(ac4enc_strerror(1), "frame ready"),
+          "strerror ready");
+    CHECK(!strcmp(ac4enc_strerror(-EINVAL),
+                  "invalid argument or option"),
+          "strerror einval");
+    CHECK(!strcmp(ac4enc_strerror(-ENOMEM),
+                  "out of memory"),
+          "strerror enomem");
+    CHECK(!strcmp(ac4enc_strerror(-EIO), "encode failure"),
+          "strerror eio");
+    CHECK(!strcmp(ac4enc_strerror(-9999), "unknown"),
+          "strerror unknown");
+    CHECK(!strcmp(ac4enc_subcode_str(AC4ENC_EBAKE_PEAK),
+                  "baked peak overflow"),
+          "subcode str");
+    CHECK(ac4enc_err_sub(NULL) == AC4ENC_EOK,
+          "null sub ok");
+    CHECK(ac4enc_err_frame(NULL) == -1, "null frame -1");
+    memset(&o, 0, sizeof o);
+    memset(pcm, 0, sizeof pcm);
+    o.layout = "stereo";
+    o.rate_kbps = 64;
+    o.ns2_tone = 1;
+    o.shorts = 1;
+    o.priming = 1;
+    o.iframe_total = -1;
+    o.target_db = -24.0;
+    o.has_measure = 1;
+    o.m_db = -20.0;
+    o.f_flat = 0.1;
+    o.tf_tone = 0.9;
+    o.in_peak = 100;
+    CHECK(ac4enc_open(&c, &o) == 0, "diag open");
+    CHECK(ac4enc_err_sub(c) == AC4ENC_EOK, "sub ok");
+    CHECK(!strcmp(ac4enc_err_stage(c), "-"),
+          "stage dash");
+    CHECK(ac4enc_encode_frame(c, rows, NULL, 0, NULL) ==
+              -EINVAL,
+          "diag short");
+    CHECK(ac4enc_err_sub(c) == AC4ENC_ESHORTBUF,
+          "sub shortbuf");
+    CHECK(!strcmp(ac4enc_err_stage(c), "feed"),
+          "stage feed");
+    CHECK(ac4enc_encode_frame2(c, rows, ob, sizeof ob,
+                               &olen, NULL) == 1,
+          "diag emits after short");
+    ac4enc_close(c);
+    /* Bake overflow refusal carries subcode + stage. */
+    c = NULL;
+    o.has_bake = 1;
+    o.bake_db = 40.0;
+    CHECK(ac4enc_open(&c, &o) == 0, "diag bake open");
+    pcm[0] = INT_MAX;
+    CHECK(ac4enc_encode_frame2(c, rows, ob, sizeof ob,
+                               &olen, NULL) == -EIO,
+          "bake overflow eio");
+    CHECK(ac4enc_err_sub(c) == AC4ENC_EBAKE_OVERFLOW,
+          "sub bake overflow");
+    CHECK(!strcmp(ac4enc_err_stage(c), "feed"),
+          "stage feed bake");
+    CHECK(ac4enc_encode_frame2(c, rows, ob, sizeof ob,
+                               &olen, NULL) == -EIO,
+          "sticky after eio");
+    ac4enc_close(c);
+    /* Baked-peak refusal at end. */
+    c = NULL;
+    o.bake_db = 6.0;
+    CHECK(ac4enc_open(&c, &o) == 0, "diag peak open");
+    for (int k = 0; k < 2048; k++)
+        pcm[k] = 20000;
+    CHECK(ac4enc_encode_frame2(c, rows, ob, sizeof ob,
+                               &olen, NULL) == 1,
+          "peak feeds");
+    CHECK(ac4enc_encode_tail2(c, rows, 100, ob, sizeof ob,
+                              &olen, NULL) == -EIO,
+          "peak refused at tail");
+    CHECK(ac4enc_err_sub(c) == AC4ENC_EBAKE_PEAK,
+          "sub bake peak");
+    CHECK(!strcmp(ac4enc_err_stage(c), "tail"),
+          "stage tail");
+    ac4enc_close(c);
+}
+
+/* M5: runtime self-check green in a normal build. */
+static void
+t_fp(void)
+{
+    CHECK(ac4enc_fp_ok() == 1, "fp env ok");
+}
+
+/* M7: reset reuses the ctx (same bytes, clears errors). */
+static void
+t_reset(void)
+{
+    ac4enc_ctx_t *c = NULL;
+    ac4enc_opts_t o;
+    static uint8_t a[AC4ENC_OUTCAP_SAFE * 4];
+    static uint8_t b[AC4ENC_OUTCAP_SAFE * 4];
+    static uint8_t ob[AC4ENC_OUTCAP_SAFE];
+    int pcm[2048];
+    const int *rows[2] = { pcm, pcm };
+    size_t na = 0, nb = 0, olen = 0;
+    memset(&o, 0, sizeof o);
+    for (int k = 0; k < 2048; k++)
+        pcm[k] = (k * 37) % 1000 - 500;
+    o.layout = "stereo";
+    o.rate_kbps = 64;
+    o.ns2_tone = 1;
+    o.shorts = 1;
+    o.priming = 1;
+    o.iframe_total = -1;
+    o.target_db = -24.0;
+    o.has_measure = 1;
+    o.m_db = -20.0;
+    o.f_flat = 0.1;
+    o.tf_tone = 0.9;
+    o.in_peak = 500;
+    CHECK(ac4enc_open(&c, &o) == 0, "reset open");
+    CHECK(ac4enc_encode_frame2(c, rows, ob, sizeof ob,
+                               &olen, NULL) == 1,
+          "reset feeds");
+    memcpy(a + na, ob, olen);
+    na += olen;
+    CHECK(ac4enc_encode_tail2(c, rows, 100, ob, sizeof ob,
+                              &olen, NULL) == 1,
+          "reset tails");
+    memcpy(a + na, ob, olen);
+    na += olen;
+    for (;;) {
+        int frc = ac4enc_flush2(c, ob, sizeof ob, &olen,
+                                NULL);
+        if (frc <= 0) {
+            CHECK(frc == 0, "reset drains");
+            break;
+        }
+        memcpy(a + na, ob, olen);
+        na += olen;
+    }
+    CHECK(ac4enc_reset(c) == 0, "reset ok");
+    CHECK(ac4enc_encode_frame2(c, rows, ob, sizeof ob,
+                               &olen, NULL) == 1,
+          "reset refeeds");
+    memcpy(b + nb, ob, olen);
+    nb += olen;
+    CHECK(ac4enc_encode_tail2(c, rows, 100, ob, sizeof ob,
+                              &olen, NULL) == 1,
+          "reset retails");
+    memcpy(b + nb, ob, olen);
+    nb += olen;
+    for (;;) {
+        int frc = ac4enc_flush2(c, ob, sizeof ob, &olen,
+                                NULL);
+        if (frc <= 0)
+            break;
+        memcpy(b + nb, ob, olen);
+        nb += olen;
+    }
+    CHECK(na == nb && !memcmp(a, b, na),
+          "reset same bytes");
+    CHECK(ac4enc_reset(NULL) == -EINVAL,
+          "reset null rejected");
+    ac4enc_close(c);
+}
+
+/* M8: max_packet query + pinning (no emit exceeds it). */
+static void
+t_maxpacket(void)
+{
+    CHECK(ac4enc_max_packet(64) == 342, "max64");
+    CHECK(ac4enc_max_packet(768) == 4096, "max768");
+    CHECK(ac4enc_max_packet(48) > 0, "max48 sane");
+    CHECK(ac4enc_max_packet(0) == -EINVAL, "max0 bad");
+    CHECK(ac4enc_max_packet(-1) == -EINVAL, "maxneg bad");
+    CHECK(AC4ENC_OUTCAP_SAFE >=
+              (size_t)ac4enc_max_packet(768),
+          "safe covers max");
+}
+
+/* Strip sync+size+trailer -> bare frames. Bytes or -1. */
+static int
+strip_blob(const uint8_t *blob, int n, uint8_t *out,
+           size_t outcap, int *nframes)
+{
+    int pos = 0, nf = 0;
+    size_t wpos = 0;
+    while (pos < n) {
+        int len;
+        if (pos + 6 > n)
+            return -1;
+        if (blob[pos] != 0xAC || blob[pos + 1] != 0x41)
+            return -1;
+        len = (blob[pos + 2] << 8) | blob[pos + 3];
+        if (pos + 4 + len + 2 > n)
+            return -1;
+        if (wpos + (size_t)len > outcap)
+            return -1;
+        memcpy(out + wpos, blob + pos + 4, (size_t)len);
+        wpos += (size_t)len;
+        nf++;
+        pos += 4 + len + 2;
+    }
+    *nframes = nf;
+    return (int)wpos;
+}
+
+/* Encode rows through the lib (measured opts + optional lines).
+ * Collects bytes+flags; returns total or -1 (lib failed). */
+static int
+lib_run(const ac4enc_opts_t *o, const int *const *pi,
+        const double *const *pf, int nch, int ns,
+        uint8_t *out, size_t outcap, int *flags,
+        int flagcap, int *pinmax)
+{
+    ac4enc_ctx_t *c = NULL;
+    static uint8_t pkt[AC4ENC_OUTCAP_SAFE];
+    int full = ns / AC4ENC_FRAME_SAMPLES;
+    int rem = ns % AC4ENC_FRAME_SAMPLES;
+    int nf = 0, maxp;
+    size_t wpos = 0;
+    if (ac4enc_open(&c, o))
+        return -1;
+    maxp = ac4enc_max_packet(o->rate_kbps);
+    for (int f = 0; f < full; f++) {
+        size_t olen = 0;
+        int is_if = 0, erc;
+        if (pf) {
+            const double *rr[6];
+            for (int ch = 0; ch < nch; ch++)
+                rr[ch] = pf[ch] + f * AC4ENC_FRAME_SAMPLES;
+            erc = ac4enc_encode_frame_f2(c, rr, pkt,
+                                         sizeof pkt, &olen,
+                                         &is_if);
+        } else {
+            const int *rr[6];
+            for (int ch = 0; ch < nch; ch++)
+                rr[ch] = pi[ch] + f * AC4ENC_FRAME_SAMPLES;
+            erc = ac4enc_encode_frame2(c, rr, pkt,
+                                       sizeof pkt, &olen,
+                                       &is_if);
+        }
+        if (erc < 0) {
+            ac4enc_close(c);
+            return -1;
+        }
+        if (erc == 1) {
+            if (pinmax && (int)olen > maxp)
+                *pinmax = (int)olen;
+            if (wpos + olen > outcap || nf >= flagcap) {
+                ac4enc_close(c);
+                return -1;
+            }
+            memcpy(out + wpos, pkt, olen);
+            wpos += olen;
+            flags[nf++] = is_if;
+        }
+    }
+    if (rem > 0) {
+        size_t olen = 0;
+        int is_if = 0, erc;
+        if (pf) {
+            const double *rr[6];
+            for (int ch = 0; ch < nch; ch++)
+                rr[ch] = pf[ch] + full * AC4ENC_FRAME_SAMPLES;
+            erc = ac4enc_encode_tail_f2(c, rr, rem, pkt,
+                                        sizeof pkt, &olen,
+                                        &is_if);
+        } else {
+            const int *rr[6];
+            for (int ch = 0; ch < nch; ch++)
+                rr[ch] = pi[ch] + full * AC4ENC_FRAME_SAMPLES;
+            erc = ac4enc_encode_tail2(c, rr, rem, pkt,
+                                      sizeof pkt, &olen,
+                                      &is_if);
+        }
+        if (erc < 0) {
+            ac4enc_close(c);
+            return -1;
+        }
+        if (erc == 1) {
+            if (pinmax && (int)olen > maxp)
+                *pinmax = (int)olen;
+            if (wpos + olen > outcap || nf >= flagcap) {
+                ac4enc_close(c);
+                return -1;
+            }
+            memcpy(out + wpos, pkt, olen);
+            wpos += olen;
+            flags[nf++] = is_if;
+        }
+    }
+    for (;;) {
+        size_t olen = 0;
+        int is_if = 0, frc;
+        frc = ac4enc_flush2(c, pkt, sizeof pkt, &olen,
+                            &is_if);
+        if (frc < 0) {
+            ac4enc_close(c);
+            return -1;
+        }
+        if (frc == 0)
+            break;
+        if (pinmax && (int)olen > maxp)
+            *pinmax = (int)olen;
+        if (wpos + olen > outcap || nf >= flagcap) {
+            ac4enc_close(c);
+            return -1;
+        }
+        memcpy(out + wpos, pkt, olen);
+        wpos += olen;
+        flags[nf++] = is_if;
+    }
+    ac4enc_close(c);
+    /* packed: bytes | nf<<24 (bufs < 16MB, nf < 256) */
+    return (int)wpos | (nf << 24);
+}
+
+/* M6: priming=0 joint path — bytes + count + flags vs core. */
+static void
+t_prim0(void)
+{
+    static uint8_t libb[1 << 20], coreb[1 << 20];
+    static uint8_t core[1 << 20];
+    unsigned s = 777;
+    int ns = 5000;
+    int lens[2] = { ns, ns };
+    int *ich[2];
+    int flags[16], expect[16], set[16];
+    int librc, nb, nf, nset, pinmax = 0;
+    ac4enc_opts_t o;
+    ac4enc_measure_t m;
+    enc_core_measure_t cm;
+    double *dL;
+    int nl, sl[7];
+    for (int ch = 0; ch < 2; ch++) {
+        ich[ch] = malloc((size_t)ns * sizeof *ich[ch]);
+        for (int k = 0; k < ns; k++)
+            ich[ch][k] = (int)(rnd(&s) % 20000) - 10000;
+    }
+    CHECK(ac4enc_measure2((const int *const *)ich, lens,
+                          2, &m) == 0,
+          "prim0 measure");
+    dL = malloc((size_t)ns * sizeof *dL);
+    for (int k = 0; k < ns; k++)
+        dL[k] = (double)ich[0][k];
+    memset(&o, 0, sizeof o);
+    o.layout = "stereo";
+    o.rate_kbps = 64;
+    o.interval = "1sec";
+    o.ns2_tone = 1;
+    o.shorts = 1;
+    o.priming = 0;
+    o.iframe_base = 0;
+    o.iframe_total = -1;
+    o.target_db = -24.0;
+    o.has_measure = 1;
+    o.m_db = m.m_db;
+    o.f_flat = m.f_flat;
+    o.tf_tone = m.tf_tone;
+    o.in_peak = m.in_peak;
+    CHECK(ac4enc_spectral_lines(dL, ns, &m, -24.0, 0, 0.0,
+                                &nl, sl) == 0,
+          "prim0 lines");
+    o.has_spec_lines = 1;
+    o.n_spec_lines = nl;
+    memcpy(o.spec_lines, sl, sizeof sl);
+    free(dL);
+    cm.m_db = m.m_db;
+    cm.f_flat = m.f_flat;
+    cm.tf_tone = m.tf_tone;
+    cm.in_peak = m.in_peak;
+    cm.d_peak = m.d_peak;
+    cm.has_d_peak = m.has_d_peak;
+    nb = enc_core_encode_pcm_m(
+        ich[0], ns, ich[1], ns, 64, "stereo", "1sec",
+        "zero", NULL, 1, 1, -24.0, 0, 0.0, 0, NULL, 0,
+        "manual", NULL, NULL, 0, 0, -1, &cm, core,
+        sizeof core);
+    librc = lib_run(&o, (const int *const *)ich, NULL, 2,
+                    ns, libb, sizeof libb, flags, 16,
+                    &pinmax);
+    if (nb < 0 || librc < 0) {
+        CHECK(nb < 0 && librc < 0,
+              "prim0 both refuse together");
+    } else {
+        int libnf = librc >> 24, libn = librc & 0xFFFFFF;
+        int coren = strip_blob(core, nb, coreb,
+                               sizeof coreb, &nf);
+        CHECK(coren >= 0 && libn == coren &&
+                  !memcmp(libb, coreb, (size_t)libn),
+              "prim0 bytes");
+        CHECK(libnf == nf, "prim0 count");
+        nset = enc_core_joint_iframes(nf, 0, nf, "1sec",
+                                      NULL, 0, set);
+        CHECK(nset >= 0, "prim0 recompute");
+        for (int k = 0; k < 16; k++)
+            expect[k] = 0;
+        for (int k = 0; k < nset; k++)
+            if (set[k] >= 0 && set[k] < nf)
+                expect[set[k]] = 1;
+        CHECK(libnf == nf &&
+                  !memcmp(flags, expect,
+                          (size_t)nf * sizeof *flags),
+              "prim0 flags");
+        CHECK(pinmax == 0, "prim0 pinning");
+    }
+    /* Explicit total == default resolution for base 0. */
+    o.iframe_total = 3;
+    librc = lib_run(&o, (const int *const *)ich, NULL, 2,
+                    ns, libb, sizeof libb, flags, 16,
+                    NULL);
+    nb = enc_core_encode_pcm_m(
+        ich[0], ns, ich[1], ns, 64, "stereo", "1sec",
+        "zero", NULL, 1, 1, -24.0, 0, 0.0, 0, NULL, 0,
+        "manual", NULL, NULL, 0, 0, 3, &cm, core,
+        sizeof core);
+    if (nb < 0 || librc < 0) {
+        CHECK(nb < 0 && librc < 0,
+              "prim0exp both refuse");
+    } else {
+        int libnf = librc >> 24, libn = librc & 0xFFFFFF;
+        int coren = strip_blob(core, nb, coreb,
+                               sizeof coreb, &nf);
+        CHECK(coren >= 0 && libn == coren && libnf == nf &&
+                  !memcmp(libb, coreb, (size_t)libn),
+              "prim0exp bytes");
+    }
+    free(ich[0]);
+    free(ich[1]);
+}
+
+/* B1: two contexts encoding concurrently (threads) match
+ * each other and a sequential reference. */
+struct conc_arg {
+    const int *rows[2];
+    int ns;
+    ac4enc_opts_t opts;
+    uint8_t *out;
+    int *flags;
+    int rc;
+};
+
+static void *
+conc_run(void *arg)
+{
+    struct conc_arg *a = arg;
+    /* out sized 1MB by the caller; flags 64. */
+    a->rc = lib_run(&a->opts,
+                    (const int *const *)a->rows, NULL, 2,
+                    a->ns, a->out, 1 << 20, a->flags, 64,
+                    NULL);
+    return NULL;
+}
+
+static void
+t_concurrent(void)
+{
+    static uint8_t ref[1 << 20], o1[1 << 20],
+        o2[1 << 20];
+    static int fref[64], f1[64], f2[64];
+    unsigned s = 31337;
+    int ns = 6000;
+    int lens[2] = { ns, ns };
+    int *ich[2];
+    struct conc_arg a1, a2;
+    pthread_t t1, t2;
+    int rrc;
+    ac4enc_opts_t o;
+    ac4enc_measure_t m;
+    for (int ch = 0; ch < 2; ch++) {
+        ich[ch] = malloc((size_t)ns * sizeof *ich[ch]);
+        for (int k = 0; k < ns; k++)
+            ich[ch][k] = (int)(rnd(&s) % 20000) - 10000;
+    }
+    CHECK(ac4enc_measure2((const int *const *)ich, lens,
+                          2, &m) == 0,
+          "conc measure");
+    memset(&o, 0, sizeof o);
+    o.layout = "stereo";
+    o.rate_kbps = 96;
+    o.interval = "1sec";
+    o.ns2_tone = 1;
+    o.shorts = 1;
+    o.joint_shorts = 1;
+    o.priming = 1;
+    o.iframe_total = -1;
+    o.target_db = -24.0;
+    o.has_measure = 1;
+    o.m_db = m.m_db;
+    o.f_flat = m.f_flat;
+    o.tf_tone = m.tf_tone;
+    o.in_peak = m.in_peak;
+    rrc = lib_run(&o, (const int *const *)ich, NULL, 2,
+                  ns, ref, sizeof ref, fref, 64, NULL);
+    CHECK(rrc >= 0, "conc reference");
+    a1.rows[0] = ich[0];
+    a1.rows[1] = ich[1];
+    a1.ns = ns;
+    a1.opts = o;
+    a1.out = o1;
+    a1.flags = f1;
+    a1.rc = -1;
+    a2 = a1;
+    a2.out = o2;
+    a2.flags = f2;
+    CHECK(pthread_create(&t1, NULL, conc_run, &a1) == 0,
+          "conc spawn1");
+    CHECK(pthread_create(&t2, NULL, conc_run, &a2) == 0,
+          "conc spawn2");
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+    CHECK(a1.rc >= 0 && a2.rc >= 0, "conc both ok");
+    if (rrc >= 0 && a1.rc >= 0 && a2.rc >= 0) {
+        int rn = rrc & 0xFFFFFF, n1 = a1.rc & 0xFFFFFF,
+            n2 = a2.rc & 0xFFFFFF;
+        CHECK(rn == n1 && rn == n2 &&
+                  !memcmp(ref, o1, (size_t)rn) &&
+                  !memcmp(ref, o2, (size_t)rn),
+              "conc bytes match");
+        CHECK(!memcmp(fref, f1, sizeof fref) &&
+                  !memcmp(fref, f2, sizeof fref),
+              "conc flags match");
+    }
+    free(ich[0]);
+    free(ich[1]);
+}
+
+/* B2: incremental lib == whole-stream core across a matrix
+ * (layouts x domains x targets x shorts x joint x priming x
+ * lengths), bytes + count + flags; pinning on every frame. */
+static void
+t_increquiv(void)
+{
+    static uint8_t libb[1 << 20], coreb[1 << 20];
+    static uint8_t core[1 << 20];
+    static const int nss[] = { 1, 2047, 2048, 2049,
+                               5000, 9000 };
+    unsigned s = 90210;
+    for (int vi = 0; vi < 14; vi++) {
+        int nch = vi % 3 == 2 ? 6 : 2;
+        int is_f = (vi / 3) % 2;
+        int t0 = (vi / 6) % 2;
+        int joint = vi == 9 || vi == 10;
+        int prim0 = vi == 11 || vi == 12;
+        int short0 = vi == 13;
+        int ns = nss[vi % 6];
+        int lens[6];
+        int *ich[6];
+        double *fch[6];
+        double *dL = NULL;
+        int nl = 0, sl[7];
+        ac4enc_opts_t o;
+        ac4enc_measure_t m;
+        enc_core_measure_t cm;
+        int flags[64], expect[64], set[64];
+        int librc, nb = -2, nf = 0, coren, nset;
+        int libnf, libn, pinmax = 0;
+        double target = t0 ? 0.0 : -24.0;
+        int rate = nch == 2 ? 64 : 128;
+        if (joint && nch != 2)
+            continue;
+        if (prim0 && (nch != 2 || is_f))
+            continue;
+        for (int ch = 0; ch < nch; ch++) {
+            lens[ch] = ns;
+            ich[ch] =
+                malloc((size_t)ns * sizeof *ich[ch]);
+            fch[ch] =
+                malloc((size_t)ns * sizeof *fch[ch]);
+            for (int k = 0; k < ns; k++) {
+                int v =
+                    (int)(rnd(&s) % 20000) - 10000;
+                ich[ch][k] = v;
+                fch[ch][k] = (double)v +
+                    (rnd(&s) % 1000) / 1000.0;
+            }
+        }
+        if (is_f)
+            CHECK(ac4enc_measure2_f(
+                      (const double *const *)fch, lens,
+                      nch, &m) == 0,
+                  "increq measure");
+        else
+            CHECK(ac4enc_measure2(
+                      (const int *const *)ich, lens, nch,
+                      &m) == 0,
+                  "increq measure");
+        memset(&o, 0, sizeof o);
+        o.layout = nch == 2 ? "stereo" : "5.1";
+        o.rate_kbps = rate;
+        o.interval = vi % 2 ? "48" : "1sec";
+        o.ns2_tone = 1;
+        o.shorts = short0 ? 0 : 1;
+        o.joint_shorts = joint ? 1 : 0;
+        o.priming = prim0 ? 0 : 1;
+        o.iframe_base = 0;
+        o.iframe_total = -1;
+        o.target_db = target;
+        o.has_measure = 1;
+        o.m_db = m.m_db;
+        o.f_flat = m.f_flat;
+        o.tf_tone = m.tf_tone;
+        o.in_peak = m.in_peak;
+        o.d_peak = m.d_peak;
+        o.has_d_peak = m.has_d_peak;
+        if (nch == 2) {
+            /* H6 lines over L (exact-double for int). */
+            const double *Lr;
+            if (is_f) {
+                Lr = fch[0];
+            } else {
+                dL = malloc((size_t)ns * sizeof *dL);
+                for (int k = 0; k < ns; k++)
+                    dL[k] = (double)ich[0][k];
+                Lr = dL;
+            }
+            if (ac4enc_spectral_lines(Lr, ns, &m, target,
+                                      0, 0.0, &nl,
+                                      sl) == 0) {
+                o.has_spec_lines = 1;
+                o.n_spec_lines = nl;
+                memcpy(o.spec_lines, sl, sizeof sl);
+            }
+            free(dL);
+            dL = NULL;
+        }
+        cm.m_db = m.m_db;
+        cm.f_flat = m.f_flat;
+        cm.tf_tone = m.tf_tone;
+        cm.in_peak = m.in_peak;
+        cm.d_peak = m.d_peak;
+        cm.has_d_peak = m.has_d_peak;
+        if (nch == 2 && !is_f)
+            nb = enc_core_encode_pcm_m(
+                ich[0], ns, ich[1], ns, rate, "stereo",
+                o.interval, "zero", NULL, 1, o.shorts,
+                target, 0, 0.0, o.joint_shorts, NULL, 0,
+                "manual", NULL, NULL, o.priming, 0, -1,
+                &cm, core, sizeof core);
+        else if (nch == 2)
+            nb = enc_core_encode_pcm_f_m(
+                fch[0], ns, fch[1], ns, rate, "stereo",
+                o.interval, "zero", NULL, 1, o.shorts,
+                target, 0, 0.0, o.joint_shorts, NULL, 0,
+                "manual", NULL, NULL, o.priming, 0, -1,
+                &cm, core, sizeof core);
+        else if (!is_f)
+            nb = enc_core_encode_pcm_mc_m(
+                (const int *const *)ich, lens, rate,
+                o.interval, "zero", NULL, target, 0, 0.0,
+                o.shorts, NULL, 0, "manual", NULL, NULL,
+                &cm, core, sizeof core);
+        else
+            nb = enc_core_encode_pcm_mc_f_m(
+                (const double *const *)fch, lens, rate,
+                o.interval, "zero", NULL, target, 0, 0.0,
+                o.shorts, NULL, 0, "manual", NULL, NULL,
+                &cm, core, sizeof core);
+        librc = lib_run(&o,
+                        is_f ? NULL
+                             : (const int *const *)ich,
+                        is_f ? (const double *const *)fch
+                             : NULL,
+                        nch, ns, libb, sizeof libb, flags,
+                        64, &pinmax);
+        if (nb < 0 || librc < 0) {
+            CHECK(nb < 0 && librc < 0,
+                  "increq both refuse together");
+        } else {
+            libnf = librc >> 24;
+            libn = librc & 0xFFFFFF;
+            coren = strip_blob(core, nb, coreb,
+                               sizeof coreb, &nf);
+            CHECK(coren >= 0 && libn == coren &&
+                      !memcmp(libb, coreb, (size_t)libn),
+                  "increq bytes");
+            CHECK(libnf == nf, "increq count");
+            if (nch == 6 || !prim0)
+                nset = enc_core_iframe_set(
+                    nf, o.interval, NULL, 0, set);
+            else
+                nset = enc_core_joint_iframes(
+                    nf, 0, nf, o.interval, NULL, 0, set);
+            CHECK(nset >= 0, "increq recompute");
+            for (int k = 0; k < 64; k++)
+                expect[k] = 0;
+            for (int k = 0; k < nset; k++)
+                if (set[k] >= 0 && set[k] < nf)
+                    expect[set[k]] = 1;
+            CHECK(libnf == nf &&
+                      !memcmp(flags, expect,
+                              (size_t)nf *
+                                  sizeof *flags),
+                  "increq flags");
+            CHECK(pinmax == 0, "increq pinning");
+        }
+        for (int ch = 0; ch < nch; ch++) {
+            free(ich[ch]);
+            free(fch[ch]);
+        }
+    }
+}
+
 int
 main(void)
 {
     t_misuse();
     t_equiv();
+    t_open_neg2();
+    t_diag();
+    t_fp();
+    t_reset();
+    t_maxpacket();
+    t_prim0();
+    t_concurrent();
+    t_increquiv();
     if (!fails)
         printf("unit: all pass\n");
     return fails ? 1 : 0;
