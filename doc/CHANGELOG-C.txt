@@ -1,0 +1,27 @@
+Changelog entry for the AC-4 submit set: C series only.
+
+Entry (byte-exact, carried by C3):
+  - native AC-4 audio encoder
+
+Carrier: [PATCH 3/11] avcodec: add native AC-4 encoder
+(607e9fa) in ac4/C-encoder-split-r3@065976d over baseline
+3e6cd5e (11 commits, 0 merges). Sole Changelog claimant in
+the A0+C+E+D stack per ASSEMBLY-PROTOCOL-R2 Rule 1: A0, E1,
+E2, D carry no Changelog hunk (master..tip log empty on
+c22b0fe, 98486f6, 09a1bd2, fcc9dbe); no later C commit
+touches the file after 607e9fa.
+
+Render at r3 tip (065976d:Changelog): line 5, inside the
+`version <next>:` chapter (chapter spans lines 4-24, next
+chapter `version 9.0:` at line 25), directly above the
+`- ASTC ...` anchor line.
+
+Style precedent (in-tree history): text matches the
+`- <lowercase description>` shape (cf. `- jpegapp bitstream
+filter` 9552764, `- xHE-AAC encoding via libfdk-xhe-aac`
+cc234e7). Placement variance, kept as-is: those two commits
+APPEND at the chapter end (oldest->youngest); the C3 line
+PREPENDS at the top. Upstream curates placement at merge;
+the DOCS-DRAFT-V2 two-landing amend (DOC-3) needs a B1 that
+does not exist (no A/B branches), so Rule 1 governs: C3
+keeps its line, nobody else adds one.
