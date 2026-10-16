@@ -110,6 +110,14 @@ int enc_step_emit(enc_step_ctx_t *c, uint8_t *out, size_t outcap,
                   size_t *out_len, int *is_iframe);
 int enc_step_emitted(const enc_step_ctx_t *c);
 int enc_step_detail(const enc_step_ctx_t *c);
+/* R3 loud refusal: baked peak tracked on ingest (the EPEAK
+ * offending value), or -1 on NULL. */
+int enc_step_err_peak(const enc_step_ctx_t *c);
+/* R3 loud refusal: EBAKE failing-sample locus (ch, per-ch fed
+ * index, pre-bake value). 0 ok / -1 none (NULLs, or no EBAKE
+ * recorded). */
+int enc_step_err_sample(const enc_step_ctx_t *c, int *ch,
+                        int *idx, double *val);
 /* Closed-form max CBR raw size for a rate (period max), or -1
  * on bad rate. Backs ac4enc_max_packet. */
 int enc_step_max_cbr(int rate_kbps);

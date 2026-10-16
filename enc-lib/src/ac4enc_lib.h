@@ -32,9 +32,10 @@
  * Error model (H8): 0 ok / 1 frame ready / -EINVAL bad arg or
  * config or short buffer / -ENOMEM / -EIO encode refusal or
  * internal failure. No other negatives are returned.
- * ac4enc_strerror names the code; ac4enc_err_sub/_stage/_frame
- * report the sticky last-error detail (subcode + stage +
- * frame). Short-buffer -EINVAL sets the required size through
+ * ac4enc_strerror names the code; ac4enc_err_sub/_stage/_frame/
+ * _detail report the sticky last-error detail (subcode + stage
+ * + frame + gate/values text for bake refusals). Short-buffer
+ * -EINVAL sets the required size through
  * the out_len param (2-variants + flush2) and consumes no
  * input; the call is retryable with room. After -EIO,
  * ac4enc_last_error() carries the core diagnostic when the
@@ -279,6 +280,10 @@ const char *ac4enc_subcode_str(ac4enc_subcode_t sub);
 ac4enc_subcode_t ac4enc_err_sub(const ac4enc_ctx_t *c);
 const char *ac4enc_err_stage(const ac4enc_ctx_t *c);
 int ac4enc_err_frame(const ac4enc_ctx_t *c);
+/* R3 loud refusal: gate + offending values for the bake
+ * subcodes ("baked peak gate: ...", "bake_round gate: ..."),
+ * else "". Never NULL (NULL ctx -> ""). Follows err_sub. */
+const char *ac4enc_err_detail(const ac4enc_ctx_t *c);
 
 /* Max bare-frame bytes for a rate (exact CBR period max), or
  * -EINVAL on bad rate. Buffers of this size never go short. */

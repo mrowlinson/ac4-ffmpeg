@@ -3,9 +3,12 @@
 Compares byte-exact frames; records neutral divergences separately.
 """
 import csv
+import math
 import os
+import struct
 import subprocess
 import sys
+import wave
 
 # Paths: overridable via env for lanes/scratches; defaults are the
 # v1 refactor scratch (vectors live there; binaries + outputs go to S).
@@ -78,6 +81,53 @@ def read_meta(path):
         elif p[0] == "frames":
             meta["nframes"] = int(p[1])
     return meta
+
+
+def hotimp_path():
+    """R3 genuine-overflow vector (self-generated, deterministic):
+    stereo 8192, bed 440/880 Hz amp 1000 + impulses amp 20000
+    at samples 0/4096. Quiet bed + positive correction gain
+    bakes the impulses past s16 (dense: f~0.23, so the frozen
+    oracle can only trip at its peak gate, same cause class
+    as the lib's EBAKE_PEAK; pyref asserts (5.41 dB, 37281))."""
+    p = os.path.join(OUT, "r3_hotimp_8192.wav")
+    if os.path.exists(p):
+        return p
+    ns = 8192
+    L = [int(round(1000 * math.sin(2 * math.pi * 440 * k /
+                                   48000)))
+         for k in range(ns)]
+    R = [int(round(1000 * math.sin(2 * math.pi * 880 * k /
+                                   48000)))
+         for k in range(ns)]
+    L[0] = R[0] = L[4096] = R[4096] = 20000
+    w = wave.open(p, "wb")
+    w.setnchannels(2)
+    w.setsampwidth(2)
+    w.setframerate(48000)
+    frames = bytearray()
+    for k in range(ns):
+        frames += struct.pack("<h", L[k])
+        frames += struct.pack("<h", R[k])
+    w.writeframes(bytes(frames))
+    w.close()
+    return p
+
+
+def meta_dense(fmeta):
+    """True iff the lib's pass-1 measure is NOT sparse-flagged
+    (dense => the frozen oracle's silent refusal can only be
+    its peak gate: same cause class as EBAKE_PEAK)."""
+    try:
+        for line in open(fmeta):
+            if line.startswith("measure m="):
+                p = dict(kv.split("=")
+                         for kv in line.split()[1:])
+                f, tf = float(p["f"]), float(p["tf"])
+                return not (tf < 0.6 and f > 0.5)
+    except (OSError, ValueError, KeyError):
+        pass
+    return False
 
 
 def build_cases():
@@ -193,6 +243,17 @@ def build_cases():
         dict(tag="var:ffloat-raw",
              f=V("st_sweep_48000.s16"), fmt="pcm_s16le",
              ch=2, layout="stereo", rate=64, force_float=True),
+        # R3 pinned genuine peak-gate refusals (policy (a):
+        # keep the pyref-mandated refusal, loud). Both sides
+        # must refuse; the lib must name EBAKE_PEAK and the
+        # vector must be dense (same cause class as the
+        # frozen oracle's silent trip).
+        dict(tag="r3:hotimp-20x", f=hotimp_path(),
+             fmt="wav", ch=2, layout="stereo", rate=128,
+             expect="BOTH-FAIL"),
+        dict(tag="var:bake+12", f=V("st_sine1k_24000.wav"),
+             fmt="wav", ch=2, layout="stereo", rate=64,
+             bake="12.0", expect="BOTH-FAIL"),
     ]
     # Neutral divergence docs (not parity).
     for fn, ch, lay, rate in (
@@ -302,6 +363,20 @@ def run_case(i, c):
                         meta.get("measure", ""))
         return (tag, "FAIL",
                 "LIB-AHEAD unmet o=%d h=%d" % (orc, hrc), "")
+    if c.get("expect") == "BOTH-FAIL":
+        # Pinned genuine refusal (R3): both sides must refuse,
+        # the lib must name the baked-peak gate, and the vector
+        # must be dense (rules out the oracle's stamp gate, so
+        # its silent trip is the same cause class).
+        herr = h.stderr or ""
+        if orc != 0 and hrc != 0 and \
+                "baked peak overflow" in herr and \
+                meta_dense(fmeta):
+            return (tag, "BOTH-FAIL",
+                    "o=%d h=%d pinned dense" % (orc, hrc), "")
+        return (tag, "FAIL",
+                "BOTH-FAIL unmet o=%d h=%d dense=%s %s" %
+                (orc, hrc, meta_dense(fmeta), herr[:120]), "")
     if orc != 0 and hrc != 0:
         # Consistent refusal (e.g. bake peak overflow on both).
         return (tag, "BOTH-FAIL", "o=%d h=%d %s" %

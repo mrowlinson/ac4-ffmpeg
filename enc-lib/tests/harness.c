@@ -697,11 +697,12 @@ main(int argc, char **argv)
             }
             if (erc < 0) {
                 fprintf(stderr, "error: encode frame %d "
-                                "rc=%d (%s/%s)\n",
+                                "rc=%d (%s/%s) detail=[%s]\n",
                         f, erc,
                         ac4enc_subcode_str(
                             ac4enc_err_sub(ctx)),
-                        ac4enc_err_stage(ctx));
+                        ac4enc_err_stage(ctx),
+                        ac4enc_err_detail(ctx));
                 rc = 1;
                 free(pkt);
                 goto done;
@@ -739,11 +740,12 @@ main(int argc, char **argv)
             }
             if (erc < 0) {
                 fprintf(stderr, "error: encode tail "
-                                "rc=%d (%s/%s)\n",
+                                "rc=%d (%s/%s) detail=[%s]\n",
                         erc,
                         ac4enc_subcode_str(
                             ac4enc_err_sub(ctx)),
-                        ac4enc_err_stage(ctx));
+                        ac4enc_err_stage(ctx),
+                        ac4enc_err_detail(ctx));
                 rc = 1;
                 free(pkt);
                 goto done;
@@ -770,11 +772,12 @@ main(int argc, char **argv)
                                 &is_if);
             if (frc < 0) {
                 fprintf(stderr, "error: flush rc=%d "
-                                "(%s/%s)\n",
+                                "(%s/%s) detail=[%s]\n",
                         frc,
                         ac4enc_subcode_str(
                             ac4enc_err_sub(ctx)),
-                        ac4enc_err_stage(ctx));
+                        ac4enc_err_stage(ctx),
+                        ac4enc_err_detail(ctx));
                 rc = 1;
                 goto done;
             }

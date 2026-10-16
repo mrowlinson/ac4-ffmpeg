@@ -101,9 +101,11 @@ tag,result,detail,measure
 099_var_ffloat-mc,PASS,frames=14/14 bytes=9557/9557,measure m=-15.907388002349855 f=0.037455724755706417 tf=1 peak=29490 dpeak=29490 hasd=1
 100_var_ffloat-edge,PASS,frames=4/4 bytes=1366/1366,measure m=-6.0036162860014493 f=0.0017162859576257282 tf=0.5 peak=16384 dpeak=16384 hasd=1
 101_var_ffloat-raw,PASS,frames=26/26 bytes=8875/8875,measure m=-3.7175839069017322 f=0.0032399805342757824 tf=1 peak=16383 dpeak=16383 hasd=1
-102_neutral_st_sweep_24000.wav,DIVERGE-neutral,frames=14/14 bytes=4779/4779 ndiff=3329/4779 nframes-diff=13,
-103_neutral_st_sparse_24000.wav,DIVERGE-neutral,frames=14/14 bytes=4779/4779 ndiff=279/4779 nframes-diff=2,
-104_neutral_mc_noise_24000.wav,DIVERGE-neutral,frames=14/14 bytes=9557/9557 ndiff=7356/9557 nframes-diff=13,
-105_neutral_st_silence_24000.wav,DIVERGE-neutral,frames=14/14 bytes=4779/4779 ndiff=30/4779 nframes-diff=1,
-106_neutral_st_clicks_24000.wav,DIVERGE-neutral,frames=14/14 bytes=4779/4779 ndiff=2165/4779 nframes-diff=13,
-107_neutral_mc_sweep_96000.wav,DIVERGE-neutral,frames=49/49 bytes=33451/33451 ndiff=23713/33451 nframes-diff=48,
+102_r3_hotimp-20x,BOTH-FAIL,o=1 h=1 pinned dense,
+103_var_bake+12,BOTH-FAIL,o=1 h=1 pinned dense,
+104_neutral_st_sweep_24000.wav,DIVERGE-neutral,frames=14/14 bytes=4779/4779 ndiff=3329/4779 nframes-diff=13,
+105_neutral_st_sparse_24000.wav,DIVERGE-neutral,frames=14/14 bytes=4779/4779 ndiff=279/4779 nframes-diff=2,
+106_neutral_mc_noise_24000.wav,DIVERGE-neutral,frames=14/14 bytes=9557/9557 ndiff=7356/9557 nframes-diff=13,
+107_neutral_st_silence_24000.wav,DIVERGE-neutral,frames=14/14 bytes=4779/4779 ndiff=30/4779 nframes-diff=1,
+108_neutral_st_clicks_24000.wav,DIVERGE-neutral,frames=14/14 bytes=4779/4779 ndiff=2165/4779 nframes-diff=13,
+109_neutral_mc_sweep_96000.wav,DIVERGE-neutral,frames=49/49 bytes=33451/33451 ndiff=23713/33451 nframes-diff=48,

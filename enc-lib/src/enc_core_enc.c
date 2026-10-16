@@ -52,6 +52,21 @@ stamp_fail(const char *entry, int sparse, int np6, int ni,
         entry, sparse, np6, ni, nfr0, want_ni, want_fr0);
 }
 
+/* Record a baked-peak refusal (R3: the gate is pyref-mandated —
+ * enc.py asserts peak < 32767 — so the refusal stays, but loud).
+ * gain_db is the applied bake gain, baked the offending baked
+ * peak, in_peak the pre-bake peak (double: the float entries
+ * scan fabs peaks). */
+static void
+peak_fail(const char *entry, double gain_db, int baked,
+          double in_peak)
+{
+    snprintf(core_errmsg, sizeof core_errmsg,
+        "%s: baked peak refused "
+        "(baked=%d >= 32767, gain=%.17g dB, in_peak=%.17g)",
+        entry, baked, gain_db, in_peak);
+}
+
 const char *
 enc_core_last_error(void)
 {
@@ -3310,8 +3325,11 @@ enc_core_encode_pcm(const int *pcmL, int nL, const int *pcmR,
         for (int k = 0; k < nR; k++)
             if (abs(bR[k]) > peak)
                 peak = abs(bR[k]);
-        if (!(peak < 32767))
+        if (!(peak < 32767)) {
+            peak_fail("enc_core_encode_pcm", gain, peak,
+                      (double)in_peak);
             goto done;
+        }
         free(dL);
         free(dR);
         dL = pcm_to_double(bL, nL);
@@ -3620,8 +3638,11 @@ enc_core_encode_pcm_mc(const int *const *chs, const int *lens,
                 for (int k = 0; k < lens[c]; k++)
                     if (abs(pcm[c][k]) > pk)
                         pk = abs(pcm[c][k]);
-            if (!(pk < 32767))
+            if (!(pk < 32767)) {
+                peak_fail("enc_core_encode_pcm_mc", gain, pk,
+                          (double)peak);
                 goto done;
+            }
         }
         for (int c = 0; c < 6; c++) {
             free(dp[c]);
@@ -3839,8 +3860,11 @@ enc_core_encode_pcm_f(const double *pcmL, int nL,
         for (int k = 0; k < nR; k++)
             if (abs(bR[k]) > peak)
                 peak = abs(bR[k]);
-        if (!(peak < 32767))
+        if (!(peak < 32767)) {
+            peak_fail("enc_core_encode_pcm_f", gain, peak,
+                      in_peak);
             goto done;
+        }
         free(dL);
         free(dR);
         dL = pcm_to_double(bL, nL);
@@ -4018,8 +4042,11 @@ enc_core_encode_pcm_mc_f(const double *const *chs,
                 for (int k = 0; k < lens[c]; k++)
                     if (abs(pcm[c][k]) > pk)
                         pk = abs(pcm[c][k]);
-            if (!(pk < 32767))
+            if (!(pk < 32767)) {
+                peak_fail("enc_core_encode_pcm_mc_f", gain, pk,
+                          peak);
                 goto done;
+            }
         }
         for (int c = 0; c < 6; c++) {
             dp[c] = pcm_to_double(pcm[c], lens[c]);
@@ -4167,8 +4194,11 @@ enc_core_encode_pcm_m(const int *pcmL, int nL, const int *pcmR,
         for (int k = 0; k < nR; k++)
             if (abs(bR[k]) > peak)
                 peak = abs(bR[k]);
-        if (!(peak < 32767))
+        if (!(peak < 32767)) {
+            peak_fail("enc_core_encode_pcm_m", gain, peak,
+                      (double)in_peak);
             goto done;
+        }
         free(dL);
         free(dR);
         dL = pcm_to_double(bL, nL);
@@ -4310,8 +4340,11 @@ enc_core_encode_pcm_mc_m(const int *const *chs, const int *lens,
                 for (int k = 0; k < lens[c]; k++)
                     if (abs(pcm[c][k]) > pk)
                         pk = abs(pcm[c][k]);
-            if (!(pk < 32767))
+            if (!(pk < 32767)) {
+                peak_fail("enc_core_encode_pcm_mc_m", gain, pk,
+                          (double)peak);
                 goto done;
+            }
         }
         for (int c = 0; c < 6; c++) {
             free(dp[c]);
@@ -4436,8 +4469,11 @@ enc_core_encode_pcm_f_m(const double *pcmL, int nL,
         for (int k = 0; k < nR; k++)
             if (abs(bR[k]) > peak)
                 peak = abs(bR[k]);
-        if (!(peak < 32767))
+        if (!(peak < 32767)) {
+            peak_fail("enc_core_encode_pcm_f_m", gain, peak,
+                      in_peak);
             goto done;
+        }
         free(dL);
         free(dR);
         dL = pcm_to_double(bL, nL);
@@ -4580,8 +4616,11 @@ enc_core_encode_pcm_mc_f_m(const double *const *chs,
                 for (int k = 0; k < lens[c]; k++)
                     if (abs(pcm[c][k]) > pk)
                         pk = abs(pcm[c][k]);
-            if (!(pk < 32767))
+            if (!(pk < 32767)) {
+                peak_fail("enc_core_encode_pcm_mc_f_m", gain, pk,
+                          peak);
                 goto done;
+            }
         }
         for (int c = 0; c < 6; c++) {
             dp[c] = pcm_to_double(pcm[c], lens[c]);
@@ -4716,6 +4755,11 @@ struct enc_step_ctx {
     int baked_peak;
     int fail_rc;
     int detail;
+    /* EBAKE failing-sample locus (R3 loud refusal); err_ch is
+     * -1 unless an ingest bake_round overflowed. */
+    int err_ch;
+    int err_idx;
+    double err_val;
     union {
         struct {
             double sL[16][128];
@@ -4891,6 +4935,7 @@ enc_step_open(enc_step_ctx_t **cp, const enc_step_cfg_t *cfg)
     if (!c)
         return -ENOMEM;
     c->detail = ENC_STEP_OK;
+    c->err_ch = -1;
     c->nch = cfg->nch;
     c->rate_kbps = cfg->rate_kbps;
     c->layout = cfg->layout;
@@ -4971,6 +5016,24 @@ int
 enc_step_detail(const enc_step_ctx_t *c)
 {
     return c ? c->detail : ENC_STEP_OK;
+}
+
+int
+enc_step_err_peak(const enc_step_ctx_t *c)
+{
+    return c ? c->baked_peak : -1;
+}
+
+int
+enc_step_err_sample(const enc_step_ctx_t *c, int *ch,
+                    int *idx, double *val)
+{
+    if (!c || !ch || !idx || !val || c->err_ch < 0)
+        return -1;
+    *ch = c->err_ch;
+    *idx = c->err_idx;
+    *val = c->err_val;
+    return 0;
 }
 
 static int
@@ -5080,8 +5143,12 @@ feed_common(enc_step_ctx_t *c, const double *const *df,
         for (int k = 0; k < ns[ch]; k++) {
             double x = df ? df[ch][k]
                           : (double)di[ch][k];
-            if (ingest_d(c, ch, x))
+            if (ingest_d(c, ch, x)) {
+                c->err_ch = ch;
+                c->err_idx = c->fed[ch];
+                c->err_val = x;
                 return step_fail(c, ENC_STEP_EBAKE, -EIO);
+            }
             c->fed[ch]++;
         }
     }
