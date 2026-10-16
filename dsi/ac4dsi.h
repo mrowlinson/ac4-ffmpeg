@@ -132,10 +132,12 @@ void ac4dsi_pres_init_v1(ac4dsi_pres_t *p);
  * AV_CH_LAYOUT_* bits and cross-checked against the real headers by the
  * putbits suite (_Static_assert in dsi_putbits_test.c):
  *  - STEREO  = FL|FR (0x3)
- *  - 5POINT1 = FL|FR|FC|LFE|SL|SR (0x60f: the SIDE variant the lavc
- *    encoder wrapper accepts as AV_CHANNEL_LAYOUT_5POINT1).
- * The BACK variant (0x3f) is NOT accepted: the wrapper rejects it too,
- * so mapping it here would emit DSI the encoder can never produce. */
+ *  - 5POINT1 = FL|FR|FC|LFE|SL|SR (0x60f: the SIDE variant matching
+ *    lavc's own AV_CHANNEL_LAYOUT_5POINT1 definition; the accepted
+ *    pair's trios are golden-pinned).
+ * The BACK variant (0x3f) is NOT accepted: no wire vectors pin it, so
+ * mapping it would emit unverifiable DSI (same policy as ch_mode 11-14).
+ * If a future lavc encoder wrapper accepts BACK, this table must grow it. */
 typedef enum ac4dsi_chmask {
     AC4DSI_CHMASK_STEREO  = 0x3,
     AC4DSI_CHMASK_5POINT1 = 0x60f

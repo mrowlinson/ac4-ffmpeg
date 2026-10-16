@@ -11,10 +11,12 @@
  * Vectors come from dsi_goldens.h (shared with dsi_test so the two
  * suites can never drift apart on inputs).
  */
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "ac4dsi.h"
+#include "ac4dsi_priv.h"
 #include "ac4dsi_putbits.h"
 #include "dsi_goldens.h"
 
@@ -136,6 +138,22 @@ static void test_lavc_smoke(void)
           buf[3] == 0xEF, "smoke32 %02x%02x%02x%02x", buf[0], buf[1],
           buf[2], buf[3]);
     printf("ok lavc-smoke (real PutBitContext)\n");
+}
+
+/* capbits clamp pin (MINOR-1): cap*8 below the ceiling, clamped to
+ * INT_MAX*8 at/above it. Unreachable end-to-end (need << INT_MAX), but
+ * the helper is unit-pinned so the honesty bound cannot drift. */
+static void test_capbits_clamp(void)
+{
+    size_t maxbits = (size_t)INT_MAX * 8u;
+    CHECK(ac4dsi_capbits_for_cap(0) == 0, "capbits 0");
+    CHECK(ac4dsi_capbits_for_cap(64) == 512, "capbits 64");
+    CHECK(ac4dsi_capbits_for_cap((size_t)INT_MAX) == maxbits,
+          "capbits INT_MAX");
+    CHECK(ac4dsi_capbits_for_cap((size_t)INT_MAX + 1) == maxbits,
+          "capbits INT_MAX+1");
+    CHECK(ac4dsi_capbits_for_cap(SIZE_MAX) == maxbits, "capbits SIZE_MAX");
+    printf("ok capbits-clamp\n");
 }
 
 static void test_null_parity(void)
@@ -389,6 +407,16 @@ static uint64_t fz_lt(uint64_t n)
     return n ? fz_next() % n : 0;
 }
 
+/* Mostly-valid draw (MINOR-4): uniform in [0,valid_n), except a 1-in-rare
+ * draw goes wide ([0,wide_n)) so EINVAL parity keeps its coverage while
+ * OK diversity rides fuzz too. */
+static uint64_t fz_biased(uint64_t valid_n, uint64_t wide_n, uint64_t rare)
+{
+    if (fz_lt(rare) == 0)
+        return fz_lt(wide_n);
+    return fz_lt(valid_n);
+}
+
 static void fuzz_case(unsigned long caseno)
 {
     static const uint64_t fz_masks[] = {
@@ -404,15 +432,33 @@ static void fuzz_case(unsigned long caseno)
     int rc;
 
     ac4dsi_stream_init(&s);
-    s.bitstream_version = (uint8_t)fz_lt(4);
-    s.fs_index = (uint8_t)fz_lt(3);
-    s.frame_rate_index = (uint8_t)fz_lt(18);
-    s.b_program_id = (int)fz_lt(3);
+    /* Mostly bsv 2..3; sometimes 0..1 (then prog flags stay 0 so the
+     * version itself gets emitted); rarely >127 (EINVAL). */
+    if (fz_lt(40) == 0)
+        s.bitstream_version = (uint8_t)(128 + fz_lt(128));
+    else if (fz_lt(12) == 0)
+        s.bitstream_version = (uint8_t)fz_lt(2);
+    else
+        s.bitstream_version = (uint8_t)(2 + fz_lt(2));
+    s.fs_index = (uint8_t)fz_biased(2, 3, 12);
+    s.frame_rate_index = (uint8_t)fz_biased(16, 18, 12);
+    if (s.bitstream_version <= 1u && fz_lt(8) != 0) {
+        s.b_program_id = 0;
+        s.b_uuid = 0;
+    } else {
+        s.b_program_id = (int)fz_biased(2, 3, 12);
+        if (s.b_program_id == 1)
+            s.b_uuid = (int)fz_biased(2, 3, 12);
+        else if (fz_lt(12) == 0)
+            s.b_uuid = (int)(1 + fz_lt(2)); /* uuid w/o prog / flag 2 */
+        else
+            s.b_uuid = 0;
+    }
     s.short_program_id = fz_lt(4) == 0 ? 300 : (uint16_t)fz_lt(65536);
-    s.b_uuid = (int)fz_lt(3);
     for (i = 0; i < sizeof(s.program_uuid); i++)
         s.program_uuid[i] = (uint8_t)fz_next();
-    s.bit_rate_mode = (uint8_t)fz_lt(5);
+    s.bit_rate_mode = fz_lt(10) == 0 ? (uint8_t)fz_lt(5)
+                                     : (uint8_t)(1 + fz_lt(3));
     s.bit_rate = (uint32_t[]){ 0, 64000, 128000, 256000,
                                (uint32_t)fz_next() }[fz_lt(5)];
     s.bit_rate_precision = (uint32_t[]){ 0, 0xFFFFFFFFu,
@@ -420,18 +466,28 @@ static void fuzz_case(unsigned long caseno)
 
     n_pres = 1 + fz_lt(4);
     for (i = 0; i < n_pres; i++) {
-        static const uint8_t pvs[] = { 1, 1, 1, 2, 2, 3, 0, 5, 255 };
-        uint8_t pv = pvs[fz_lt(sizeof(pvs) / sizeof(pvs[0]))];
+        static const uint8_t pvs[] = { 1, 1, 1, 1, 2, 2, 3, 5, 255, 2 };
+        /* pv0 (legacy reject) is rare but still covered. */
+        uint8_t pv = fz_lt(12) == 0 ? 0
+                                    : pvs[fz_lt(sizeof(pvs) /
+                                                sizeof(pvs[0]))];
         memset(&p[i], 0, sizeof(p[i]));
         p[i].presentation_version = pv;
         if (pv == 1) {
             size_t tlen, k;
+            unsigned m;
             ac4dsi_pres_init_v1(&p[i]);
-            p[i].md_compat = (uint8_t)fz_lt(10);
-            p[i].b_presentation_id = (int)fz_lt(3);
-            p[i].presentation_id = (uint8_t)fz_lt(40);
-            p[i].ch_mode = (uint8_t)fz_lt(32);
-            p[i].channel_groups = (uint32_t)fz_lt(1u << 20);
+            p[i].md_compat = (uint8_t)fz_biased(8, 10, 12);
+            p[i].b_presentation_id = (int)fz_biased(2, 3, 12);
+            p[i].presentation_id = (uint8_t)fz_biased(32, 40, 12);
+            if (fz_lt(8) == 0) {
+                p[i].ch_mode = (uint8_t)fz_lt(32); /* incl 11-14 */
+            } else {
+                m = (unsigned)fz_lt(28);
+                p[i].ch_mode = (uint8_t)(m + (m >= 11 ? 4 : 0));
+            }
+            p[i].channel_groups = (uint32_t)fz_biased(1u << 18, 1u << 20,
+                                                      12);
             /* Sometimes set the trio through the mask API (exotics
              * leave the random trio in place: setter fails clean). */
             if (fz_lt(3) == 0) {
@@ -439,8 +495,8 @@ static void fuzz_case(unsigned long caseno)
                     &p[i], fz_masks[fz_lt(sizeof(fz_masks) /
                                           sizeof(fz_masks[0]))]);
             }
-            p[i].b_content_type = (int)fz_lt(3);
-            p[i].content_classifier = (uint8_t)fz_lt(10);
+            p[i].b_content_type = (int)fz_biased(2, 3, 12);
+            p[i].content_classifier = (uint8_t)fz_biased(8, 10, 12);
             switch (fz_lt(5)) {
             case 0:
                 p[i].language_tag = NULL;
@@ -452,15 +508,16 @@ static void fuzz_case(unsigned long caseno)
                 p[i].language_tag = "en";
                 break;
             default:
-                tlen = fz_lt(71);
+                /* Mostly <= 63 (legal); sometimes 64..70 (EINVAL). */
+                tlen = fz_lt(12) == 0 ? 64 + fz_lt(7) : fz_lt(64);
                 for (k = 0; k < tlen; k++)
                     FZTAG[i][k] = (char)(1 + fz_lt(90));
                 FZTAG[i][tlen] = '\0';
                 p[i].language_tag = FZTAG[i];
                 break;
             }
-            p[i].de_indicator = (int)fz_lt(3);
-            p[i].immersive_indicator = (int)fz_lt(3);
+            p[i].de_indicator = (int)fz_biased(2, 3, 12);
+            p[i].immersive_indicator = (int)fz_biased(2, 3, 12);
         } else if (pv != 0) {
             size_t olen, k;
             if (fz_lt(4) == 0)
@@ -473,8 +530,8 @@ static void fuzz_case(unsigned long caseno)
             for (k = 0; k < olen; k++)
                 FZOPQ[i][k] = (uint8_t)(caseno + k * 7 + 1);
             p[i].opaque_len = olen;
-            /* Sometimes NULL bytes (legal iff len==0). */
-            p[i].opaque = (olen == 0 || fz_lt(6) != 0) ? FZOPQ[i] : NULL;
+            /* Rarely NULL bytes with len>0 (legal iff len==0). */
+            p[i].opaque = (olen == 0 || fz_lt(12) != 0) ? FZOPQ[i] : NULL;
         }
     }
 
@@ -534,6 +591,7 @@ static void test_fuzz(void)
 int main(void)
 {
     test_lavc_smoke();
+    test_capbits_clamp();
     test_null_parity();
     test_golden_sweep();
     test_shape_sweep();

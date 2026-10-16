@@ -46,7 +46,8 @@ int rc = ac4dsi_serialize(&s, &p, 1, out, sizeof(out), &len);
   pass `avctx->ch_layout.u.mask` straight in):
   `ac4dsi_pres_set_layout_mask(&p, AC4DSI_CHMASK_STEREO | AC4DSI_CHMASK_5POINT1)`
   (0x3 / 0x60f, pinned to the lavc `AV_CH_LAYOUT_*` bits; the 0x3f BACK
-  variant is rejected, matching the encoder wrapper). Legacy
+  variant is rejected — no wire vectors pin it. If a future encoder
+  wrapper accepts BACK, the table must grow it). Legacy
   `ac4dsi_pres_set_layout(&p, "stereo" | "5.1")` shim kept for CLI/test.
 - `presentation_version >= 2`: `opaque`/`opaque_len` copied verbatim
   under pv/pres_bytes framing (opaque round-trip, never parsed).

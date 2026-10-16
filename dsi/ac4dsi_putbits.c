@@ -33,10 +33,11 @@ typedef struct {
 static void pbw_init(pbw_t *w, uint8_t *buf, size_t cap)
 {
     int initsize;
-    w->capbits = cap > SIZE_MAX / 8u ? SIZE_MAX : cap * 8u;
-    /* lavc takes an int size. need is always far below INT_MAX and the
-     * honest room accounting below never lets lavc see more bits than
-     * fit, so clamping a gigantic cap is safe. */
+    /* capbits is clamped to match lavc's int size (ac4dsi_priv.h), so the
+     * honest room accounting below never offers lavc more bits than it
+     * was sized for. need is always far below INT_MAX, so clamping a
+     * gigantic cap is safe. */
+    w->capbits = ac4dsi_capbits_for_cap(cap);
     initsize = cap > (size_t)INT_MAX ? INT_MAX : (int)cap;
     init_put_bits(&w->pb, buf, initsize);
     w->total = 0;
