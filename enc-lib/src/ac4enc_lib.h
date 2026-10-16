@@ -140,7 +140,9 @@ typedef struct {
 typedef struct {
     const char *layout; /* "stereo" | "5.1" (only) */
     int rate_kbps; /* DATA_RATES steps, layout floor */
-    const char *interval; /* iframe rule: NULL/"1sec"/decimal>=2 */
+    const char *interval; /* iframe rule: NULL/"1sec"/decimal
+                                 * 2..LLONG_MAX-1 (huge/saturating
+                                 * rejected: 1+step must not ovf) */
     const int *forced;
     int nforced; /* forced iframe indices (CORE indices: the
                   * CLI's csvfile user index shifted +1) */

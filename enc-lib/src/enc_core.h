@@ -225,8 +225,10 @@ int enc_core_fold_8ch_to_stereo(const double *const *chs,
 int enc_core_nframes_for_samples(int nsamples);
 int enc_core_seq_counter(int i);
 int enc_core_b6hi_phase(int i);
-/* interval NULL/"1sec" or decimal step (assert >= 2). out must
- * hold nframes; returns the ascending I-frame count or -1. */
+/* interval NULL/"1sec" or decimal step (assert 2..LLONG_MAX-1:
+ * LLONG_MAX and saturating huge values are rejected: 1 + step
+ * must not overflow). out must hold nframes; returns the
+ * ascending I-frame count or -1. */
 int enc_core_iframe_set(int nframes, const char *interval,
                         const int *forced, int nforced, int *out);
 int enc_core_joint_iframes(int nframes, int base, int total,
