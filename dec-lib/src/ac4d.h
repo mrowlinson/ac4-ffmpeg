@@ -92,6 +92,10 @@ int ac4d_get_frame(ac4d_ctx *c, void *pcm, size_t cap, ac4d_info *fi);
  * Drain contract (H1): call get_frame until AC4D_NEED_MORE after each
  * feed; the instance holds only a few frames, so unbounded undrained
  * feeds fail cleanly with AC4D_ERR (ring overrun), never grow. */
+/* N5: flush takes fi (the drained frame's actual output count,
+ * NULL-ok). Consumers compiling against both old and new headers can
+ * key on AC4D_FLUSH_FI. */
+#define AC4D_FLUSH_FI 1
 int ac4d_flush(ac4d_ctx *c, void *pcm, size_t cap, ac4d_info *fi);
 /* End of stream: drain the pipeline (skeleton tail, post-pass tails,
  * compand tail, OLA ring). Call repeatedly until AC4D_NEED_MORE; each
