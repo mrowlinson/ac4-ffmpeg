@@ -1,4 +1,4 @@
-From 282ac3b2b6a85f974a84afda417c8334a9039104 Mon Sep 17 00:00:00 2001
+From 6c07969929528ec0a7d8298d21b86c5fd41bb091 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:10:53 -0400
 Subject: [PATCH 01/11] avcodec/ac4: add encoder static tables
@@ -11,6 +11,12 @@ build no-op until the wrapper patch registers the codec.
 Re-cut (r3): prepend the standard LGPL header block (Copyright (c)
 2026 Michael Rowlinson) to all 6 table files (X2); table bytes
 otherwise identical to r2.
+
+Re-cut (r5): complete the M3 AC4_ rename for the 34 AJOC/DE/DRC
+huffman table symbols (definitions + registry uses + header decls;
+string-literal book names kept); table bytes identical to r4. Fixes
+the A+C duplicate-symbol link collision (the decoder huffman_tab.o
+defines the same 34 globals).
 
 Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
 ---
@@ -512,7 +518,7 @@ index 0000000..286c734
 +#endif
 diff --git a/libavcodec/ac4_huffman_tables.c b/libavcodec/ac4_huffman_tables.c
 new file mode 100644
-index 0000000..23bc15a
+index 0000000..c6a3a0f
 --- /dev/null
 +++ b/libavcodec/ac4_huffman_tables.c
 @@ -0,0 +1,1153 @@
@@ -1218,14 +1224,14 @@ index 0000000..23bc15a
 +    0x31e10,
 +};
 +
-+const uint8_t AJOC_HCB_DRY_COARSE_F0_LEN[51] = {
++const uint8_t AC4_AJOC_HCB_DRY_COARSE_F0_LEN[51] = {
 +    17, 17, 18, 17, 17, 16, 16, 15, 14, 15, 14, 13, 13, 12, 12, 11,
 +    11, 11, 10, 10, 9, 8, 7, 5, 3, 1, 3, 4, 5, 5, 4, 7,
 +    9, 10, 11, 11, 11, 12, 12, 13, 13, 14, 14, 15, 16, 17, 16, 16,
 +    16, 18, 16,
 +};
 +
-+const uint32_t AJOC_HCB_DRY_COARSE_F0_CW[51] = {
++const uint32_t AC4_AJOC_HCB_DRY_COARSE_F0_CW[51] = {
 +    0x15b63, 0x15a3b, 0x2b474, 0x15a3c, 0x15a3d, 0x0adbc, 0x0ad1f, 0x056df,
 +    0x02b6d, 0x05688, 0x02b45, 0x015b5, 0x0151a, 0x00ad3, 0x00ad0, 0x0056f,
 +    0x0056c, 0x00541, 0x002b5, 0x002a2, 0x00159, 0x000a9, 0x00055, 0x00017,
@@ -1235,14 +1241,14 @@ index 0000000..23bc15a
 +    0x0adb2, 0x2b475, 0x0adb3,
 +};
 +
-+const uint8_t AJOC_HCB_DRY_COARSE_DF_LEN[51] = {
++const uint8_t AC4_AJOC_HCB_DRY_COARSE_DF_LEN[51] = {
 +    1, 2, 5, 6, 7, 7, 9, 10, 11, 12, 12, 13, 13, 14, 14, 15,
 +    15, 16, 16, 17, 17, 18, 18, 18, 19, 19, 19, 18, 19, 18, 18, 17,
 +    17, 16, 16, 15, 15, 14, 14, 13, 13, 12, 12, 11, 10, 10, 8, 8,
 +    6, 5, 3,
 +};
 +
-+const uint32_t AJOC_HCB_DRY_COARSE_DF_CW[51] = {
++const uint32_t AC4_AJOC_HCB_DRY_COARSE_DF_CW[51] = {
 +    0x00000, 0x00003, 0x00014, 0x0002d, 0x00059, 0x0005c, 0x00174, 0x002c7,
 +    0x0058b, 0x00b14, 0x00ba8, 0x0162a, 0x01752, 0x02c56, 0x02ea7, 0x058ce,
 +    0x05d4d, 0x0b15d, 0x0b19f, 0x162bc, 0x1756b, 0x2c573, 0x2c571, 0x2c570,
@@ -1252,7 +1258,7 @@ index 0000000..23bc15a
 +    0x0002f, 0x00015, 0x00004,
 +};
 +
-+const uint8_t AJOC_HCB_DRY_COARSE_DT_LEN[101] = {
++const uint8_t AC4_AJOC_HCB_DRY_COARSE_DT_LEN[101] = {
 +    27, 27, 27, 21, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 21,
 +    21, 21, 27, 21, 27, 20, 20, 21, 20, 17, 19, 18, 17, 17, 16, 17,
 +    16, 15, 15, 15, 14, 14, 14, 13, 12, 12, 11, 10, 10, 8, 7, 6,
@@ -1262,7 +1268,7 @@ index 0000000..23bc15a
 +    28, 28, 28, 27, 27,
 +};
 +
-+const uint32_t AJOC_HCB_DRY_COARSE_DT_CW[101] = {
++const uint32_t AC4_AJOC_HCB_DRY_COARSE_DT_CW[101] = {
 +    0x52447a6, 0x52447a7, 0x52447a4, 0x014911f, 0x52447a5, 0x52447ba, 0x52447bb, 0x52447b8,
 +    0x52447b9, 0x52447be, 0x52447bf, 0x52447bc, 0x52447bd, 0x52447b2, 0x52447b3, 0x014913c,
 +    0x014913d, 0x014913a, 0x52447b0, 0x014913b, 0x52447b1, 0x00a489f, 0x00a4881, 0x0149100,
@@ -1278,7 +1284,7 @@ index 0000000..23bc15a
 +    0xa488f43, 0xa488f40, 0xa488f41, 0x52447a2, 0x52447a3,
 +};
 +
-+const uint8_t AJOC_HCB_DRY_FINE_F0_LEN[101] = {
++const uint8_t AC4_AJOC_HCB_DRY_FINE_F0_LEN[101] = {
 +    18, 21, 21, 18, 19, 21, 19, 18, 19, 19, 19, 19, 17, 18, 17, 16,
 +    16, 17, 17, 16, 15, 15, 15, 15, 14, 14, 14, 14, 13, 13, 13, 13,
 +    13, 13, 12, 12, 12, 11, 11, 11, 11, 10, 9, 9, 8, 7, 7, 6,
@@ -1288,7 +1294,7 @@ index 0000000..23bc15a
 +    18, 19, 21, 19, 17,
 +};
 +
-+const uint32_t AJOC_HCB_DRY_FINE_F0_CW[101] = {
++const uint32_t AC4_AJOC_HCB_DRY_FINE_F0_CW[101] = {
 +    0x03505b, 0x1a82d6, 0x1a82d7, 0x0228dc, 0x04512e, 0x1a82d4, 0x04512f, 0x0228dd,
 +    0x04512c, 0x04512d, 0x04519a, 0x04519b, 0x0115dd, 0x0228da, 0x012d88, 0x00d417,
 +    0x008a32, 0x01146f, 0x0115dc, 0x008aec, 0x006a0a, 0x0045b2, 0x0045b3, 0x004513,
@@ -1304,7 +1310,7 @@ index 0000000..23bc15a
 +    0x0228d9, 0x04519d, 0x1a82d5, 0x06a0b4, 0x01a82c,
 +};
 +
-+const uint8_t AJOC_HCB_DRY_FINE_DF_LEN[101] = {
++const uint8_t AC4_AJOC_HCB_DRY_FINE_DF_LEN[101] = {
 +    1, 3, 4, 5, 6, 7, 8, 8, 8, 9, 9, 10, 11, 11, 12, 12,
 +    13, 13, 13, 13, 14, 14, 14, 14, 15, 15, 15, 16, 16, 16, 16, 17,
 +    17, 18, 17, 18, 18, 18, 18, 20, 19, 19, 19, 20, 20, 20, 19, 19,
@@ -1314,7 +1320,7 @@ index 0000000..23bc15a
 +    7, 6, 6, 4, 3,
 +};
 +
-+const uint32_t AJOC_HCB_DRY_FINE_DF_CW[101] = {
++const uint32_t AC4_AJOC_HCB_DRY_FINE_DF_CW[101] = {
 +    0x000000, 0x000004, 0x00000d, 0x00001f, 0x00003c, 0x000064, 0x0000c6, 0x0000cb,
 +    0x0000cf, 0x00018b, 0x000188, 0x000338, 0x000629, 0x000673, 0x000ca1, 0x000ca7,
 +    0x0018a0, 0x001948, 0x0019ca, 0x0019df, 0x003281, 0x003299, 0x003393, 0x0033bd,
@@ -1330,7 +1336,7 @@ index 0000000..23bc15a
 +    0x000066, 0x00003d, 0x000030, 0x00000e, 0x000005,
 +};
 +
-+const uint8_t AJOC_HCB_DRY_FINE_DT_LEN[201] = {
++const uint8_t AC4_AJOC_HCB_DRY_FINE_DT_LEN[201] = {
 +    28, 29, 29, 29, 29, 29, 21, 29, 29, 29, 29, 29, 28, 28, 28, 28,
 +    28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 21, 28,
 +    21, 21, 28, 28, 28, 28, 21, 28, 28, 28, 20, 21, 21, 20, 21, 21,
@@ -1346,7 +1352,7 @@ index 0000000..23bc15a
 +    29, 29, 29, 29, 29, 29, 29, 28, 28,
 +};
 +
-+const uint32_t AJOC_HCB_DRY_FINE_DT_CW[201] = {
++const uint32_t AC4_AJOC_HCB_DRY_FINE_DT_CW[201] = {
 +    0x0cbfcc4d, 0x197f9898, 0x197f9899, 0x197f9892, 0x197f9893, 0x197f9890, 0x00197f99, 0x197f9891,
 +    0x197f9896, 0x197f9897, 0x197f9894, 0x197f9895, 0x0cbfcc5a, 0x0cbfcc5b, 0x0cbfcc58, 0x0cbfcc59,
 +    0x0cbfcc5e, 0x0cbfcc5f, 0x0cbfcc5c, 0x0cbfcc5d, 0x0cbfcc52, 0x0cbfcc53, 0x0cbfcc50, 0x0cbfcc51,
@@ -1375,35 +1381,35 @@ index 0000000..23bc15a
 +    0x0cbfcc4f,
 +};
 +
-+const uint8_t AJOC_HCB_WET_COARSE_F0_LEN[21] = {
++const uint8_t AC4_AJOC_HCB_WET_COARSE_F0_LEN[21] = {
 +    10, 14, 14, 12, 11, 11, 7, 5, 3, 3, 1, 3, 4, 6, 8, 11,
 +    12, 13, 13, 13, 11,
 +};
 +
-+const uint32_t AJOC_HCB_WET_COARSE_F0_CW[21] = {
++const uint32_t AC4_AJOC_HCB_WET_COARSE_F0_CW[21] = {
 +    0x0355, 0x356a, 0x356b, 0x0d5f, 0x06ae, 0x06a8, 0x006b, 0x001b,
 +    0x0007, 0x0005, 0x0000, 0x0004, 0x000c, 0x0034, 0x00d4, 0x06a9,
 +    0x0d5b, 0x1abc, 0x1ab4, 0x1abd, 0x06ac,
 +};
 +
-+const uint8_t AJOC_HCB_WET_COARSE_DF_LEN[21] = {
++const uint8_t AC4_AJOC_HCB_WET_COARSE_DF_LEN[21] = {
 +    1, 3, 4, 5, 6, 7, 8, 10, 11, 12, 12, 12, 12, 11, 10, 7,
 +    7, 6, 5, 4, 3,
 +};
 +
-+const uint32_t AJOC_HCB_WET_COARSE_DF_CW[21] = {
++const uint32_t AC4_AJOC_HCB_WET_COARSE_DF_CW[21] = {
 +    0x000, 0x005, 0x00d, 0x01e, 0x039, 0x07d, 0x0f8, 0x3e4,
 +    0x7cc, 0xf9d, 0xf9f, 0xf9c, 0xf9e, 0x7cd, 0x3e5, 0x07f,
 +    0x07e, 0x038, 0x01d, 0x00c, 0x004,
 +};
 +
-+const uint8_t AJOC_HCB_WET_COARSE_DT_LEN[41] = {
++const uint8_t AC4_AJOC_HCB_WET_COARSE_DT_LEN[41] = {
 +    17, 21, 22, 22, 21, 17, 18, 16, 16, 15, 11, 13, 12, 12, 12, 11,
 +    9, 7, 4, 3, 1, 2, 5, 7, 9, 11, 12, 12, 12, 12, 11, 7,
 +    16, 17, 17, 17, 21, 21, 21, 21, 21,
 +};
 +
-+const uint32_t AJOC_HCB_WET_COARSE_DT_CW[41] = {
++const uint32_t AC4_AJOC_HCB_WET_COARSE_DT_CW[41] = {
 +    0x014b7f, 0x14b7e9, 0x296fd0, 0x296fd1, 0x14b7ee, 0x014b74, 0x0296fc, 0x00a5bb,
 +    0x00a5be, 0x0052de, 0x00052b, 0x0014b6, 0x000a5e, 0x000a5d, 0x000a55, 0x000529,
 +    0x000148, 0x000051, 0x00000b, 0x000004, 0x000000, 0x000003, 0x000015, 0x000050,
@@ -1412,13 +1418,13 @@ index 0000000..23bc15a
 +    0x14b7eb,
 +};
 +
-+const uint8_t AJOC_HCB_WET_FINE_F0_LEN[41] = {
++const uint8_t AC4_AJOC_HCB_WET_FINE_F0_LEN[41] = {
 +    11, 19, 16, 17, 17, 15, 18, 14, 14, 13, 13, 12, 10, 9, 8, 7,
 +    6, 5, 4, 3, 1, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 15,
 +    15, 15, 16, 17, 15, 19, 16, 16, 12,
 +};
 +
-+const uint32_t AJOC_HCB_WET_FINE_F0_CW[41] = {
++const uint32_t AC4_AJOC_HCB_WET_FINE_F0_CW[41] = {
 +    0x0045e, 0x454c6, 0x08a99, 0x1157c, 0x1157d, 0x0455e, 0x22a62, 0x022a7,
 +    0x022ae, 0x0117d, 0x0117c, 0x008a8, 0x0022b, 0x00114, 0x00080, 0x00041,
 +    0x00021, 0x00012, 0x0000d, 0x00007, 0x00000, 0x00005, 0x0000c, 0x00013,
@@ -1427,13 +1433,13 @@ index 0000000..23bc15a
 +    0x008bf,
 +};
 +
-+const uint8_t AJOC_HCB_WET_FINE_DF_LEN[41] = {
++const uint8_t AC4_AJOC_HCB_WET_FINE_DF_LEN[41] = {
 +    1, 4, 4, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 11, 11, 12,
 +    13, 13, 14, 14, 13, 13, 14, 14, 13, 13, 12, 11, 10, 10, 9, 8,
 +    8, 8, 7, 7, 6, 6, 5, 4, 3,
 +};
 +
-+const uint32_t AJOC_HCB_WET_FINE_DF_CW[41] = {
++const uint32_t AC4_AJOC_HCB_WET_FINE_DF_CW[41] = {
 +    0x0000, 0x0008, 0x000b, 0x0015, 0x0024, 0x0035, 0x004d, 0x006d,
 +    0x009d, 0x00dd, 0x013c, 0x01bc, 0x027b, 0x04f4, 0x04f5, 0x09f5,
 +    0x13e8, 0x1bdd, 0x37b8, 0x37b9, 0x1bde, 0x1bd9, 0x37b1, 0x37b0,
@@ -1442,7 +1448,7 @@ index 0000000..23bc15a
 +    0x0007,
 +};
 +
-+const uint8_t AJOC_HCB_WET_FINE_DT_LEN[81] = {
++const uint8_t AC4_AJOC_HCB_WET_FINE_DT_LEN[81] = {
 +    26, 20, 26, 26, 26, 26, 26, 26, 26, 25, 19, 25, 25, 19, 19, 20,
 +    20, 19, 18, 18, 12, 14, 14, 14, 14, 14, 14, 14, 14, 13, 13, 12,
 +    10, 9, 8, 7, 6, 5, 4, 3, 1, 3, 4, 5, 7, 7, 8, 9,
@@ -1451,7 +1457,7 @@ index 0000000..23bc15a
 +    25,
 +};
 +
-+const uint32_t AJOC_HCB_WET_FINE_DT_CW[81] = {
++const uint32_t AC4_AJOC_HCB_WET_FINE_DT_CW[81] = {
 +    0x30968e2, 0x00c25b6, 0x30968e3, 0x30968e0, 0x30968e1, 0x30968e6, 0x30968e7, 0x30968e4,
 +    0x30968e5, 0x184b47a, 0x00612de, 0x184b47b, 0x184b478, 0x00612df, 0x00612dc, 0x00c25b7,
 +    0x00c25b4, 0x00612dd, 0x003096a, 0x003096b, 0x0000c58, 0x000316a, 0x000316c, 0x000309e,
@@ -1465,26 +1471,26 @@ index 0000000..23bc15a
 +    0x184b477,
 +};
 +
-+const uint8_t DE_HCB_ABS_0_LEN[32] = {
++const uint8_t AC4_DE_HCB_ABS_0_LEN[32] = {
 +    3, 3, 4, 4, 5, 5, 5, 5, 4, 4, 3, 7, 7, 7, 8, 7,
 +    7, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 8,
 +};
 +
-+const uint32_t DE_HCB_ABS_0_CW[32] = {
++const uint32_t AC4_DE_HCB_ABS_0_CW[32] = {
 +    0x06, 0x03, 0x09, 0x01, 0x1f, 0x1d, 0x15, 0x17,
 +    0x00, 0x03, 0x02, 0x79, 0x15, 0x10, 0x29, 0x78,
 +    0x5a, 0x20, 0x3d, 0x39, 0x22, 0x21, 0x28, 0x2c,
 +    0x29, 0x38, 0x23, 0x0b, 0x09, 0x5b, 0x11, 0x28,
 +};
 +
-+const uint8_t DE_HCB_DIFF_0_LEN[63] = {
++const uint8_t AC4_DE_HCB_DIFF_0_LEN[63] = {
 +    14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,
 +    14, 14, 13, 13, 13, 10, 10, 9, 8, 8, 7, 6, 5, 4, 3, 1,
 +    3, 5, 5, 6, 7, 7, 7, 8, 8, 8, 10, 10, 10, 11, 11, 11,
 +    11, 12, 12, 13, 13, 13, 14, 14, 14, 14, 14, 14, 14, 14, 13,
 +};
 +
-+const uint32_t DE_HCB_DIFF_0_CW[63] = {
++const uint32_t AC4_DE_HCB_DIFF_0_CW[63] = {
 +    0x02b0, 0x02b1, 0x02b4, 0x02b5, 0x02b7, 0x02b6, 0x02ba, 0x02bb,
 +    0x02bc, 0x079d, 0x148d, 0x14b1, 0x079e, 0x079f, 0x148f, 0x14b6,
 +    0x14b4, 0x14b5, 0x014c, 0x0159, 0x03cc, 0x002a, 0x014a, 0x003d,
@@ -1495,14 +1501,14 @@ index 0000000..23bc15a
 +    0x148e, 0x148c, 0x079c, 0x02bf, 0x02bd, 0x02be, 0x014d,
 +};
 +
-+const uint8_t DE_HCB_ABS_1_LEN[61] = {
++const uint8_t AC4_DE_HCB_ABS_1_LEN[61] = {
 +    9, 12, 12, 12, 12, 12, 12, 11, 10, 11, 11, 10, 10, 10, 10, 10,
 +    10, 10, 9, 9, 9, 9, 8, 8, 8, 7, 6, 6, 6, 5, 1, 4,
 +    5, 5, 5, 5, 5, 5, 6, 6, 5, 6, 7, 6, 7, 8, 8, 9,
 +    9, 9, 9, 10, 10, 10, 11, 10, 11, 11, 12, 12, 10,
 +};
 +
-+const uint32_t DE_HCB_ABS_1_CW[61] = {
++const uint32_t AC4_DE_HCB_ABS_1_CW[61] = {
 +    0x15c, 0xaea, 0xaeb, 0xc56, 0xc78, 0xc79, 0xe51, 0x427,
 +    0x210, 0x62a, 0x63d, 0x212, 0x21d, 0x31d, 0x2bb, 0x314,
 +    0x390, 0x395, 0x10b, 0x15f, 0x18b, 0x1cb, 0x086, 0x0ab,
@@ -1513,7 +1519,7 @@ index 0000000..23bc15a
 +    0x574, 0x426, 0xe50, 0xc57, 0x31f,
 +};
 +
-+const uint8_t DE_HCB_DIFF_1_LEN[121] = {
++const uint8_t AC4_DE_HCB_DIFF_1_LEN[121] = {
 +    13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
 +    13, 13, 13, 13, 12, 13, 13, 13, 13, 13, 13, 12, 12, 12, 11, 12,
 +    12, 12, 12, 12, 12, 12, 11, 11, 11, 11, 11, 10, 10, 10, 10, 9,
@@ -1524,7 +1530,7 @@ index 0000000..23bc15a
 +    13, 13, 13, 13, 13, 13, 13, 13, 13,
 +};
 +
-+const uint32_t DE_HCB_DIFF_1_CW[121] = {
++const uint32_t AC4_DE_HCB_DIFF_1_CW[121] = {
 +    0x1cf0, 0x1cbd, 0x1cbc, 0x1ccc, 0x1cb8, 0x1ccb, 0x1ccf, 0x1cc6,
 +    0x1cca, 0x1cc9, 0x1cc8, 0x1cce, 0x1cc5, 0x1cd8, 0x1cc4, 0x1cdf,
 +    0x1cd1, 0x1cd5, 0x1ce2, 0x1ce3, 0x0c21, 0x1cfc, 0x1cf1, 0x1cf2,
@@ -1543,7 +1549,7 @@ index 0000000..23bc15a
 +    0x1ceb,
 +};
 +
-+const uint8_t DRC_HCB_LEN[255] = {
++const uint8_t AC4_DRC_HCB_LEN[255] = {
 +    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
 +    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
 +    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
@@ -1562,7 +1568,7 @@ index 0000000..23bc15a
 +    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
 +};
 +
-+const uint32_t DRC_HCB_CW[255] = {
++const uint32_t AC4_DRC_HCB_CW[255] = {
 +    0xe12, 0xe11, 0xe10, 0xe0f, 0xe0e, 0xe0d, 0xe0c, 0xe0b,
 +    0xe0a, 0xe09, 0xe08, 0xe07, 0xe06, 0xe05, 0xe04, 0xe03,
 +    0xe02, 0xe01, 0xe00, 0x53f, 0x53e, 0x53d, 0x53c, 0x53b,
@@ -1635,23 +1641,23 @@ index 0000000..23bc15a
 +    {"AC4_ACPL_HCB_GAMMA_FINE_F0", AC4_ACPL_HCB_GAMMA_FINE_F0_LEN, AC4_ACPL_HCB_GAMMA_FINE_F0_CW, 41, 0, 0, 0, 0, 0, 20, 13},
 +    {"AC4_ACPL_HCB_GAMMA_FINE_DF", AC4_ACPL_HCB_GAMMA_FINE_DF_LEN, AC4_ACPL_HCB_GAMMA_FINE_DF_CW, 81, 0, 0, 0, 0, 0, 40, 17},
 +    {"AC4_ACPL_HCB_GAMMA_FINE_DT", AC4_ACPL_HCB_GAMMA_FINE_DT_LEN, AC4_ACPL_HCB_GAMMA_FINE_DT_CW, 81, 0, 0, 0, 0, 0, 40, 18},
-+    {"AJOC_HCB_DRY_COARSE_F0", AJOC_HCB_DRY_COARSE_F0_LEN, AJOC_HCB_DRY_COARSE_F0_CW, 51, 0, 0, 0, 0, 0, 0, 18},
-+    {"AJOC_HCB_DRY_COARSE_DF", AJOC_HCB_DRY_COARSE_DF_LEN, AJOC_HCB_DRY_COARSE_DF_CW, 51, 0, 0, 0, 0, 0, 0, 19},
-+    {"AJOC_HCB_DRY_COARSE_DT", AJOC_HCB_DRY_COARSE_DT_LEN, AJOC_HCB_DRY_COARSE_DT_CW, 101, 0, 0, 0, 0, 0, 50, 28},
-+    {"AJOC_HCB_DRY_FINE_F0", AJOC_HCB_DRY_FINE_F0_LEN, AJOC_HCB_DRY_FINE_F0_CW, 101, 0, 0, 0, 0, 0, 0, 21},
-+    {"AJOC_HCB_DRY_FINE_DF", AJOC_HCB_DRY_FINE_DF_LEN, AJOC_HCB_DRY_FINE_DF_CW, 101, 0, 0, 0, 0, 0, 0, 21},
-+    {"AJOC_HCB_DRY_FINE_DT", AJOC_HCB_DRY_FINE_DT_LEN, AJOC_HCB_DRY_FINE_DT_CW, 201, 0, 0, 0, 0, 0, 100, 29},
-+    {"AJOC_HCB_WET_COARSE_F0", AJOC_HCB_WET_COARSE_F0_LEN, AJOC_HCB_WET_COARSE_F0_CW, 21, 0, 0, 0, 0, 0, 0, 14},
-+    {"AJOC_HCB_WET_COARSE_DF", AJOC_HCB_WET_COARSE_DF_LEN, AJOC_HCB_WET_COARSE_DF_CW, 21, 0, 0, 0, 0, 0, 0, 12},
-+    {"AJOC_HCB_WET_COARSE_DT", AJOC_HCB_WET_COARSE_DT_LEN, AJOC_HCB_WET_COARSE_DT_CW, 41, 0, 0, 0, 0, 0, 20, 22},
-+    {"AJOC_HCB_WET_FINE_F0", AJOC_HCB_WET_FINE_F0_LEN, AJOC_HCB_WET_FINE_F0_CW, 41, 0, 0, 0, 0, 0, 0, 19},
-+    {"AJOC_HCB_WET_FINE_DF", AJOC_HCB_WET_FINE_DF_LEN, AJOC_HCB_WET_FINE_DF_CW, 41, 0, 0, 0, 0, 0, 0, 14},
-+    {"AJOC_HCB_WET_FINE_DT", AJOC_HCB_WET_FINE_DT_LEN, AJOC_HCB_WET_FINE_DT_CW, 81, 0, 0, 0, 0, 0, 40, 26},
-+    {"DE_HCB_ABS_0", DE_HCB_ABS_0_LEN, DE_HCB_ABS_0_CW, 32, 1, 1, 0, 0, 0, 0, 8},
-+    {"DE_HCB_DIFF_0", DE_HCB_DIFF_0_LEN, DE_HCB_DIFF_0_CW, 63, 1, 0, 0, 0, 0, 31, 14},
-+    {"DE_HCB_ABS_1", DE_HCB_ABS_1_LEN, DE_HCB_ABS_1_CW, 61, 1, 1, 0, 0, 0, 30, 12},
-+    {"DE_HCB_DIFF_1", DE_HCB_DIFF_1_LEN, DE_HCB_DIFF_1_CW, 121, 1, 0, 0, 0, 0, 60, 13},
-+    {"DRC_HCB", DRC_HCB_LEN, DRC_HCB_CW, 255, 1, 0, 0, 0, 0, 127, 12},
++    {"AJOC_HCB_DRY_COARSE_F0", AC4_AJOC_HCB_DRY_COARSE_F0_LEN, AC4_AJOC_HCB_DRY_COARSE_F0_CW, 51, 0, 0, 0, 0, 0, 0, 18},
++    {"AJOC_HCB_DRY_COARSE_DF", AC4_AJOC_HCB_DRY_COARSE_DF_LEN, AC4_AJOC_HCB_DRY_COARSE_DF_CW, 51, 0, 0, 0, 0, 0, 0, 19},
++    {"AJOC_HCB_DRY_COARSE_DT", AC4_AJOC_HCB_DRY_COARSE_DT_LEN, AC4_AJOC_HCB_DRY_COARSE_DT_CW, 101, 0, 0, 0, 0, 0, 50, 28},
++    {"AJOC_HCB_DRY_FINE_F0", AC4_AJOC_HCB_DRY_FINE_F0_LEN, AC4_AJOC_HCB_DRY_FINE_F0_CW, 101, 0, 0, 0, 0, 0, 0, 21},
++    {"AJOC_HCB_DRY_FINE_DF", AC4_AJOC_HCB_DRY_FINE_DF_LEN, AC4_AJOC_HCB_DRY_FINE_DF_CW, 101, 0, 0, 0, 0, 0, 0, 21},
++    {"AJOC_HCB_DRY_FINE_DT", AC4_AJOC_HCB_DRY_FINE_DT_LEN, AC4_AJOC_HCB_DRY_FINE_DT_CW, 201, 0, 0, 0, 0, 0, 100, 29},
++    {"AJOC_HCB_WET_COARSE_F0", AC4_AJOC_HCB_WET_COARSE_F0_LEN, AC4_AJOC_HCB_WET_COARSE_F0_CW, 21, 0, 0, 0, 0, 0, 0, 14},
++    {"AJOC_HCB_WET_COARSE_DF", AC4_AJOC_HCB_WET_COARSE_DF_LEN, AC4_AJOC_HCB_WET_COARSE_DF_CW, 21, 0, 0, 0, 0, 0, 0, 12},
++    {"AJOC_HCB_WET_COARSE_DT", AC4_AJOC_HCB_WET_COARSE_DT_LEN, AC4_AJOC_HCB_WET_COARSE_DT_CW, 41, 0, 0, 0, 0, 0, 20, 22},
++    {"AJOC_HCB_WET_FINE_F0", AC4_AJOC_HCB_WET_FINE_F0_LEN, AC4_AJOC_HCB_WET_FINE_F0_CW, 41, 0, 0, 0, 0, 0, 0, 19},
++    {"AJOC_HCB_WET_FINE_DF", AC4_AJOC_HCB_WET_FINE_DF_LEN, AC4_AJOC_HCB_WET_FINE_DF_CW, 41, 0, 0, 0, 0, 0, 0, 14},
++    {"AJOC_HCB_WET_FINE_DT", AC4_AJOC_HCB_WET_FINE_DT_LEN, AC4_AJOC_HCB_WET_FINE_DT_CW, 81, 0, 0, 0, 0, 0, 40, 26},
++    {"DE_HCB_ABS_0", AC4_DE_HCB_ABS_0_LEN, AC4_DE_HCB_ABS_0_CW, 32, 1, 1, 0, 0, 0, 0, 8},
++    {"DE_HCB_DIFF_0", AC4_DE_HCB_DIFF_0_LEN, AC4_DE_HCB_DIFF_0_CW, 63, 1, 0, 0, 0, 0, 31, 14},
++    {"DE_HCB_ABS_1", AC4_DE_HCB_ABS_1_LEN, AC4_DE_HCB_ABS_1_CW, 61, 1, 1, 0, 0, 0, 30, 12},
++    {"DE_HCB_DIFF_1", AC4_DE_HCB_DIFF_1_LEN, AC4_DE_HCB_DIFF_1_CW, 121, 1, 0, 0, 0, 0, 60, 13},
++    {"DRC_HCB", AC4_DRC_HCB_LEN, AC4_DRC_HCB_CW, 255, 1, 0, 0, 0, 0, 127, 12},
 +};
 +
 +int ac4_hcb_decode(const ac4_huffman_book_t *b,
@@ -1671,7 +1677,7 @@ index 0000000..23bc15a
 +}
 diff --git a/libavcodec/ac4_huffman_tables.h b/libavcodec/ac4_huffman_tables.h
 new file mode 100644
-index 0000000..896deed
+index 0000000..e3918e0
 --- /dev/null
 +++ b/libavcodec/ac4_huffman_tables.h
 @@ -0,0 +1,186 @@
@@ -1802,40 +1808,40 @@ index 0000000..896deed
 +extern const uint32_t AC4_ACPL_HCB_GAMMA_FINE_DF_CW[81];
 +extern const uint8_t AC4_ACPL_HCB_GAMMA_FINE_DT_LEN[81];
 +extern const uint32_t AC4_ACPL_HCB_GAMMA_FINE_DT_CW[81];
-+extern const uint8_t AJOC_HCB_DRY_COARSE_F0_LEN[51];
-+extern const uint32_t AJOC_HCB_DRY_COARSE_F0_CW[51];
-+extern const uint8_t AJOC_HCB_DRY_COARSE_DF_LEN[51];
-+extern const uint32_t AJOC_HCB_DRY_COARSE_DF_CW[51];
-+extern const uint8_t AJOC_HCB_DRY_COARSE_DT_LEN[101];
-+extern const uint32_t AJOC_HCB_DRY_COARSE_DT_CW[101];
-+extern const uint8_t AJOC_HCB_DRY_FINE_F0_LEN[101];
-+extern const uint32_t AJOC_HCB_DRY_FINE_F0_CW[101];
-+extern const uint8_t AJOC_HCB_DRY_FINE_DF_LEN[101];
-+extern const uint32_t AJOC_HCB_DRY_FINE_DF_CW[101];
-+extern const uint8_t AJOC_HCB_DRY_FINE_DT_LEN[201];
-+extern const uint32_t AJOC_HCB_DRY_FINE_DT_CW[201];
-+extern const uint8_t AJOC_HCB_WET_COARSE_F0_LEN[21];
-+extern const uint32_t AJOC_HCB_WET_COARSE_F0_CW[21];
-+extern const uint8_t AJOC_HCB_WET_COARSE_DF_LEN[21];
-+extern const uint32_t AJOC_HCB_WET_COARSE_DF_CW[21];
-+extern const uint8_t AJOC_HCB_WET_COARSE_DT_LEN[41];
-+extern const uint32_t AJOC_HCB_WET_COARSE_DT_CW[41];
-+extern const uint8_t AJOC_HCB_WET_FINE_F0_LEN[41];
-+extern const uint32_t AJOC_HCB_WET_FINE_F0_CW[41];
-+extern const uint8_t AJOC_HCB_WET_FINE_DF_LEN[41];
-+extern const uint32_t AJOC_HCB_WET_FINE_DF_CW[41];
-+extern const uint8_t AJOC_HCB_WET_FINE_DT_LEN[81];
-+extern const uint32_t AJOC_HCB_WET_FINE_DT_CW[81];
-+extern const uint8_t DE_HCB_ABS_0_LEN[32];
-+extern const uint32_t DE_HCB_ABS_0_CW[32];
-+extern const uint8_t DE_HCB_DIFF_0_LEN[63];
-+extern const uint32_t DE_HCB_DIFF_0_CW[63];
-+extern const uint8_t DE_HCB_ABS_1_LEN[61];
-+extern const uint32_t DE_HCB_ABS_1_CW[61];
-+extern const uint8_t DE_HCB_DIFF_1_LEN[121];
-+extern const uint32_t DE_HCB_DIFF_1_CW[121];
-+extern const uint8_t DRC_HCB_LEN[255];
-+extern const uint32_t DRC_HCB_CW[255];
++extern const uint8_t AC4_AJOC_HCB_DRY_COARSE_F0_LEN[51];
++extern const uint32_t AC4_AJOC_HCB_DRY_COARSE_F0_CW[51];
++extern const uint8_t AC4_AJOC_HCB_DRY_COARSE_DF_LEN[51];
++extern const uint32_t AC4_AJOC_HCB_DRY_COARSE_DF_CW[51];
++extern const uint8_t AC4_AJOC_HCB_DRY_COARSE_DT_LEN[101];
++extern const uint32_t AC4_AJOC_HCB_DRY_COARSE_DT_CW[101];
++extern const uint8_t AC4_AJOC_HCB_DRY_FINE_F0_LEN[101];
++extern const uint32_t AC4_AJOC_HCB_DRY_FINE_F0_CW[101];
++extern const uint8_t AC4_AJOC_HCB_DRY_FINE_DF_LEN[101];
++extern const uint32_t AC4_AJOC_HCB_DRY_FINE_DF_CW[101];
++extern const uint8_t AC4_AJOC_HCB_DRY_FINE_DT_LEN[201];
++extern const uint32_t AC4_AJOC_HCB_DRY_FINE_DT_CW[201];
++extern const uint8_t AC4_AJOC_HCB_WET_COARSE_F0_LEN[21];
++extern const uint32_t AC4_AJOC_HCB_WET_COARSE_F0_CW[21];
++extern const uint8_t AC4_AJOC_HCB_WET_COARSE_DF_LEN[21];
++extern const uint32_t AC4_AJOC_HCB_WET_COARSE_DF_CW[21];
++extern const uint8_t AC4_AJOC_HCB_WET_COARSE_DT_LEN[41];
++extern const uint32_t AC4_AJOC_HCB_WET_COARSE_DT_CW[41];
++extern const uint8_t AC4_AJOC_HCB_WET_FINE_F0_LEN[41];
++extern const uint32_t AC4_AJOC_HCB_WET_FINE_F0_CW[41];
++extern const uint8_t AC4_AJOC_HCB_WET_FINE_DF_LEN[41];
++extern const uint32_t AC4_AJOC_HCB_WET_FINE_DF_CW[41];
++extern const uint8_t AC4_AJOC_HCB_WET_FINE_DT_LEN[81];
++extern const uint32_t AC4_AJOC_HCB_WET_FINE_DT_CW[81];
++extern const uint8_t AC4_DE_HCB_ABS_0_LEN[32];
++extern const uint32_t AC4_DE_HCB_ABS_0_CW[32];
++extern const uint8_t AC4_DE_HCB_DIFF_0_LEN[63];
++extern const uint32_t AC4_DE_HCB_DIFF_0_CW[63];
++extern const uint8_t AC4_DE_HCB_ABS_1_LEN[61];
++extern const uint32_t AC4_DE_HCB_ABS_1_CW[61];
++extern const uint8_t AC4_DE_HCB_DIFF_1_LEN[121];
++extern const uint32_t AC4_DE_HCB_DIFF_1_CW[121];
++extern const uint8_t AC4_DRC_HCB_LEN[255];
++extern const uint32_t AC4_DRC_HCB_CW[255];
 +
 +extern const ac4_huffman_book_t ac4_huffman_books[54];
 +#define HUFFMAN_NBOOKS 54
@@ -2076,7 +2082,7 @@ index 0000000..4eb179d
 -- 
 2.56.0
 
-From acc1bb8a338a5e9570e69096ec1505bd7296dea4 Mon Sep 17 00:00:00 2001
+From 065c5e5794eb1f84e6ded066851bda3b2f74d4f7 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:11:00 -0400
 Subject: [PATCH 02/11] avcodec/ac4: add encoder core + lib adapter
@@ -16203,7 +16209,7 @@ index 0000000..4d986a4
 -- 
 2.56.0
 
-From 0b3f890885663c3f066ebbb71691e62daf7ea5fa Mon Sep 17 00:00:00 2001
+From 2cd937865a91cb47000d59e38ad08183a8ad35e5 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:11:24 -0400
 Subject: [PATCH 03/11] avcodec: add native AC-4 encoder
@@ -17061,7 +17067,7 @@ index d0980e2..da6f3a8 100644
 -- 
 2.56.0
 
-From 3631fcffc591c6fb4040b62b30473e86f303b306 Mon Sep 17 00:00:00 2001
+From bd7a122e0557e4252175e35878b7474d83dfd072 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:11:28 -0400
 Subject: [PATCH 04/11] doc: AC-4 encoder docs
@@ -17145,7 +17151,7 @@ index 7032f14..8b2d3a2 100644
 -- 
 2.56.0
 
-From b3f3a1f222e5db74de75c3d6d41b574b388fd917 Mon Sep 17 00:00:00 2001
+From 19857882d719350700db307aaf6b64ee0b20b94f Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:15:39 -0400
 Subject: [PATCH 05/11] fate: add ac4 encoder tests
@@ -17278,7 +17284,7 @@ index 0000000..f6ebafd
 -- 
 2.56.0
 
-From 38a19beb9c7063a007066bf145ede1dc337a66e2 Mon Sep 17 00:00:00 2001
+From c8c74e111bc7950985c7267fc0007dfd66e978cb Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:15:44 -0400
 Subject: [PATCH 06/11] fate: run ac4 encoder tests without SAMPLES
@@ -17308,7 +17314,7 @@ index 9621056..e549c15 100644
 -- 
 2.56.0
 
-From f36f4075dd80e1a9763f542d876cc3aed3e4025d Mon Sep 17 00:00:00 2001
+From 1f76f88f4611ff4672ffd2bf1ca70631e48a1344 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:15:44 -0400
 Subject: [PATCH 07/11] doc/ac4enc: note CLI silent auto-fold, explicit-layout
@@ -17344,7 +17350,7 @@ index e8bff86..d5afdd4 100644
 -- 
 2.56.0
 
-From f07df7fbed479760fb9d43cfdb1594be18166e03 Mon Sep 17 00:00:00 2001
+From 1ef16bdf3079b7a0f231357a1035220df79015cd Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:15:44 -0400
 Subject: [PATCH 08/11] tests/ac4enc: add negatives gate for explicit
@@ -17425,7 +17431,7 @@ index 0000000..9fee89f
 -- 
 2.56.0
 
-From e6f99ecff6c1b6d830366cd64e30450c3a6c93a3 Mon Sep 17 00:00:00 2001
+From 6a4733d7a8b147b4a220b4fccc4cfd9ce0b13caa Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:15:44 -0400
 Subject: [PATCH 09/11] fate/ac4enc: pin 8ch silent fold to 5.1 (fold8)
@@ -17484,7 +17490,7 @@ index 0000000..da08b13
 -- 
 2.56.0
 
-From e017d9bde248718d044b48407df0347a68bd28b6 Mon Sep 17 00:00:00 2001
+From 383a1e91563efe0408706a7ccd16c13a6fbe2c35 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:16:02 -0400
 Subject: [PATCH 10/11] avcodec/ac4: emit DSI extradata via putbits serializer
@@ -18443,7 +18449,7 @@ index f6ebafd..24b0eae 100644
 -- 
 2.56.0
 
-From 1ccd10a7f394bc4acb129a73b7280027c6ce93af Mon Sep 17 00:00:00 2001
+From fd578caae2f2608475ee410345b0f44912e6559b Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:16:02 -0400
 Subject: [PATCH 11/11] avcodec/ac4enc: drive DSI layout from the lavc-mask

@@ -13,6 +13,9 @@ Patches:
     Huffman/A-SPX/sfb-offset tables + Makefile OBJS. Pure data, no
     deps, reviewable in isolation. Re-cut (r3): standard LGPL
     header block on all 6 files (X2); table bytes identical to r2.
+    Re-cut (r5): AC4_-prefix the 34 AJOC/DE/DRC table symbols
+    (M3 completion; string book names kept); table bytes identical
+    to r4. Fixes the A+C duplicate-symbol link collision.
   [PATCH 02/11] avcodec/ac4: add encoder core + lib adapter
     Engine (enc_core_*), DSP (bits/asf/mdct/loudness), algo modules
     (mc3/jshort/tail59/aspx/acpl), pycompat shim, ac4enc_lib adapter
@@ -127,12 +130,13 @@ is covered by Dolby patents; this submission addresses copyright-clean
 code only and implementers/distributors should consider patent
 licensing.
 
-Branch state (draft, unposted): ac4/C-encoder-split-r4@1ccd10a
+Branch state (draft, unposted): ac4/C-encoder-split-r5@fd578ca
 over baseline 3e6cd5e (11 commits, 0 merges, 11/11 owner authors:
-282ac3b/acc1bb8/0b3f890/3631fcf/b3f3a1f/38a19be/
-f36f407/f07df7f/e6f99ec/e017d9b/1ccd10a). Re-cut of r3
-(065976d): ASCII-only comments, 80-col hand code, sign-offs on
-all 11, ordered dates. Stereo md5 86828e84.. (98193 B), 5.1 md5
-53a44aca..; #extradata stereo 0xb7a30a0b, fold8 0xbafa0ae9.
+6c07969/065c5e5/2cd9378/bd7a122/1985788/c8c74e1/
+1f76f88/1ef16bd/6a4733d/383a1e9/fd578ca). Re-cut of r4
+(1ccd10a): 01/11 AC4_ completion only, 02/11..11/11 bytes
+identical to r4; ASCII-only, sign-offs on all 11, ordered dates.
+Stereo md5 86828e84.. (98193 B), 5.1 md5 53a44aca..;
+#extradata stereo 0xb7a30a0b, fold8 0xbafa0ae9.
 
 Signed-off-by on each patch: Michael Rowlinson <mrowlinson@gmail.com>
