@@ -1,9 +1,8 @@
 /* mdct.h: forward MDCT analysis for the clean AC-4 encoder.
  *
- * C port of encoder/mdct.py (C-port phase, module 2). Same E2
- * own-words formulas (Kaiser I0 series, KBD cumsum/sqrt/mirror,
- * DFT-restated MDCT); see tests/test_mdct_parity.py for the
- * bit-parity gate. C11, zero deps beyond libm.
+ * E2 own-words formulas (Kaiser I0 series, KBD cumsum/sqrt/
+ * mirror, DFT-restated MDCT); see tests/test_mdct_parity.py
+ * for the bit-parity gate. C11, zero deps beyond libm.
  */
 #ifndef AC4_MDCT_H
 #define AC4_MDCT_H

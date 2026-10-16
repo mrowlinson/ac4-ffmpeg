@@ -14,6 +14,13 @@ CORE_SRCS := $(SRCDIR)/enc_core_enc.c $(SRCDIR)/enc_core_long51.c \
 	$(SRCDIR)/huffman_tables.c $(SRCDIR)/aspx_tables.c \
 	$(SRCDIR)/sfb_offsets.c $(SRCDIR)/pycompat.c
 LIB_SRCS := $(SRCDIR)/ac4enc_lib.c $(CORE_SRCS)
+# m5: explicit object list (no *.o globs: stray objects must
+# neither join the archive nor be deleted by clean).
+OBJS := ac4enc_lib.o enc_core_enc.o enc_core_long51.o \
+	enc_core_fit51.o bits.o asf.o mdct.o loudness.o \
+	enc_mc3.o enc_jshort.o enc_tail59.o enc_aspx.o \
+	enc_acpl.o huffman_tables.o aspx_tables.o \
+	sfb_offsets.o pycompat.o
 
 all: libac4enc.a
 
@@ -35,8 +42,8 @@ libac4enc.a: $(LIB_SRCS) $(SRCDIR)/ac4enc_lib.h $(SRCDIR)/enc_core.h
 	$(CC) $(CFLAGS) -c $(SRCDIR)/aspx_tables.c -o aspx_tables.o
 	$(CC) $(CFLAGS) -c $(SRCDIR)/sfb_offsets.c -o sfb_offsets.o
 	$(CC) $(CFLAGS) -c $(SRCDIR)/pycompat.c -o pycompat.o
-	ar rcs $@ *.o
-	rm -f *.o
+	ar rcs $@ $(OBJS)
+	rm -f $(OBJS)
 
 # Harness + unit probes build into OUTDIR (default: scratch, never repo).
 OUTDIR ?= /Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-enc-librefactor
@@ -50,6 +57,6 @@ unit: libac4enc.a
 		libac4enc.a -lm -pthread
 
 clean:
-	rm -f libac4enc.a *.o
+	rm -f libac4enc.a $(OBJS)
 
 .PHONY: all harness unit clean

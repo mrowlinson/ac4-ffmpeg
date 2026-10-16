@@ -1,13 +1,14 @@
 #ifndef AC4_ENC_MC3_H
 #define AC4_ENC_MC3_H
 
-/* 5.1 codec_mode-3 (ASPX_ACPL_2) frame assembler: C port of
- * encoder/mc3.py. Element ORDER + header bits only; core/tail
- * VALUES are caller-supplied. Pure int/bit assembly (no float
- * ops; submodules keep their own float discipline).
+/* 5.1 codec_mode-3 (ASPX_ACPL_2) frame assembler. Element
+ * ORDER + header bits only; core/tail VALUES are
+ * caller-supplied. Pure int/bit assembly (no float ops;
+ * submodules keep their own float discipline).
  *
- * Mirrors the Python entry points 1:1 (dicts/tuples become the
- * structs below; Python None becomes NULL or a has_* flag):
+ * Mirrors the reference entry points 1:1 (maps/tuples become
+ * the structs below; absent values become NULL or a has_*
+ * flag):
  *   write_iframe_cfg -> enc_mc3_write_iframe_cfg (+ defaults)
  *   write_compand_off -> enc_mc3_write_compand_off
  *   write_audio_51_mode3 -> enc_mc3_write_audio_51_mode3

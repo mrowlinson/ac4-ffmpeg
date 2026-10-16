@@ -111,3 +111,21 @@ left untouched.
   pins incl. core messages, bake_round locus pin, target-0
   controls); `parity_run.py` gains 2 pinned `BOTH-FAIL`
   cases (self-generated hot-impulse vector + bake+12).
+
+## minors delta (ff/enc-lib-minors, EL-m1/m7/m14, 2026-10-16)
+
+- m1: all PCM/baked int peak scans (8 core prologues + the
+  r2 engine ingest scan) use `enc_core_abs_sat` (new
+  `enc_core.h` static inline): `abs(INT_MIN)` UB becomes a
+  saturating INT_MAX. Byte-identical on every other input
+  (equivalence + parity gates re-pass; `t_absmin` pins the
+  saturation under UBSan). `asf.c` keeps `abs()` (quantized
+  domain, assert-bounded, INT_MIN unreachable).
+- m7: deleted the two vendored-but-unused symbols
+  (`enc_core_encode_stream`,
+  `enc_core_fold_8ch_to_51_meter`) + their `enc_core.h`
+  declarations (zero in-repo callers; `nm` confirms them
+  gone from `libac4enc.a`).
+- m14: file-header comments no longer carry "C port of
+  encoder/*.py" provenance (comment-only, no code change;
+  deeper behavioral Python notes stay).

@@ -1,7 +1,7 @@
 /* loudness.h: ITU-R BS.1770 loudness metering (K-weighting + gates).
  *
- * C port of encoder/loudness.py (C-port phase, module 3). Bit-parity
- * gate: tests/test_loudness_parity.py. C11, libm only.
+ * Bit-parity gate: tests/test_loudness_parity.py. C11, libm
+ * only.
  */
 #ifndef AC4_LOUDNESS_H
 #define AC4_LOUDNESS_H

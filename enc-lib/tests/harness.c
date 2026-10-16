@@ -471,8 +471,6 @@ main(int argc, char **argv)
         ich = NULL;
         use_float = 0;
     } else if (force_float) {
-        const int *rr[6];
-        ac4enc_measure_t m;
         if (nch_in != out_ch) {
             fprintf(stderr, "error: ch %d != layout ch %d\n",
                     nch_in, out_ch);
@@ -486,9 +484,6 @@ main(int argc, char **argv)
         for (int c = 0; c < nch; c++)
             for (int k = 0; k < ns; k++)
                 drows[c * ns + k] = (double)ich[c * ns + k];
-        for (int c = 0; c < nch; c++)
-            rr[c] = NULL;
-        (void)m;
         use_float = 1;
     } else {
         const double *src[8];
@@ -652,9 +647,18 @@ main(int argc, char **argv)
         }
         fprintf(fm, "measure neutral\n");
     }
-    if (ac4enc_open(&ctx, &opts)) {
-        fprintf(stderr, "error: ac4enc_open failed\n");
-        goto done;
+    {
+        /* m8: print the rc (fail-fast -EIO vs bad-config
+         * -EINVAL are distinct BOTH-FAIL causes). Exit 1:
+         * open failure is a lib error, not usage. */
+        int orc = ac4enc_open(&ctx, &opts);
+        if (orc) {
+            fprintf(stderr, "error: ac4enc_open failed "
+                            "rc=%d (%s)\n",
+                    orc, ac4enc_strerror(orc));
+            rc = 1;
+            goto done;
+        }
     }
     ff = fopen(frames_out, "wb");
     if (!ff) {

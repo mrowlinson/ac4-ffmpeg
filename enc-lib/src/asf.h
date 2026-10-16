@@ -1,9 +1,9 @@
 /* asf.h: ASF spectral writer for the clean AC-4 encoder.
  *
- * C port of encoder/asf.py (C-port phase, module 4). Reuses the
- * committed C tables (huffman_tables.h codewords, sfb_offsets.h
- * ladders — verified identical to the Python BOOKS/OFFS inputs).
- * Bit-parity gate: tests/test_asf_parity.py. C11, zero deps.
+ * Reuses the committed C tables (huffman_tables.h codewords,
+ * sfb_offsets.h ladders — verified identical to the
+ * BOOKS/OFFS inputs). Bit-parity gate:
+ * tests/test_asf_parity.py. C11, zero deps.
  */
 #ifndef AC4_ASF_H
 #define AC4_ASF_H

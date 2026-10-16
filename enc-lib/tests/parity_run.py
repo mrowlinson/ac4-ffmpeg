@@ -5,6 +5,7 @@ Compares byte-exact frames; records neutral divergences separately.
 import csv
 import math
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -130,6 +131,48 @@ def meta_dense(fmeta):
     return False
 
 
+# m8: BOTH-FAIL requires cause equality. Classes stay coarse
+# because the frozen oracle refuses silently (exit 1, empty
+# stderr, progress on stdout). Unknown on either side fails
+# loud (CAUSE-MISMATCH), never a quiet pass.
+def _rc_class(rc):
+    if rc == -5:  # -EIO: encode refusal
+        return "encode-refusal"
+    if rc == -22:  # -EINVAL: bad config
+        return "config-error"
+    if rc == -12:  # -ENOMEM
+        return "resource-error"
+    return "unknown-lib"
+
+
+def lib_fail_class(hrc, herr):
+    e = herr or ""
+    if ("(bake overflow/" in e or
+            "(baked peak overflow/" in e or
+            "(encode refusal/" in e):
+        return "encode-refusal"
+    for pat in (r"ac4enc_open failed rc=(-?\d+)",
+                r"spectral lines rc=(-?\d+)",
+                r"measure failed (-?\d+)"):
+        m = re.search(pat, e)
+        if m:
+            return _rc_class(int(m.group(1)))
+    if hrc == 2:
+        return "config-error"  # usage/io/pre-encode failure
+    return "unknown-lib"
+
+
+def oracle_fail_class(orc, out, err):
+    text = (out or "") + "\n" + (err or "")
+    if orc is not None and orc < 0:
+        return "crash"
+    if "ERROR:" in text or "Summary of errors" in text:
+        return "config-error"
+    if "Step 2/2" in text:
+        return "encode-refusal"  # silent exit-1 refusal
+    return "unknown-oracle"
+
+
 def build_cases():
     files = sorted(os.listdir(VEC))
     cases = []
@@ -209,6 +252,11 @@ def build_cases():
         dict(tag="var:bake-6", f=V("st_dual_24000.wav"),
              fmt="wav", ch=2, layout="stereo", rate=64,
              bake="-6.0"),
+        # m8 pin: both sides refuse (baked peak overflow) with
+        # equal causes -> BOTH-FAIL, never CAUSE-MISMATCH.
+        dict(tag="var:refuse-bake60",
+             f=V("st_sine1k_24000.wav"), fmt="wav", ch=2,
+             layout="stereo", rate=64, bake="60"),
         dict(tag="var:rate256", f=V("st_sweep_24000.wav"),
              fmt="wav", ch=2, layout="stereo", rate=256),
         dict(tag="var:rate320mc", f=V("mc_sweep_24000.wav"),
@@ -378,9 +426,18 @@ def run_case(i, c):
                 "BOTH-FAIL unmet o=%d h=%d dense=%s %s" %
                 (orc, hrc, meta_dense(fmeta), herr[:120]), "")
     if orc != 0 and hrc != 0:
-        # Consistent refusal (e.g. bake peak overflow on both).
-        return (tag, "BOTH-FAIL", "o=%d h=%d %s" %
-                (orc, hrc, (h.stderr or "")[:120]), "")
+        # m8: consistent refusal needs equal causes.
+        lc = lib_fail_class(hrc, h.stderr)
+        oc = oracle_fail_class(orc, o.stdout, o.stderr)
+        if lc == oc and not lc.startswith("unknown"):
+            return (tag, "BOTH-FAIL",
+                    "o=%d h=%d cause=%s %s" %
+                    (orc, hrc, lc, (h.stderr or "")[:100]),
+                    "")
+        return (tag, "CAUSE-MISMATCH",
+                "o=%d h=%d lib=%s oracle=%s %s" %
+                (orc, hrc, lc, oc, (h.stderr or "")[:100]),
+                "")
     if orc != 0 or hrc != 0:
         return (tag, "RC-FAIL o=%d h=%d" % (orc, hrc),
                 (h.stderr or "")[:200], "")
@@ -441,6 +498,8 @@ def main():
                  "DIVERGE-neutral",
                  "DIVERGE-neutral-LEN"))
     print("BOTH-FAIL (consistent refusal): %d" % nboth)
+    print("CAUSE-MISMATCH (refusal cause differs): %d" %
+          sum(1 for r in rows if r[1] == "CAUSE-MISMATCH"))
     print("LIB-AHEAD (oracle S1 refusal, lib encodes): %d" %
           nahead)
     print("PASS %d/%d, non-parity %d" %
