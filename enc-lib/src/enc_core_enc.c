@@ -421,6 +421,13 @@ parse_interval(const char *interval, long long *step)
         return -1;
     if (*step < 2)
         return -1;
+    /* FUZZ-CENC crash-2: pycompat_int saturates huge decimals at
+     * LLONG_MAX, and 1 + LLONG_MAX overflows in the iframe loops
+     * (iframe_set/joint_iframes) and enc_step_open's if_j init.
+     * Reject exactly the overflowing step (verified boundary:
+     * LLONG_MAX-1 encodes, LLONG_MAX aborts) — loud -EINVAL. */
+    if (*step >= LLONG_MAX)
+        return -1;
     return 1;
 }
 

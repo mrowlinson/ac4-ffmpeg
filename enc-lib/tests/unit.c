@@ -498,6 +498,34 @@ t_open_neg2(void)
     CHECK(ac4enc_open(&c, &o) == 0, "decimal interval ok");
     ac4enc_close(c);
     c = NULL;
+    /* FUZZ-CENC crash-2: LLONG_MAX step overflowed 1 + step.
+     * Boundary-exact: LLONG_MAX-1 opens, LLONG_MAX fails. */
+    o.interval = "9223372036854775807";
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "interval LLONG_MAX rejected");
+    o.interval = "99999999999999999999";
+    CHECK(ac4enc_open(&c, &o) == -EINVAL,
+          "saturating interval rejected");
+    o.interval = "9223372036854775806";
+    CHECK(ac4enc_open(&c, &o) == 0,
+          "interval LLONG_MAX-1 opens");
+    ac4enc_close(c);
+    c = NULL;
+    {
+        int set[48];
+        CHECK(enc_core_iframe_set(
+                  48, "9223372036854775807",
+                  NULL, 0, set) < 0,
+              "iframe_set LLONG_MAX rejected");
+        CHECK(enc_core_iframe_set(
+                  48, "9223372036854775806",
+                  NULL, 0, set) == 2,
+              "iframe_set LLONG_MAX-1 marks {0,1}");
+        CHECK(enc_core_joint_iframes(
+                  48, 0, 48, "9223372036854775807",
+                  NULL, 0, set) < 0,
+              "joint_iframes LLONG_MAX rejected");
+    }
     o.interval = NULL;
     o.has_bake = 1;
     o.bake_db = NAN;
