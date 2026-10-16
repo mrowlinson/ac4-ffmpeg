@@ -2000,6 +2000,11 @@ static void br_oamd_common(br_t *b) {
  * pres ndot. Returns 0 ok, -1 reject (err or cap). */
 static int br_pres_v1(br_t *b, int rate, int *gis, int *ngi, int *frf,
                       int *pver, int *pndot) {
+    /* FUZZ-DEC-1: cfg==6 early path skipped the else block that assigns
+     * ngi and frf, leaving caller stack garbage (UBSan OOB at the gis
+     * row scan). Initialize all outputs up front. */
+    *ngi = 0;
+    *frf = 1;
     *pndot = 0;
     int single = (int)br_u(b, 1);
     int cfg = -1;
@@ -2328,6 +2333,11 @@ static int toc_parse_bv2(const uint8_t *raw, size_t rawlen, toc_t *t,
                 maxg = gis[i][k];
     }
     if (maxg < 0 || maxg >= E4_MAXGRP)
+        return -1;
+    /* FUZZ-DEC-1: fail loud when the selected presentation carries no
+     * groups (cfg==6 EMDF-only shape). Init alone would yield
+     * bed_si=-1 downstream (sizes[-1] OOB); reject instead. */
+    if (ngis[sel] <= 0)
         return -1;
     int frfsel = frfs[sel];
     if (frfsel < 1 || frfsel > 4)
