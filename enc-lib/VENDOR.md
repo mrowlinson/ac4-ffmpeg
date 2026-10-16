@@ -39,5 +39,28 @@ as the equivalence oracle in `tests/unit.c`):
 
 Regeneration: re-copy the 30 files, re-apply the appended
 `/* ac4enc-lib H1 */` blocks (header block + trailing .c
-block). Verify with `diff` (expect 0 `^<` lines) plus
+block) plus the S1 fix hunks below. Verify with `diff`
+(expect 0 `^<` lines outside the S1 hunks) plus
 `tests/unit.c` `_m`-vs-original equivalence.
+
+## Fix delta (ff/enc-libfix, S1, 2026-10-16)
+
+No longer purely additive: `enc_core_enc.c` carries a
+behavioral fix + diagnostic (upstream `dolby-ac4-cleanroom`
+left untouched, read-only oracle).
+
+- Root cause: the sparse-iframe fr0 stamp is legitimately
+  11 bytes (`enc.py compose_sub0` sparse branch), but all 4
+  stereo bake prologues demanded `nfr0 == 12` → silent -1
+  on sparse-impulse input (S1).
+- Fix (4 stereo drivers): accept `sparse ? 11 : 12` and
+  store the actual length (`n_fr0 = nfr0`; downstream
+  splice is length-agnostic).
+- Loud diagnostic: `enc_core_last_error()` (new, declared
+  in `enc_core.h`) + `ac4enc_last_error()` passthrough;
+  all 8 drivers clear it on entry and the 8
+  stamp-composition checks record refusals; `encharness`
+  prints it on flush failure.
+- `diff` vs upstream now shows the fix hunks as `^<`/`^>`
+  pairs in `enc_core_enc.c` (8 check sites + `#include
+  <stdio.h>` + error block); everything else still 0 `^<`.

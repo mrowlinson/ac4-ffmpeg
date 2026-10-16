@@ -22,6 +22,26 @@ Per-file: 71/73 vector files pass outright; the 2
 exceeds s16 — oracle exits 1 silently, lib returns -EIO).
 Same files pass at `--target-db 0` (incl. dedicated case).
 
+## Rerun 2026-10-16 (ff/enc-libfix, S1): still 100/102, 0 non-parity
+
+The S1 fix (sparse-iframe fr0 stamp is legitimately 11
+bytes, not 12 — `enc_core_enc.c`) flips the 2
+`st_noise_2049` runs from BOTH-FAIL to **LIB-AHEAD**: the
+frozen oracle still refuses them (silent exit 1, same S1
+bug), while the lib now encodes. The v1 "bake peak
+overflow" diagnosis was wrong — those vectors are
+sparse-flagged (m=-9.18, f=0.537, tf=0.5, peak=9830; bake
+gain -11.93 dB never overflows) and always refused at the
+stamp-length check. Byte-proof that lib-ahead is correct:
+lib bare frames are byte-identical to `encoder/enc.py`
+`encode_pcm` output (1366/1366 B on `st_noise_2049.wav`;
+17020/17020 B on the S1 vector `imp-V300.wav`), and the
+S1 output oracle-decodes cleanly (48 frames, rej 1 —
+same shape as the tone control). The suite encodes the
+new expectation (`expect="LIB-AHEAD"`: oracle rc!=0,
+lib rc==0, lib frames>0); all other 106 verdicts are
+unchanged, incl. all 6 neutral-divergence ndiff counts.
+
 ## Matrix (all PASS unless noted)
 
 - Stereo s16 wav: 10 contents x {2049, 0.5s, 5s} + 8
@@ -68,7 +88,7 @@ in the priming frame differ. All else follows the bake gain.
 ```sh
 make && make harness
 python3 tests/gen_vectors.py $SCRATCH/vectors
-python3 tests/parity_run.py   # expect 100 PASS + 2 BOTH-FAIL + 6 neutral
+python3 tests/parity_run.py   # expect 100 PASS + 2 LIB-AHEAD + 6 neutral
 ```
 
 Full per-run rows: `parity_results.csv` (copied beside this

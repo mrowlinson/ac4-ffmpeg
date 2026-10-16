@@ -105,6 +105,12 @@ def build_cases():
             cases.append(dict(tag=fn + "_851", f=p, fmt="wav",
                               ch=8, layout="5.1", rate=128,
                               fold="851"))
+    # S1 class: sparse-flagged (f=0.537, tf=0.5) short noise.
+    # The frozen oracle refuses these (silent exit 1); the lib
+    # encodes, byte-identical to the Python reference (PARITY.md).
+    for c in cases:
+        if c["tag"] in ("st_noise_2049.s16", "st_noise_2049.wav"):
+            c["expect"] = "LIB-AHEAD"
     # 6ch -> stereo fold parity on 3 existing 5.1 wavs.
     for fn in ("mc_sine440_24000.wav", "mc_noise_96000.wav",
                "mc_sweep_2049.wav"):
@@ -271,6 +277,23 @@ def run_case(i, c):
         hrc = h.returncode
     except subprocess.TimeoutExpired:
         return (tag, "TIMEOUT-lib", "", "")
+    if c.get("expect") == "LIB-AHEAD":
+        # Frozen oracle still refuses (known S1 sparse-stamp
+        # bug); the lib must encode. Byte-proof vs the Python
+        # reference is recorded in parity/PARITY.md.
+        if orc != 0 and hrc == 0:
+            try:
+                meta = read_meta(fmeta)
+                nfr = meta.get("nframes", 0)
+            except (OSError, ValueError, IndexError):
+                return (tag, "FAIL",
+                        "LIB-AHEAD unreadable meta", "")
+            if nfr > 0:
+                return (tag, "LIB-AHEAD",
+                        "o=%d h=%d frames=%d" % (orc, hrc, nfr),
+                        meta.get("measure", ""))
+        return (tag, "FAIL",
+                "LIB-AHEAD unmet o=%d h=%d" % (orc, hrc), "")
     if orc != 0 and hrc != 0:
         # Consistent refusal (e.g. bake peak overflow on both).
         return (tag, "BOTH-FAIL", "o=%d h=%d %s" %
@@ -329,10 +352,14 @@ def main():
                   flush=True)
     npass = sum(1 for r in rows if r[1] == "PASS")
     nboth = sum(1 for r in rows if r[1] == "BOTH-FAIL")
+    nahead = sum(1 for r in rows if r[1] == "LIB-AHEAD")
     nfail = sum(1 for r in rows if r[1] not in
-                ("PASS", "BOTH-FAIL", "DIVERGE-neutral",
+                ("PASS", "BOTH-FAIL", "LIB-AHEAD",
+                 "DIVERGE-neutral",
                  "DIVERGE-neutral-LEN"))
     print("BOTH-FAIL (consistent refusal): %d" % nboth)
+    print("LIB-AHEAD (oracle S1 refusal, lib encodes): %d" %
+          nahead)
     print("PASS %d/%d, non-parity %d" %
           (npass, sum(1 for r in rows
                       if not r[1].startswith("DIVERGE")), nfail))

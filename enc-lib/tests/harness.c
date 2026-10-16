@@ -648,6 +648,7 @@ main(int argc, char **argv)
                 fprintf(stderr, "error: encode frame %d "
                                 "rc=%d\n",
                         f, erc);
+                rc = 1;
                 goto done;
             }
         }
@@ -671,6 +672,7 @@ main(int argc, char **argv)
             if (erc) {
                 fprintf(stderr, "error: encode tail rc=%d\n",
                         erc);
+                rc = 1;
                 goto done;
             }
         }
@@ -690,8 +692,11 @@ main(int argc, char **argv)
             frc = ac4enc_flush2(ctx, out, sizeof out, &olen,
                                 &is_if);
             if (frc < 0) {
-                fprintf(stderr, "error: flush rc=%d\n",
-                        frc);
+                fprintf(stderr, "error: flush rc=%d%s%s\n",
+                        frc,
+                        ac4enc_last_error()[0] ? " " : "",
+                        ac4enc_last_error());
+                rc = 1;
                 goto done;
             }
             if (frc == 0)

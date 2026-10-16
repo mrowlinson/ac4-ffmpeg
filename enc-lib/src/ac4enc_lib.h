@@ -34,7 +34,9 @@
  *
  * Error model (H8): 0 ok / 1 frame ready / -EINVAL bad arg /
  * -ENOMEM allocation failure / -EIO core encode failure.
- * No other negatives are returned.
+ * No other negatives are returned. After -EIO,
+ * ac4enc_last_error() carries the core diagnostic when the
+ * refusal recorded one (S1 loud failure path).
  */
 #ifndef AC4ENC_LIB_H
 #define AC4ENC_LIB_H
@@ -150,5 +152,10 @@ int ac4enc_measure2(const int *const *chs, const int *lens,
                     int nch, ac4enc_measure_t *out);
 int ac4enc_measure2_f(const double *const *chs, const int *lens,
                       int nch, ac4enc_measure_t *out);
+
+/* Loud core diagnostic (S1): non-empty iff the most recent
+ * core encode call refused with a recorded message. Read
+ * immediately after -EIO. Never NULL. */
+const char *ac4enc_last_error(void);
 
 #endif

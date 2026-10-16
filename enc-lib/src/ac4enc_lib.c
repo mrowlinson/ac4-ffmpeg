@@ -851,3 +851,9 @@ ac4enc_close(ac4enc_ctx_t *c)
     free(c->iframes);
     free(c);
 }
+
+const char *
+ac4enc_last_error(void)
+{
+    return enc_core_last_error();
+}

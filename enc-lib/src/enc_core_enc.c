@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -23,6 +24,35 @@ const uint8_t ENC_CORE_SUB2_DEE[4] = { 0xa0, 0x40, 0x40, 0x00 };
 const uint8_t ENC_CORE_I15_TAIL51[3] = { 0xc9, 0x90, 0x80 };
 const double ENC_CORE_LEG_COMP_51_DB[6] =
     { -3.70, -3.63, -3.76, -3.17, -3.57, -3.59 };
+
+/* Last-error string (S1 loud diagnostic). Cleared on entry
+ * of every public encode driver; set by stamp-composition
+ * refusals. Single global; core is single-threaded (H7). */
+static char core_errmsg[256];
+
+static void
+core_clear_error(void)
+{
+    core_errmsg[0] = '\0';
+}
+
+/* Record a loudness-stamp composition refusal. ni/nfr0 are the
+ * composed I-stamp lengths, want_ni/want_fr0 the accepted ones. */
+static void
+stamp_fail(const char *entry, int sparse, int np6, int ni,
+           int nfr0, int want_ni, int want_fr0)
+{
+    snprintf(core_errmsg, sizeof core_errmsg,
+        "%s: loudness stamp compose refused "
+        "(sparse=%d np6=%d ni=%d nfr0=%d, want 6/%d/%d)",
+        entry, sparse, np6, ni, nfr0, want_ni, want_fr0);
+}
+
+const char *
+enc_core_last_error(void)
+{
+    return core_errmsg;
+}
 
 /* Growable byte buffer for intermediate substream assemblies. */
 typedef struct {
@@ -3227,6 +3257,7 @@ enc_core_encode_pcm(const int *pcmL, int nL, const int *pcmR,
                     int iframe_total, uint8_t *out,
                     size_t outcap)
 {
+    core_clear_error();
     int *bL = NULL, *bR = NULL;
     double *dL = NULL, *dR = NULL;
     uint8_t p6[6], i12[12], s4[4], fr0[12];
@@ -3306,8 +3337,12 @@ enc_core_encode_pcm(const int *pcmL, int nL, const int *pcmR,
             i12);
         nfr0 = enc_core_compose_sub0(1, sparse, sby, c16,
                                      NULL, pid, fr0);
-        if (np6 != 6 || ni12 != 12 || nfr0 != 12)
+        if (np6 != 6 || ni12 != 12 ||
+            nfr0 != (sparse ? 11 : 12)) {
+            stamp_fail("enc_core_encode_pcm", sparse, np6, ni12, nfr0,
+                       12, sparse ? 11 : 12);
             goto done;
+        }
         memcpy(s4, ENC_CORE_SUB2_DEE, 4);
         stampbuf.p6 = p6;
         stampbuf.n_p6 = 6;
@@ -3316,7 +3351,7 @@ enc_core_encode_pcm(const int *pcmL, int nL, const int *pcmR,
         stampbuf.s4 = s4;
         stampbuf.n_s4 = 4;
         stampbuf.fr0 = fr0;
-        stampbuf.n_fr0 = 12;
+        stampbuf.n_fr0 = nfr0;
         stamp = &stampbuf;
         flat_file = f > ENC_CORE_FLAT_F_THRESH;
     } else {
@@ -3717,6 +3752,7 @@ enc_core_encode_pcm_mc(const int *const *chs, const int *lens,
                        const enc_core_drc_t *drc, const int *dmx,
                        uint8_t *out, size_t outcap)
 {
+    core_clear_error();
     int *pcm[6];
     double *dp[6];
     uint8_t p6[6], i15[15], s4[4], fr0[15];
@@ -3866,8 +3902,11 @@ enc_core_encode_pcm_mc(const int *const *chs, const int *lens,
             ENC_CORE_I12_MID_TAIL, pid, dmx, i15);
         np6 = enc_core_compose_sub0(0, 0, sby, 0, NULL, pid,
                                    p6);
-        if (nfr0 != 15 || ni15 != 15 || np6 != 6)
+        if (nfr0 != 15 || ni15 != 15 || np6 != 6) {
+            stamp_fail("enc_core_encode_pcm_mc", 0, np6, ni15, nfr0, 15,
+                       15);
             goto done;
+        }
         memcpy(s4, ENC_CORE_SUB2_DEE, 4);
         stampbuf.p6 = p6;
         stampbuf.n_p6 = 6;
@@ -4197,6 +4236,7 @@ enc_core_encode_pcm_f(const double *pcmL, int nL,
                       int iframe_total, uint8_t *out,
                       size_t outcap)
 {
+    core_clear_error();
     int *bL = NULL, *bR = NULL;
     double *dL = NULL, *dR = NULL;
     uint8_t p6[6], i12[12], s4[4], fr0[12];
@@ -4276,8 +4316,12 @@ enc_core_encode_pcm_f(const double *pcmL, int nL,
             i12);
         nfr0 = enc_core_compose_sub0(1, sparse, sby, c16,
                                      NULL, pid, fr0);
-        if (np6 != 6 || ni12 != 12 || nfr0 != 12)
+        if (np6 != 6 || ni12 != 12 ||
+            nfr0 != (sparse ? 11 : 12)) {
+            stamp_fail("enc_core_encode_pcm_f", sparse, np6, ni12, nfr0,
+                       12, sparse ? 11 : 12);
             goto done;
+        }
         memcpy(s4, ENC_CORE_SUB2_DEE, 4);
         stampbuf.p6 = p6;
         stampbuf.n_p6 = 6;
@@ -4286,7 +4330,7 @@ enc_core_encode_pcm_f(const double *pcmL, int nL,
         stampbuf.s4 = s4;
         stampbuf.n_s4 = 4;
         stampbuf.fr0 = fr0;
-        stampbuf.n_fr0 = 12;
+        stampbuf.n_fr0 = nfr0;
         stamp = &stampbuf;
         flat_file = f > ENC_CORE_FLAT_F_THRESH;
     } else {
@@ -4320,6 +4364,7 @@ enc_core_encode_pcm_mc_f(const double *const *chs,
                          const enc_core_drc_t *drc, const int *dmx,
                          uint8_t *out, size_t outcap)
 {
+    core_clear_error();
     double *fc[6];
     int *pcm[6];
     double *dp[6];
@@ -4448,8 +4493,11 @@ enc_core_encode_pcm_mc_f(const double *const *chs,
             ENC_CORE_I12_MID_TAIL, pid, dmx, i15);
         np6 = enc_core_compose_sub0(0, 0, sby, 0, NULL, pid,
                                    p6);
-        if (nfr0 != 15 || ni15 != 15 || np6 != 6)
+        if (nfr0 != 15 || ni15 != 15 || np6 != 6) {
+            stamp_fail("enc_core_encode_pcm_mc_f", 0, np6, ni15, nfr0, 15,
+                       15);
             goto done;
+        }
         memcpy(s4, ENC_CORE_SUB2_DEE, 4);
         stampbuf.p6 = p6;
         stampbuf.n_p6 = 6;
@@ -4524,6 +4572,7 @@ enc_core_encode_pcm_m(const int *pcmL, int nL, const int *pcmR,
                       const enc_core_measure_t *ms, uint8_t *out,
                       size_t outcap)
 {
+    core_clear_error();
     int *bL = NULL, *bR = NULL;
     double *dL = NULL, *dR = NULL;
     uint8_t p6[6], i12[12], s4[4], fr0[12];
@@ -4595,8 +4644,12 @@ enc_core_encode_pcm_m(const int *pcmL, int nL, const int *pcmR,
             i12);
         nfr0 = enc_core_compose_sub0(1, sparse, sby, c16,
                                      NULL, pid, fr0);
-        if (np6 != 6 || ni12 != 12 || nfr0 != 12)
+        if (np6 != 6 || ni12 != 12 ||
+            nfr0 != (sparse ? 11 : 12)) {
+            stamp_fail("enc_core_encode_pcm_m", sparse, np6, ni12, nfr0,
+                       12, sparse ? 11 : 12);
             goto done;
+        }
         memcpy(s4, ENC_CORE_SUB2_DEE, 4);
         stampbuf.p6 = p6;
         stampbuf.n_p6 = 6;
@@ -4605,7 +4658,7 @@ enc_core_encode_pcm_m(const int *pcmL, int nL, const int *pcmR,
         stampbuf.s4 = s4;
         stampbuf.n_s4 = 4;
         stampbuf.fr0 = fr0;
-        stampbuf.n_fr0 = 12;
+        stampbuf.n_fr0 = nfr0;
         stamp = &stampbuf;
         flat_file = f > ENC_CORE_FLAT_F_THRESH;
     } else if (ms) {
@@ -4639,6 +4692,7 @@ enc_core_encode_pcm_mc_m(const int *const *chs, const int *lens,
                          const enc_core_measure_t *ms, uint8_t *out,
                          size_t outcap)
 {
+    core_clear_error();
     int *pcm[6];
     double *dp[6];
     uint8_t p6[6], i15[15], s4[4], fr0[15];
@@ -4732,8 +4786,11 @@ enc_core_encode_pcm_mc_m(const int *const *chs, const int *lens,
             ENC_CORE_I12_MID_TAIL, pid, dmx, i15);
         np6 = enc_core_compose_sub0(0, 0, sby, 0, NULL, pid,
                                    p6);
-        if (nfr0 != 15 || ni15 != 15 || np6 != 6)
+        if (nfr0 != 15 || ni15 != 15 || np6 != 6) {
+            stamp_fail("enc_core_encode_pcm_mc_m", 0, np6, ni15, nfr0, 15,
+                       15);
             goto done;
+        }
         memcpy(s4, ENC_CORE_SUB2_DEE, 4);
         stampbuf.p6 = p6;
         stampbuf.n_p6 = 6;
@@ -4782,6 +4839,7 @@ enc_core_encode_pcm_f_m(const double *pcmL, int nL,
                         const enc_core_measure_t *ms, uint8_t *out,
                         size_t outcap)
 {
+    core_clear_error();
     int *bL = NULL, *bR = NULL;
     double *dL = NULL, *dR = NULL;
     uint8_t p6[6], i12[12], s4[4], fr0[12];
@@ -4855,8 +4913,12 @@ enc_core_encode_pcm_f_m(const double *pcmL, int nL,
             i12);
         nfr0 = enc_core_compose_sub0(1, sparse, sby, c16,
                                      NULL, pid, fr0);
-        if (np6 != 6 || ni12 != 12 || nfr0 != 12)
+        if (np6 != 6 || ni12 != 12 ||
+            nfr0 != (sparse ? 11 : 12)) {
+            stamp_fail("enc_core_encode_pcm_f_m", sparse, np6, ni12, nfr0,
+                       12, sparse ? 11 : 12);
             goto done;
+        }
         memcpy(s4, ENC_CORE_SUB2_DEE, 4);
         stampbuf.p6 = p6;
         stampbuf.n_p6 = 6;
@@ -4865,7 +4927,7 @@ enc_core_encode_pcm_f_m(const double *pcmL, int nL,
         stampbuf.s4 = s4;
         stampbuf.n_s4 = 4;
         stampbuf.fr0 = fr0;
-        stampbuf.n_fr0 = 12;
+        stampbuf.n_fr0 = nfr0;
         stamp = &stampbuf;
         flat_file = f > ENC_CORE_FLAT_F_THRESH;
     } else if (ms) {
@@ -4899,6 +4961,7 @@ enc_core_encode_pcm_mc_f_m(const double *const *chs,
                            const enc_core_measure_t *ms,
                            uint8_t *out, size_t outcap)
 {
+    core_clear_error();
     double *fc[6];
     int *pcm[6];
     double *dp[6];
@@ -4992,8 +5055,11 @@ enc_core_encode_pcm_mc_f_m(const double *const *chs,
             ENC_CORE_I12_MID_TAIL, pid, dmx, i15);
         np6 = enc_core_compose_sub0(0, 0, sby, 0, NULL, pid,
                                    p6);
-        if (nfr0 != 15 || ni15 != 15 || np6 != 6)
+        if (nfr0 != 15 || ni15 != 15 || np6 != 6) {
+            stamp_fail("enc_core_encode_pcm_mc_f_m", 0, np6, ni15, nfr0, 15,
+                       15);
             goto done;
+        }
         memcpy(s4, ENC_CORE_SUB2_DEE, 4);
         stampbuf.p6 = p6;
         stampbuf.n_p6 = 6;

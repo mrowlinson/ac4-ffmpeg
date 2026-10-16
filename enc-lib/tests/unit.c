@@ -226,11 +226,132 @@ t_equiv(void)
     }
 }
 
+/* S1: sparse-impulse input at the loudness floor must encode.
+ * The sparse-iframe fr0 stamp is legitimately 11 bytes
+ * (enc.py sparse branch); the old `nfr0 != 12` check refused
+ * it with a silent -1. Shape mirrors imp-V300 (24x V=300
+ * single-sample impulses @4096 spacing, stereo 48 kHz). */
+static void
+t_sparse(void)
+{
+    static const uint8_t want_fr0[11] =
+        { 0x60, 0x9c, 0x58, 0x80, 0x03, 0x00, 0xf2, 0xc2,
+          0x54, 0xb5, 0x00 };
+    static uint8_t blob[1 << 20];
+    static uint8_t fr0[12];
+    int ns = 96000;
+    int *L = malloc((size_t)ns * sizeof *L);
+    int *R = malloc((size_t)ns * sizeof *R);
+    int nfr;
+    CHECK(L && R, "sparse alloc");
+    if (!L || !R) {
+        free(L);
+        free(R);
+        return;
+    }
+    memset(L, 0, (size_t)ns * sizeof *L);
+    memset(R, 0, (size_t)ns * sizeof *R);
+    for (int s = 0; s < ns; s += 4096) {
+        L[s] = 300;
+        R[s] = 300;
+    }
+    /* Stamp shapes. */
+    nfr = enc_core_compose_sub0(1, 1, 0x60, 0, NULL, 0x9c,
+                                fr0);
+    CHECK(nfr == 11, "sparse fr0 is 11 bytes");
+    CHECK(!memcmp(fr0, want_fr0, 11), "sparse fr0 bytes");
+    nfr = enc_core_compose_sub0(1, 0, 0x60, 0x1230, NULL,
+                                0x9c, fr0);
+    CHECK(nfr == 12, "dense fr0 stays 12 bytes");
+    /* Core int path encodes (was silent -1). */
+    {
+        int got = enc_core_encode_pcm(
+            L, ns, R, ns, 64, "stereo", "1sec", "zero",
+            NULL, 1, 1, -24.0, 0, 0.0, 0, NULL, 0,
+            "manual", NULL, NULL, 1, 0, -1, blob,
+            sizeof blob);
+        CHECK(got > 0, "sparse core encode succeeds");
+        CHECK(enc_core_last_error()[0] == '\0',
+              "no error recorded on success");
+    }
+    /* Lib path (_m via caller measure) drains 49 frames. */
+    {
+        ac4enc_ctx_t *c = NULL;
+        ac4enc_opts_t o;
+        ac4enc_measure_t m;
+        const int *chs[2] = { L, R };
+        int lens[2] = { ns, ns };
+        static uint8_t big[AC4ENC_OUTCAP_SAFE];
+        int full = ns / AC4ENC_FRAME_SAMPLES;
+        int rem = ns % AC4ENC_FRAME_SAMPLES;
+        int nframes = 0, frc;
+        size_t olen = 0;
+        memset(&o, 0, sizeof o);
+        CHECK(ac4enc_measure2(chs, lens, 2, &m) == 0,
+              "sparse measure ok");
+        CHECK(m.tf_tone < 0.6 && m.f_flat > 0.5,
+              "test vector is sparse-flagged");
+        o.layout = "stereo";
+        o.rate_kbps = 64;
+        o.interval = "1sec";
+        o.ns2_tone = 1;
+        o.shorts = 1;
+        o.priming = 1;
+        o.iframe_total = -1;
+        o.target_db = -24.0;
+        o.has_measure = 1;
+        o.m_db = m.m_db;
+        o.f_flat = m.f_flat;
+        o.tf_tone = m.tf_tone;
+        o.in_peak = m.in_peak;
+        o.d_peak = m.d_peak;
+        o.has_d_peak = m.has_d_peak;
+        CHECK(ac4enc_open(&c, &o) == 0, "sparse lib open");
+        if (c) {
+            for (int f = 0; f < full; f++) {
+                const int *rr[2] = {
+                    L + f * AC4ENC_FRAME_SAMPLES,
+                    R + f * AC4ENC_FRAME_SAMPLES
+                };
+                if (ac4enc_encode_frame(c, rr, NULL, 0,
+                                        NULL)) {
+                    CHECK(0, "sparse lib feed");
+                    break;
+                }
+            }
+            if (rem > 0) {
+                const int *rr[2] = {
+                    L + full * AC4ENC_FRAME_SAMPLES,
+                    R + full * AC4ENC_FRAME_SAMPLES
+                };
+                CHECK(ac4enc_encode_tail(c, rr, rem, NULL,
+                                         0, NULL) == 0,
+                      "sparse lib tail");
+            }
+            for (;;) {
+                frc = ac4enc_flush2(c, big, sizeof big,
+                                    &olen, NULL);
+                if (frc <= 0)
+                    break;
+                nframes++;
+            }
+            CHECK(frc == 0 && nframes == 49,
+                  "sparse lib drains 49 frames");
+            CHECK(ac4enc_last_error()[0] == '\0',
+                  "lib error empty on success");
+            ac4enc_close(c);
+        }
+    }
+    free(L);
+    free(R);
+}
+
 int
 main(void)
 {
     t_misuse();
     t_equiv();
+    t_sparse();
     if (!fails)
         printf("unit: all pass\n");
     return fails ? 1 : 0;
