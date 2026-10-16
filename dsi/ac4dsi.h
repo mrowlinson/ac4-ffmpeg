@@ -127,13 +127,62 @@ void ac4dsi_stream_init(ac4dsi_stream_t *s);
  */
 void ac4dsi_pres_init_v1(ac4dsi_pres_t *p);
 
+/* DSI channel-layout ids as lavc channel_layout bitmasks
+ * (libavutil/channel_layout.h). Values are pinned to the lavc
+ * AV_CH_LAYOUT_* bits and cross-checked against the real headers by the
+ * putbits suite (_Static_assert in dsi_putbits_test.c):
+ *  - STEREO  = FL|FR (0x3)
+ *  - 5POINT1 = FL|FR|FC|LFE|SL|SR (0x60f: the SIDE variant the lavc
+ *    encoder wrapper accepts as AV_CHANNEL_LAYOUT_5POINT1).
+ * The BACK variant (0x3f) is NOT accepted: the wrapper rejects it too,
+ * so mapping it here would emit DSI the encoder can never produce. */
+typedef enum ac4dsi_chmask {
+    AC4DSI_CHMASK_STEREO  = 0x3,
+    AC4DSI_CHMASK_5POINT1 = 0x60f
+} ac4dsi_chmask_t;
+
+/* One row of the lavc-mask -> DSI channel-trio mapping table. */
+typedef struct {
+    uint64_t lavc_mask;     /* AV_CH_LAYOUT_* bits (ac4dsi_chmask_t) */
+    uint8_t  md_compat;
+    uint8_t  ch_mode;
+    uint32_t channel_groups;
+} ac4dsi_layout_map_t;
+
+#define AC4DSI_N_LAYOUTS 2
+extern const ac4dsi_layout_map_t ac4dsi_layout_map[AC4DSI_N_LAYOUTS];
+
+/**
+ * Set the channel trio (md_compat, ch_mode, channel_groups) from a lavc
+ * channel_layout bitmask (ac4dsi_chmask_t). This is the encoder-wiring
+ * form (DSI-12): pass avctx->ch_layout.u.mask straight in.
+ *
+ * On success the trio is written; on failure *p is untouched.
+ *
+ * @return AC4DSI_OK, or AC4DSI_EINVAL on NULL pres / unknown mask.
+ */
+int ac4dsi_pres_set_layout_mask(ac4dsi_pres_t *p, uint64_t lavc_mask);
+
+#if defined(__GNUC__) || defined(__clang__)
+#define AC4DSI_DEPRECATED \
+    __attribute__((deprecated("use ac4dsi_pres_set_layout_mask instead")))
+#else
+/* No deprecation spelling on this compiler; still legacy, see below. */
+#define AC4DSI_DEPRECATED
+#endif
+
 /**
  * Set the channel trio (md_compat, ch_mode, channel_groups) from a layout
  * name: "stereo" (0/1/0x000001) or "5.1" (1/4/0x000047).
  *
+ * LEGACY (DSI-12): kept for CLI/test convenience; new code (and the lavc
+ * encoder wiring) uses ac4dsi_pres_set_layout_mask(). Implemented as a
+ * thin shim over the mask table, so both spellings stay consistent.
+ *
  * @return AC4DSI_OK, or AC4DSI_EINVAL on unknown layout.
  */
-int ac4dsi_pres_set_layout(ac4dsi_pres_t *p, const char *layout);
+int ac4dsi_pres_set_layout(ac4dsi_pres_t *p, const char *layout)
+    AC4DSI_DEPRECATED;
 
 /**
  * Table E.8 wait_frames -> bit_rate_mode rule: 0 -> 1 (CBR), 1..6 -> 2

@@ -1,12 +1,13 @@
 /* dsi_test.c - byte-exact golden tests + unit negatives for ac4dsi.
  *
- * Goldens: DSI-CONTRACT.md section 5 (own dac4 extraction from ff-corpus
- * MP4s, probe cross-checked 272/272, 272/272, 416/416 bits, 0 skip).
+ * Vectors come from dsi_goldens.h (shared with the putbits suite so the
+ * two suites can never drift apart on inputs).
  */
 #include <stdio.h>
 #include <string.h>
 
 #include "ac4dsi.h"
+#include "dsi_goldens.h"
 
 static int fails = 0;
 
@@ -14,40 +15,6 @@ static int fails = 0;
     if (!(cond)) { printf("FAIL %s:%d: ", __FILE__, __LINE__); \
         printf(__VA_ARGS__); printf("\n"); fails++; } \
 } while (0)
-
-/* Goldens as raw bytes (contract hex, spaces stripped). */
-static const uint8_t G_DASHIF[34] = {
-    0x20, 0xa4, 0x01, 0x80, 0x96, 0x30, 0x00, 0x00, 0x00, 0x0f, 0xff, 0xff,
-    0xff, 0xf0, 0x01, 0x12, 0xf8, 0xa8, 0x00, 0x00, 0x42, 0x00, 0x00, 0x02,
-    0x50, 0x10, 0x00, 0x00, 0x03, 0x10, 0x99, 0x5b, 0x80, 0x80
-};
-static const uint8_t G_LIVESIM2[34] = {
-    0x20, 0xa6, 0x01, 0x80, 0x96, 0x30, 0x00, 0x00, 0x00, 0x0f, 0xff, 0xff,
-    0xff, 0xf0, 0x01, 0x12, 0xf9, 0xa8, 0x00, 0x00, 0x48, 0x00, 0x00, 0x8e,
-    0x50, 0x10, 0x00, 0x00, 0x8f, 0x10, 0x99, 0x5b, 0x80, 0x80
-};
-static const uint8_t G_BELIEVER[52] = {
-    0x20, 0xba, 0x02, 0x40, 0x00, 0x7d, 0x00, 0x1f, 0xff, 0xff, 0xff, 0xe0,
-    0x02, 0x12, 0xf8, 0x80, 0x00, 0x00, 0x42, 0x00, 0x00, 0x02, 0x50, 0x10,
-    0x00, 0x00, 0x03, 0x10, 0x99, 0x5b, 0xa0, 0xc0, 0x01, 0x12, 0xf8, 0x80,
-    0x00, 0x00, 0x42, 0x00, 0x00, 0x02, 0x50, 0x10, 0x00, 0x00, 0x03, 0x10,
-    0x99, 0x5b, 0x80, 0xc0
-};
-/* Uuid golden: 5.1 defaults, 128k, program id 300 + 16x0xAB uuid.
- * Hand-verified field-by-field (short=300, mode 2, rate 0x1f400, uuid
- * bytes verbatim in bit order); independent probe re-parsed exact. */
-static const uint8_t G_UUID[50] = {
-    0x20, 0xba, 0x01, 0x80, 0x96, 0x6a, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea,
-    0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0xe0, 0x00, 0x1f,
-    0x40, 0x0f, 0xff, 0xff, 0xff, 0xf0, 0x01, 0x12, 0xf9, 0x80, 0x00, 0x00,
-    0x48, 0x00, 0x00, 0x8e, 0x50, 0x10, 0x00, 0x00, 0x8f, 0x10, 0x99, 0x5b,
-    0x80, 0x80
-};
-/* Believer pres0: pv2, 18 opaque bytes (payload[14:32]), round-tripped. */
-static const uint8_t BELIEVER_PV2[18] = {
-    0xf8, 0x80, 0x00, 0x00, 0x42, 0x00, 0x00, 0x02, 0x50, 0x10, 0x00, 0x00,
-    0x03, 0x10, 0x99, 0x5b, 0xa0, 0xc0
-};
 
 static void hexdump(const char *tag, const uint8_t *a, const uint8_t *b,
                     size_t n)
@@ -82,60 +49,26 @@ static void check_golden(const char *name, const ac4dsi_stream_t *s,
     }
 }
 
-static void wild_stream(ac4dsi_stream_t *s, uint8_t fr_idx)
-{
-    ac4dsi_stream_init(s);
-    s->frame_rate_index = fr_idx;
-    s->b_program_id = 1;
-    s->short_program_id = 300;
-    s->bit_rate_mode = 3;
-    s->bit_rate = 0;
-    s->bit_rate_precision = 0xFFFFFFFFu;
-}
-
 static void test_goldens(void)
 {
     ac4dsi_stream_t s;
     ac4dsi_pres_t p[2];
+    size_t n_pres = 0;
 
-    /* dashif: stereo wild shape, fr_idx 2, pres_id 10. */
-    wild_stream(&s, 2);
-    ac4dsi_pres_init_v1(&p[0]);
-    CHECK(ac4dsi_pres_set_layout(&p[0], "stereo") == AC4DSI_OK, "stereo");
-    p[0].presentation_id = 10;
-    check_golden("dashif", &s, p, 1, G_DASHIF, sizeof(G_DASHIF));
+    dsi_golden_dashif(&s, p, &n_pres);
+    check_golden("dashif", &s, p, n_pres, DSI_G_DASHIF,
+                 sizeof(DSI_G_DASHIF));
 
-    /* livesim2: 5.1 wild shape, fr_idx 3, pres_id 10. */
-    wild_stream(&s, 3);
-    ac4dsi_pres_init_v1(&p[0]);
-    CHECK(ac4dsi_pres_set_layout(&p[0], "5.1") == AC4DSI_OK, "5.1");
-    p[0].presentation_id = 10;
-    check_golden("livesim2", &s, p, 1, G_LIVESIM2, sizeof(G_LIVESIM2));
+    dsi_golden_livesim2(&s, p, &n_pres);
+    check_golden("livesim2", &s, p, n_pres, DSI_G_LIVESIM2,
+                 sizeof(DSI_G_LIVESIM2));
 
-    /* believer: no program id, mode2/256000, pv2-opaque + v1(pres_id 0,
-     * immersive 1), fr_idx 13. */
-    ac4dsi_stream_init(&s);
-    CHECK(ac4dsi_mode_for_wait_frames(6) == 2, "wait6->mode2");
-    s.bit_rate_mode = ac4dsi_mode_for_wait_frames(6);
-    s.bit_rate = 256000;
-    memset(&p[0], 0, sizeof(p[0]));
-    p[0].presentation_version = 2;
-    p[0].opaque = BELIEVER_PV2;
-    p[0].opaque_len = sizeof(BELIEVER_PV2);
-    ac4dsi_pres_init_v1(&p[1]);
-    p[1].immersive_indicator = 1;
-    check_golden("believer", &s, p, 2, G_BELIEVER, sizeof(G_BELIEVER));
+    dsi_golden_believer(&s, p, &n_pres);
+    check_golden("believer", &s, p, n_pres, DSI_G_BELIEVER,
+                 sizeof(DSI_G_BELIEVER));
 
-    /* uuid: 5.1, 128k, program id 300 + uuid 0xAB * 16. */
-    ac4dsi_stream_init(&s);
-    s.bit_rate = 128000;
-    s.b_program_id = 1;
-    s.short_program_id = 300;
-    s.b_uuid = 1;
-    memset(s.program_uuid, 0xAB, sizeof(s.program_uuid));
-    ac4dsi_pres_init_v1(&p[0]);
-    CHECK(ac4dsi_pres_set_layout(&p[0], "5.1") == AC4DSI_OK, "5.1 uuid");
-    check_golden("uuid", &s, p, 1, G_UUID, sizeof(G_UUID));
+    dsi_golden_uuid(&s, p, &n_pres);
+    check_golden("uuid", &s, p, n_pres, DSI_G_UUID, sizeof(DSI_G_UUID));
 }
 
 /* Max-length (63) language tag: boundary-legal, bytes verbatim. The tag
@@ -149,13 +82,7 @@ static void test_tag63(void)
     size_t len = 0, i;
     int rc;
 
-    ac4dsi_stream_init(&s);
-    s.bit_rate = 64000;
-    ac4dsi_pres_init_v1(&p);
-    for (i = 0; i < 63; i++)
-        tag[i] = (char)(i + 1); /* 1..63, all nonzero, all distinct */
-    tag[63] = '\0';
-    p.language_tag = tag;
+    dsi_shape_tag63(&s, &p, tag);
 
     memset(out, 0xAA, sizeof(out));
     rc = ac4dsi_serialize(&s, &p, 1, out, sizeof(out), &len);
@@ -196,17 +123,10 @@ static void test_opaque_escape(void)
     ac4dsi_pres_t p;
     static uint8_t op[300];
     static uint8_t out[512];
-    size_t len = 0, i;
+    size_t len = 0;
     int rc;
 
-    ac4dsi_stream_init(&s);
-    s.bit_rate = 64000;
-    memset(&p, 0, sizeof(p));
-    p.presentation_version = 2;
-    for (i = 0; i < sizeof(op); i++)
-        op[i] = (uint8_t)(i * 7 + 1);
-    p.opaque = op;
-    p.opaque_len = sizeof(op);
+    dsi_shape_escape(&s, &p, op);
 
     rc = ac4dsi_serialize(&s, &p, 1, out, sizeof(out), &len);
     /* 12 B header + pv + 0xFF + u16(45) + 300 = 316. */
@@ -221,6 +141,100 @@ static void test_opaque_escape(void)
     } else if (rc == AC4DSI_OK && len == 316) {
         printf("ok opaque-escape (300 B round-trip)\n");
     }
+}
+
+/* Mask-enum layout API (DSI-12): table pins + exotic rejects. Literals
+ * below are the lavc AV_CH_LAYOUT_* bits (verified against the real
+ * libavutil headers by _Static_assert in dsi_putbits_test.c). */
+static void test_layout_masks(void)
+{
+    /* Exotics: near-misses and real lavc layouts we must NOT map.
+     * 0x3f is the trap: AV_CH_LAYOUT_5POINT1_BACK (the wrapper takes
+     * the 0x60f SIDE variant, so 0x3f must stay EINVAL here too). */
+    static const uint64_t exotics[] = {
+        0x0ULL, 0x1ULL, 0x2ULL, 0x4ULL /* mono */, 0x7ULL,
+        0x33ULL /* quad */, 0x3fULL /* 5.1-back */,
+        0x63fULL /* 7.1 */, 0x607ULL /* 5.1 minus surrounds */,
+        0x60eULL /* 5.1 minus FL */, 0xe0fULL /* 5.1 + top-center */,
+        0x60fULL | (1ULL << 32) /* 5.1 + stray high bit */,
+        0x8000000000000003ULL /* stereo + stray high bit */,
+        0xFFFFFFFFFFFFFFFFULL
+    };
+    ac4dsi_pres_t p;
+    size_t i;
+    unsigned b;
+    int rc;
+
+    /* Literals pinned (lavc cross-check is in the putbits suite). */
+    CHECK(AC4DSI_CHMASK_STEREO == 0x3, "stereo mask literal");
+    CHECK(AC4DSI_CHMASK_5POINT1 == 0x60f, "5.1 mask literal");
+
+    /* Table count cannot drift from the table itself. */
+    CHECK(AC4DSI_N_LAYOUTS == 2, "n_layouts==2");
+    CHECK(sizeof(ac4dsi_layout_map) / sizeof(ac4dsi_layout_map[0]) ==
+          AC4DSI_N_LAYOUTS, "table size matches count");
+
+    /* Every table row round-trips through the setter. */
+    for (i = 0; i < AC4DSI_N_LAYOUTS; i++) {
+        ac4dsi_pres_init_v1(&p);
+        p.md_compat = 7;
+        p.ch_mode = 31;
+        p.channel_groups = 0x3FFFFu;
+        rc = ac4dsi_pres_set_layout_mask(&p,
+                                         ac4dsi_layout_map[i].lavc_mask);
+        CHECK(rc == AC4DSI_OK, "row %lu rc=%d", (unsigned long)i, rc);
+        CHECK(p.md_compat == ac4dsi_layout_map[i].md_compat &&
+              p.ch_mode == ac4dsi_layout_map[i].ch_mode &&
+              p.channel_groups == ac4dsi_layout_map[i].channel_groups,
+              "row %lu trio", (unsigned long)i);
+    }
+
+    /* Exact trios pinned (regression anchor, not just self-consistency). */
+    ac4dsi_pres_init_v1(&p);
+    CHECK(ac4dsi_pres_set_layout_mask(&p, AC4DSI_CHMASK_STEREO) ==
+          AC4DSI_OK, "stereo rc");
+    CHECK(p.md_compat == 0 && p.ch_mode == 1 && p.channel_groups == 1u,
+          "stereo trio %u/%u/0x%x", p.md_compat, p.ch_mode,
+          p.channel_groups);
+    CHECK(ac4dsi_pres_set_layout_mask(&p, AC4DSI_CHMASK_5POINT1) ==
+          AC4DSI_OK, "5.1 rc");
+    CHECK(p.md_compat == 1 && p.ch_mode == 4 && p.channel_groups == 0x47u,
+          "5.1 trio %u/%u/0x%x", p.md_compat, p.ch_mode, p.channel_groups);
+
+    /* NULL pres rejects. */
+    CHECK(ac4dsi_pres_set_layout_mask(NULL, AC4DSI_CHMASK_STEREO) ==
+          AC4DSI_EINVAL, "mask null pres");
+
+    /* Exotics reject and leave the trio untouched. */
+    for (i = 0; i < sizeof(exotics) / sizeof(exotics[0]); i++) {
+        ac4dsi_pres_init_v1(&p);
+        p.md_compat = 7;
+        p.ch_mode = 31;
+        p.channel_groups = 0x3FFFFu;
+        rc = ac4dsi_pres_set_layout_mask(&p, exotics[i]);
+        CHECK(rc == AC4DSI_EINVAL, "exotic 0x%llx rc=%d",
+              (unsigned long long)exotics[i], rc);
+        CHECK(p.md_compat == 7 && p.ch_mode == 31 &&
+              p.channel_groups == 0x3FFFFu, "exotic 0x%llx untouched",
+              (unsigned long long)exotics[i]);
+    }
+    /* Every single-bit mask rejects (no 1-channel layout maps). */
+    for (b = 0; b < 64; b++) {
+        ac4dsi_pres_init_v1(&p);
+        rc = ac4dsi_pres_set_layout_mask(&p, 1ULL << b);
+        CHECK(rc == AC4DSI_EINVAL, "single bit %u rc=%d", b, rc);
+    }
+
+    /* Legacy string shim (DSI-12): same trios as the mask form. */
+    ac4dsi_pres_init_v1(&p);
+    CHECK(ac4dsi_pres_set_layout(&p, "stereo") == AC4DSI_OK, "shim stereo");
+    CHECK(p.md_compat == 0 && p.ch_mode == 1 && p.channel_groups == 1u,
+          "shim stereo trio");
+    CHECK(ac4dsi_pres_set_layout(&p, "5.1") == AC4DSI_OK, "shim 5.1");
+    CHECK(p.md_compat == 1 && p.ch_mode == 4 && p.channel_groups == 0x47u,
+          "shim 5.1 trio");
+
+    printf("layout-masks done\n");
 }
 
 static void test_negatives(void)
@@ -436,6 +450,7 @@ int main(void)
     test_goldens();
     test_tag63();
     test_opaque_escape();
+    test_layout_masks();
     test_negatives();
     if (fails == 0)
         printf("ALL PASS\n");

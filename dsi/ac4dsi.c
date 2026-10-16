@@ -8,6 +8,7 @@
  * with zero bits.
  */
 #include "ac4dsi.h"
+#include "ac4dsi_priv.h"
 
 #include <string.h>
 
@@ -80,22 +81,38 @@ void ac4dsi_pres_init_v1(ac4dsi_pres_t *p)
     p->immersive_indicator = 0;
 }
 
+/* lavc channel_layout mask -> DSI channel trio (DSI-12). Row order is
+ * the stereo/5.1 pair the lavc encoder wrapper accepts; keep in sync
+ * with the ac4dsi_chmask_t enum. */
+const ac4dsi_layout_map_t ac4dsi_layout_map[AC4DSI_N_LAYOUTS] = {
+    { AC4DSI_CHMASK_STEREO, 0, 1, 0x000001u },
+    { AC4DSI_CHMASK_5POINT1, 1, 4, 0x000047u },
+};
+
+int ac4dsi_pres_set_layout_mask(ac4dsi_pres_t *p, uint64_t lavc_mask)
+{
+    size_t i;
+    if (!p)
+        return AC4DSI_EINVAL;
+    for (i = 0; i < AC4DSI_N_LAYOUTS; i++) {
+        if (ac4dsi_layout_map[i].lavc_mask == lavc_mask) {
+            p->md_compat = ac4dsi_layout_map[i].md_compat;
+            p->ch_mode = ac4dsi_layout_map[i].ch_mode;
+            p->channel_groups = ac4dsi_layout_map[i].channel_groups;
+            return AC4DSI_OK;
+        }
+    }
+    return AC4DSI_EINVAL;
+}
+
 int ac4dsi_pres_set_layout(ac4dsi_pres_t *p, const char *layout)
 {
     if (!p || !layout)
         return AC4DSI_EINVAL;
-    if (strcmp(layout, "stereo") == 0) {
-        p->md_compat = 0;
-        p->ch_mode = 1;
-        p->channel_groups = 0x000001u;
-        return AC4DSI_OK;
-    }
-    if (strcmp(layout, "5.1") == 0) {
-        p->md_compat = 1;
-        p->ch_mode = 4;
-        p->channel_groups = 0x000047u;
-        return AC4DSI_OK;
-    }
+    if (strcmp(layout, "stereo") == 0)
+        return ac4dsi_pres_set_layout_mask(p, AC4DSI_CHMASK_STEREO);
+    if (strcmp(layout, "5.1") == 0)
+        return ac4dsi_pres_set_layout_mask(p, AC4DSI_CHMASK_5POINT1);
     return AC4DSI_EINVAL;
 }
 
@@ -122,13 +139,7 @@ int ac4dsi_mode_for_wait_frames(int wait_frames)
     return 3;
 }
 
-/* Fixed v1 synthesis constants for the observed stereo/5.1 shape. */
-#define V1_CFG_SINGLE_GROUP 0x1Fu
-/* Worst case: 114 fixed bits + 63 tag bytes + align + 8 tail = 632 bits
- * = 79 B, so 80 leaves 1 B margin. (Each tag byte adds a full byte.) */
-#define V1_TMP_SIZE 80u
-
-static size_t v1_cstrlen(const char *s)
+size_t ac4dsi_v1_taglen(const char *s)
 {
     size_t n = 0;
     if (!s)
@@ -138,8 +149,9 @@ static size_t v1_cstrlen(const char *s)
     return n;
 }
 
-/* Validate one v1 presentation's parameters. */
-static int v1_check(const ac4dsi_pres_t *p)
+/* Validate one v1 presentation's parameters. Shared with the PutBitContext
+ * emitter (ac4dsi_priv.h) so both agree on legality. */
+int ac4dsi_v1_check(const ac4dsi_pres_t *p)
 {
     size_t taglen;
     if (p->md_compat > 7u)
@@ -155,7 +167,7 @@ static int v1_check(const ac4dsi_pres_t *p)
         return AC4DSI_EINVAL;
     if (p->content_classifier > 7u)
         return AC4DSI_EINVAL;
-    taglen = v1_cstrlen(p->language_tag);
+    taglen = ac4dsi_v1_taglen(p->language_tag);
     if (taglen > AC4DSI_MAX_LANG)
         return AC4DSI_EINVAL;
     if ((p->de_indicator & ~1) != 0 || (p->immersive_indicator & ~1) != 0)
@@ -168,9 +180,9 @@ static int v1_check(const ac4dsi_pres_t *p)
 /* Write one synthesized v1 block (no pv/pb framing). w must have room. */
 static void v1_write(bitwriter_t *w, const ac4dsi_pres_t *p)
 {
-    size_t taglen = v1_cstrlen(p->language_tag);
+    size_t taglen = ac4dsi_v1_taglen(p->language_tag);
     size_t i;
-    bw_put(w, V1_CFG_SINGLE_GROUP, 5);
+    bw_put(w, AC4DSI_V1_CFG_SINGLE_GROUP, 5);
     bw_put(w, p->md_compat, 3);
     bw_put(w, (uint32_t)(p->b_presentation_id != 0), 1);
     if (p->b_presentation_id)
@@ -217,7 +229,7 @@ static void v1_write(bitwriter_t *w, const ac4dsi_pres_t *p)
     bw_put(w, 0, 1); /* pad */
 }
 
-static int stream_check(const ac4dsi_stream_t *s, size_t n_pres)
+int ac4dsi_stream_check(const ac4dsi_stream_t *s, size_t n_pres)
 {
     if (n_pres < 1u || n_pres > AC4DSI_MAX_PRES)
         return AC4DSI_EINVAL;
@@ -249,13 +261,13 @@ int ac4dsi_serialize(const ac4dsi_stream_t *s, const ac4dsi_pres_t *pres,
                      size_t *out_len)
 {
     bitwriter_t w;
-    uint8_t v1tmp[V1_TMP_SIZE];
+    uint8_t v1tmp[AC4DSI_V1_TMP_SIZE];
     size_t i, need = 0;
     int rc;
 
     if (!s || !pres || !out)
         return AC4DSI_EINVAL;
-    rc = stream_check(s, n_pres);
+    rc = ac4dsi_stream_check(s, n_pres);
     if (rc != AC4DSI_OK)
         return rc;
     for (i = 0; i < n_pres; i++) {
@@ -263,7 +275,7 @@ int ac4dsi_serialize(const ac4dsi_stream_t *s, const ac4dsi_pres_t *pres,
         if (p->presentation_version == 0u)
             return AC4DSI_EINVAL; /* v0 legacy: do not emit */
         if (p->presentation_version == 1u) {
-            rc = v1_check(p);
+            rc = ac4dsi_v1_check(p);
             if (rc != AC4DSI_OK)
                 return rc;
         } else {
@@ -313,7 +325,7 @@ int ac4dsi_serialize(const ac4dsi_stream_t *s, const ac4dsi_pres_t *pres,
             v.over = 0;
             v1_write(&v, p);
             if (v.over || (v.nbits & 7u) != 0u)
-                return AC4DSI_EINVAL; /* defensive: v1_check bounds the
+                return AC4DSI_EINVAL; /* defensive: ac4dsi_v1_check bounds the
                                        * shape to <= 79 B, so v1tmp (80 B)
                                        * cannot overflow; kept in case the
                                        * synthesis shape ever grows */

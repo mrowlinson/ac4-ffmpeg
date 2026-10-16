@@ -12,10 +12,24 @@ cleanroom `dac4_probe.py` parse order (read-only).
 ## Files
 
 - `ac4dsi.h` / `ac4dsi.c` — serializer (`ac4dsi_serialize` + init helpers).
-- `dsi_test.c` — golden byte-exact tests + unit negatives.
+- `ac4dsi_priv.h` — shared validation + wire constants for the two
+  emitters (private, not installed).
+- `ac4dsi_putbits.h` / `ac4dsi_putbits.c` — PutBitContext-based
+  serializer (`ac4dsi_serialize_putbits`, DSI-11). Same contract as
+  `ac4dsi_serialize`, byte-identical output; only the `.c` needs lavc
+  headers. Lib-level only: C-encoder wrapper adoption is a follow-up.
+- `dsi_goldens.h` — golden vectors + shape builders shared by both
+  suites (they can never drift apart on inputs).
+- `dsi_test.c` — golden byte-exact tests + unit negatives + mask-API
+  tests (hand-rolled oracle).
+- `dsi_putbits_test.c` — differential tests (putbits vs oracle) built
+  against the REAL lavc headers; needs a configured ffmpeg tree, see
+  `LAVCBASE`/`LAVCSRC` in the Makefile (defaults to the `ff-C` scratch
+  build; override for an in-tree-configured ffmpeg).
 - `Makefile` — `make test` builds with `-Wall -Wextra -Wpedantic` and runs;
   `make test-werror` adds `-Werror`, `make test-asan` runs the suite under
-  ASan+UBSan.
+  ASan+UBSan. `dsi_test` covers the deprecated string shim, so that one
+  TU compiles with `-Wno-deprecated-declarations` (scoped, commented).
 
 ## API
 
@@ -28,8 +42,12 @@ int rc = ac4dsi_serialize(&s, &p, 1, out, sizeof(out), &len);
 ```
 
 - `presentation_version == 1`: v1 block synthesized (config 0x1F, one
-  channel-coded substream group). Layout helper:
-  `ac4dsi_pres_set_layout(&p, "stereo" | "5.1")`.
+  channel-coded substream group). Layout helper (DSI-12 mask form,
+  pass `avctx->ch_layout.u.mask` straight in):
+  `ac4dsi_pres_set_layout_mask(&p, AC4DSI_CHMASK_STEREO | AC4DSI_CHMASK_5POINT1)`
+  (0x3 / 0x60f, pinned to the lavc `AV_CH_LAYOUT_*` bits; the 0x3f BACK
+  variant is rejected, matching the encoder wrapper). Legacy
+  `ac4dsi_pres_set_layout(&p, "stereo" | "5.1")` shim kept for CLI/test.
 - `presentation_version >= 2`: `opaque`/`opaque_len` copied verbatim
   under pv/pres_bytes framing (opaque round-trip, never parsed).
   Rationale: our encoder TOC emits pv=1 only, and the MP4 muxer wraps
@@ -69,3 +87,11 @@ those bits, so emitting them would be unverifiable.
   uuid-without-prog, 64-char tag, small-buffer ENOSPC with size).
 - ASan+UBSan clean (`make test-asan`); 4 extra shapes (stereo/5.1/uuid/no-content-type)
   re-parsed exact by the independent cleanroom probe.
+- DSI-11: putbits emitter byte-identical to the oracle on all 4 goldens
+  x every cap 0..need+1, tag63/escape shapes, max-opaque (65790),
+  maxed-v1, 4-pres mix, full ch_mode 0..31 sweep, mask-layout sweep,
+  and 3000 deterministic fuzz cases (rc/len/bytes incl. ENOSPC
+  partials), all against the real lavc headers + libavutil link.
+- DSI-12: mask table pins (stereo 0/1/0x1, 5.1 1/4/0x47), exotic
+  rejects (incl. 5.1-BACK 0x3f, 7.1, quad, mono, all single-bit masks),
+  fail-leaves-untouched, string-shim equivalence.
