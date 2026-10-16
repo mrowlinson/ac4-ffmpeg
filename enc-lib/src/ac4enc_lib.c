@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -88,6 +89,9 @@ struct ac4enc_ctx {
     ac4enc_subcode_t err_sub;
     const char *err_stage;
     int err_frame;
+    /* R3 loud refusal: gate + offending values for the bake
+     * subcodes, else "". Follows err_sub (record clears). */
+    char err_detail[256];
 };
 
 static const int kRates[] = { 48, 64, 96, 128, 144, 192, 256,
@@ -173,6 +177,12 @@ ac4enc_err_frame(const ac4enc_ctx_t *c)
     return c ? c->err_frame : -1;
 }
 
+const char *
+ac4enc_err_detail(const ac4enc_ctx_t *c)
+{
+    return c ? c->err_detail : "";
+}
+
 static int
 record(ac4enc_ctx_t *c, ac4enc_subcode_t sub,
        const char *stage, int frame, int rc)
@@ -180,12 +190,23 @@ record(ac4enc_ctx_t *c, ac4enc_subcode_t sub,
     c->err_sub = sub;
     c->err_stage = stage;
     c->err_frame = frame;
+    c->err_detail[0] = '\0';
     /* Protocol + short-buffer errors are retryable (the ctx
      * survives); encode/memory failures are sticky. */
     if (sub != AC4ENC_ESHORTBUF && sub != AC4ENC_EBADCALL &&
         !c->enc_err)
         c->enc_err = rc;
     return rc;
+}
+
+/* Net per-ch bake factor (stereo: b0; mc: (b0*b1)). */
+static double
+net_bake(const ac4enc_ctx_t *c, int ch)
+{
+    double b = c->b0[ch];
+    if (c->bake_two)
+        b *= c->b1[ch];
+    return b;
 }
 
 /* Map an engine return onto the lib error model (sticky). */
@@ -198,12 +219,36 @@ from_engine(ac4enc_ctx_t *c, const char *stage, int rc)
         return rc;
     if (rc == -ENOMEM)
         return record(c, AC4ENC_ENOMEM, stage, frame, rc);
-    if (detail == ENC_STEP_EBAKE)
-        return record(c, AC4ENC_EBAKE_OVERFLOW, stage,
-                      c->fed_total / AC4ENC_FRAME_SAMPLES,
-                      rc);
-    if (detail == ENC_STEP_EPEAK)
-        return record(c, AC4ENC_EBAKE_PEAK, stage, -1, rc);
+    if (detail == ENC_STEP_EBAKE) {
+        int ech = 0, eidx = 0;
+        double x = 0.0, nb;
+        record(c, AC4ENC_EBAKE_OVERFLOW, stage,
+               c->fed_total / AC4ENC_FRAME_SAMPLES, rc);
+        if (enc_step_err_sample(c->eng, &ech, &eidx, &x))
+            ech = eidx = 0;
+        if (ech < 0 || ech >= c->nch)
+            ech = 0;
+        nb = net_bake(c, ech);
+        snprintf(c->err_detail, sizeof c->err_detail,
+                 "bake_round gate: int32 overflow at ch=%d "
+                 "idx=%d (x=%.17g, bake x%.17g)",
+                 ech, eidx, x, nb);
+        return rc;
+    }
+    if (detail == ENC_STEP_EPEAK) {
+        int pk = enc_step_err_peak(c->eng);
+        double nb = 0.0;
+        record(c, AC4ENC_EBAKE_PEAK, stage, -1, rc);
+        for (int ch = 0; ch < c->nch; ch++) {
+            double b = net_bake(c, ch);
+            if (fabs(b) > fabs(nb))
+                nb = b;
+        }
+        snprintf(c->err_detail, sizeof c->err_detail,
+                 "baked peak gate: baked_peak=%d >= 32767 "
+                 "(bake x%.17g)", pk, nb);
+        return rc;
+    }
     if (detail == ENC_STEP_ESHORT)
         return record(c, AC4ENC_ESHORTBUF, stage, frame,
                       rc);
@@ -978,6 +1023,7 @@ ac4enc_reset(ac4enc_ctx_t *c)
     c->err_sub = AC4ENC_EOK;
     c->err_stage = "-";
     c->err_frame = -1;
+    c->err_detail[0] = '\0';
     c->stamp_set = 0;
     rc = open_engine(c);
     if (rc) {

@@ -90,3 +90,24 @@ Regeneration for r2: re-copy upstream, re-apply H1 blocks,
 then re-apply the r2 branch (or cherry-pick `ff/enc-libr2`
 c1). Gates: unit (incl. `_m`-vs-original + lib-vs-core
 equivalence) + parity 100/102.
+
+## r3 delta (ff/enc-libr3: loud peak-gate refusals, ours)
+
+Behavior-preserving: refusal SETS are unchanged (policy (a));
+only diagnostics are added. Upstream `dolby-ac4-cleanroom`
+left untouched.
+
+- `enc_core_enc.c`: `peak_fail()` + calls at all 8 baked-peak
+  gates (4 stereo `peak`, 4 mc `pk`); refusals now record
+  `(entry, baked, gain, in_peak)` via `enc_core_last_error()`.
+- Engine (`enc_core_enc.c` + `enc_step.h`, lib-owned):
+  EBAKE failing-sample locus (`err_ch/idx/val`) +
+  `enc_step_err_peak` / `enc_step_err_sample` accessors.
+- `ac4enc_lib.[hc]`: sticky `err_detail` + public
+  `ac4enc_err_detail()` (gate + values for the bake
+  subcodes; cleared by `record`/`reset`, NULL-safe).
+- `tests/`: harness prints `detail=[...]` on failures;
+  `unit.c` gains `t_r3` (SPAN-encode pin, stereo/mc peak
+  pins incl. core messages, bake_round locus pin, target-0
+  controls); `parity_run.py` gains 2 pinned `BOTH-FAIL`
+  cases (self-generated hot-impulse vector + bake+12).

@@ -47,7 +47,11 @@ payloads when opts+measure (+spec lines) match (parity-gated).
    bake overflow at feed, baked peak at tail/flush. NOTE: the
    lib may emit prefix frames before discovering a baked-peak
    refusal (the check needs the whole stream); callers must
-   treat a mid-stream error as failed output.
+   treat a mid-stream error as failed output. R3: bake
+   refusals also carry gate + offending values via
+   `ac4enc_err_detail`, and the 8 core peak gates record
+   through `ac4enc_last_error()` (policy (a): the gates are
+   pyref-mandated, so refusals stay — but loud).
 5. **Open validates everything (M2).** Interval rule, DRC
    contents (dry-run through the real writer), all flags 0/1,
    measure/peak/line ranges, rate, preset, sample rate — all
@@ -139,6 +143,13 @@ PASS); R5 closed (flags pinned + guard + probe + parity gate).
   path: the core drivers and the lib accept
   `sparse ? 11 : 12` (S1 fix, `t_sparse`-gated).
 - CLI requires `--output-manifest` (hard error without it).
+- CLI `--target-db` accepts only -24/0 (other -31..-10 values
+  are a CLI validation error, not a core refusal); the lib
+  accepts the full -31..-10 range.
+- R3 Step 0 closed SPAN-FU: the Series C 58/59 refusal was the
+  S1 sparse class (the wrapper's failing pass-1 matches the
+  60-frame span measure exactly); post-fix the lib encodes
+  every SPAN span, core-direct 42697 B == `enc.py` bytes.
 
 ## Build / test
 

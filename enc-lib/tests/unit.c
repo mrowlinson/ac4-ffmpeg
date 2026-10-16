@@ -134,6 +134,86 @@ rnd(unsigned *s)
     return (*s >> 16) & 0x7FFFu;
 }
 
+/* Feed an int stream (full frames + tail + flush). Returns the
+ * first error rc, or 0 with *nfr frames emitted. */
+static int
+drive_int(ac4enc_ctx_t *c, int **rows, int nch, int ns,
+          uint8_t *ob, size_t obcap, int *nfr)
+{
+    int full = ns / AC4ENC_FRAME_SAMPLES;
+    int rem = ns % AC4ENC_FRAME_SAMPLES;
+    int n = 0, is_if = 0, erc;
+    size_t olen = 0;
+    for (int f = 0; f < full; f++) {
+        const int *rr[6];
+        for (int ch = 0; ch < nch; ch++)
+            rr[ch] = rows[ch] + f * AC4ENC_FRAME_SAMPLES;
+        erc = ac4enc_encode_frame2(c, rr, ob, obcap, &olen,
+                                   &is_if);
+        if (erc < 0)
+            return erc;
+        if (erc == 1)
+            n++;
+    }
+    if (rem > 0) {
+        const int *rr[6];
+        for (int ch = 0; ch < nch; ch++)
+            rr[ch] = rows[ch] + full * AC4ENC_FRAME_SAMPLES;
+        erc = ac4enc_encode_tail2(c, rr, rem, ob, obcap,
+                                  &olen, &is_if);
+        if (erc < 0)
+            return erc;
+        if (erc == 1)
+            n++;
+    }
+    for (;;) {
+        erc = ac4enc_flush2(c, ob, obcap, &olen, &is_if);
+        if (erc <= 0)
+            break;
+        n++;
+    }
+    *nfr = n;
+    return erc;
+}
+
+/* Open a measured ctx over int rows (no spec lines: refusal
+ * and count pins don't need the H6 path). */
+static int
+open_measured(ac4enc_ctx_t **cp, int **rows, int nch,
+              int ns, const char *layout, int rate,
+              double target, int has_bake, double bake_db)
+{
+    ac4enc_opts_t o;
+    ac4enc_measure_t m;
+    const int *chs[6];
+    int lens[6];
+    memset(&o, 0, sizeof o);
+    for (int ch = 0; ch < nch; ch++) {
+        chs[ch] = rows[ch];
+        lens[ch] = ns;
+    }
+    if (ac4enc_measure2(chs, lens, nch, &m))
+        return -1;
+    o.layout = layout;
+    o.rate_kbps = rate;
+    o.interval = "1sec";
+    o.ns2_tone = 1;
+    o.shorts = 1;
+    o.priming = 1;
+    o.iframe_total = -1;
+    o.target_db = target;
+    o.has_bake = has_bake;
+    o.bake_db = bake_db;
+    o.has_measure = 1;
+    o.m_db = m.m_db;
+    o.f_flat = m.f_flat;
+    o.tf_tone = m.tf_tone;
+    o.in_peak = m.in_peak;
+    o.d_peak = m.d_peak;
+    o.has_d_peak = m.has_d_peak;
+    return ac4enc_open(cp, &o);
+}
+
 /* _m entry with true measure must equal the original driver. */
 static void
 t_equiv(void)
@@ -1237,6 +1317,262 @@ t_increquiv(void)
     }
 }
 
+/* R3: guard strictness pins (S1 family, policy (a)). The
+ * bake peak gates are pyref-mandated (enc.py asserts
+ * peak < 32767), so refusals stay — but loud, naming the
+ * gate and the offending values. */
+static void
+t_r3(void)
+{
+    static uint8_t ob[AC4ENC_OUTCAP_SAFE];
+    static uint8_t blob[1 << 20];
+    /* R3-1: sparse + hot peak + correction attenuation
+     * encodes (the SPAN 58/59 shape, post-S1-fix). */
+    {
+        int ns = 2049;
+        int *L = malloc((size_t)ns * sizeof *L);
+        int *R = malloc((size_t)ns * sizeof *R);
+        int *rows[2] = { L, R };
+        ac4enc_ctx_t *c = NULL;
+        ac4enc_measure_t m;
+        const int *chs[2];
+        int lens[2] = { ns, ns };
+        int nfr = 0, got;
+        unsigned st = 987654321u;
+        CHECK(L && R, "r3 span alloc");
+        if (!L || !R) {
+            free(L);
+            free(R);
+            return;
+        }
+        for (int k = 0; k < ns; k++) {
+            L[k] = (int)(rnd(&st) % 20001u) - 10000;
+            R[k] = (int)(rnd(&st) % 20001u) - 10000;
+        }
+        L[0] = R[0] = 32000;
+        chs[0] = L;
+        chs[1] = R;
+        CHECK(ac4enc_measure2(chs, lens, 2, &m) == 0,
+              "r3 span measure ok");
+        CHECK(m.tf_tone < 0.6 && m.f_flat > 0.5,
+              "r3 span vector is sparse-flagged");
+        CHECK(open_measured(&c, rows, 2, ns, "stereo", 64,
+                            -24.0, 0, 0.0) == 0,
+              "r3 span lib open");
+        if (c) {
+            CHECK(drive_int(c, rows, 2, ns, ob, sizeof ob,
+                            &nfr) == 0,
+                  "r3 span lib encodes");
+            CHECK(nfr == 4, "r3 span lib emits 4 frames");
+            CHECK(ac4enc_err_detail(c)[0] == '\0',
+                  "r3 span detail empty on success");
+            ac4enc_close(c);
+        }
+        got = enc_core_encode_pcm(L, ns, R, ns, 64,
+                                  "stereo", "1sec", "zero",
+                                  NULL, 1, 1, -24.0, 0, 0.0,
+                                  0, NULL, 0, "manual", NULL,
+                                  NULL, 1, 0, -1, blob,
+                                  sizeof blob);
+        CHECK(got > 0, "r3 span core encodes");
+        CHECK(enc_core_last_error()[0] == '\0',
+              "r3 span core silent on success");
+        free(L);
+        free(R);
+    }
+    /* R3-2/3 stereo: quiet bed + hot impulse refuses loud
+     * (genuine bake overflow; pyref asserts the same). */
+    {
+        int ns = 8192;
+        int *L = malloc((size_t)ns * sizeof *L);
+        int *R = malloc((size_t)ns * sizeof *R);
+        int *rows[2] = { L, R };
+        ac4enc_ctx_t *c = NULL;
+        int nfr = 0, got, v = 0;
+        const char *d, *e;
+        CHECK(L && R, "r3 hot alloc");
+        if (!L || !R) {
+            free(L);
+            free(R);
+            return;
+        }
+        for (int k = 0; k < ns; k++) {
+            L[k] = (int)round(1000.0 *
+                sin(2.0 * 3.141592653589793 * 440.0 * k /
+                    48000.0));
+            R[k] = (int)round(1000.0 *
+                sin(2.0 * 3.141592653589793 * 880.0 * k /
+                    48000.0));
+        }
+        L[0] = R[0] = L[4096] = R[4096] = 20000;
+        CHECK(open_measured(&c, rows, 2, ns, "stereo", 128,
+                            -24.0, 0, 0.0) == 0,
+              "r3 hot lib open");
+        if (c) {
+            CHECK(drive_int(c, rows, 2, ns, ob, sizeof ob,
+                            &nfr) == -EIO,
+                  "r3 hot lib refuses");
+            CHECK(ac4enc_err_sub(c) == AC4ENC_EBAKE_PEAK,
+                  "r3 hot sub peak");
+            d = ac4enc_err_detail(c);
+            CHECK(strstr(d, "baked peak gate: baked_peak="),
+                  "r3 hot detail names gate");
+            CHECK(sscanf(d,
+                         "baked peak gate: baked_peak=%d",
+                         &v) == 1 && v >= 32767,
+                  "r3 hot detail trips at 32767");
+            CHECK(strstr(d, "bake x"), "r3 hot detail bake");
+            CHECK(ac4enc_reset(c) == 0, "r3 hot reset ok");
+            CHECK(ac4enc_err_sub(c) == AC4ENC_EOK,
+                  "r3 hot reset clears sub");
+            CHECK(ac4enc_err_detail(c)[0] == '\0',
+                  "r3 hot reset clears detail");
+            ac4enc_close(c);
+            c = NULL;
+        }
+        got = enc_core_encode_pcm(L, ns, R, ns, 128,
+                                  "stereo", "1sec", "zero",
+                                  NULL, 1, 1, -24.0, 0, 0.0,
+                                  0, NULL, 0, "manual", NULL,
+                                  NULL, 1, 0, -1, blob,
+                                  sizeof blob);
+        CHECK(got == -1, "r3 hot core refuses");
+        e = enc_core_last_error();
+        CHECK(strstr(e, ": baked peak refused (baked="),
+              "r3 hot core names gate");
+        CHECK(strstr(e, "in_peak=20000)"),
+              "r3 hot core in_peak");
+        /* Control: no correction -> no guard trip. */
+        CHECK(open_measured(&c, rows, 2, ns, "stereo", 128,
+                            0.0, 0, 0.0) == 0,
+              "r3 hot t0 open");
+        if (c) {
+            CHECK(drive_int(c, rows, 2, ns, ob, sizeof ob,
+                            &nfr) == 0,
+                  "r3 hot t0 encodes");
+            CHECK(nfr == 6, "r3 hot t0 emits 6 frames");
+            ac4enc_close(c);
+        }
+        free(L);
+        free(R);
+    }
+    /* R3-3 mc: hot legs refuse loud (pk gate). */
+    {
+        int ns = 4096;
+        int *rows[6];
+        ac4enc_ctx_t *c = NULL;
+        const int *crows[6];
+        int lens[6];
+        int nfr = 0, got, ok = 1;
+        const char *d, *e;
+        for (int ch = 0; ch < 6; ch++) {
+            rows[ch] =
+                malloc((size_t)ns * sizeof *rows[ch]);
+            if (!rows[ch])
+                ok = 0;
+        }
+        CHECK(ok, "r3 mc alloc");
+        if (!ok) {
+            for (int ch = 0; ch < 6; ch++)
+                free(rows[ch]);
+            return;
+        }
+        for (int ch = 0; ch < 6; ch++) {
+            for (int k = 0; k < ns; k++)
+                rows[ch][k] = (int)round(16383.0 *
+                    sin(2.0 * 3.141592653589793 *
+                        440.0 * k / 48000.0 +
+                        ch * 0.7));
+            crows[ch] = rows[ch];
+            lens[ch] = ns;
+        }
+        CHECK(open_measured(&c, rows, 6, ns, "5.1", 128,
+                            -24.0, 1, 12.0) == 0,
+              "r3 mc lib open");
+        if (c) {
+            CHECK(drive_int(c, rows, 6, ns, ob, sizeof ob,
+                            &nfr) == -EIO,
+                  "r3 mc lib refuses");
+            CHECK(ac4enc_err_sub(c) == AC4ENC_EBAKE_PEAK,
+                  "r3 mc sub peak");
+            d = ac4enc_err_detail(c);
+            CHECK(strstr(d, "baked peak gate: baked_peak="),
+                  "r3 mc detail names gate");
+            ac4enc_close(c);
+            c = NULL;
+        }
+        got = enc_core_encode_pcm_mc(crows, lens, 128,
+                                     "1sec", "zero", NULL,
+                                     -24.0, 1, 12.0, 1, NULL,
+                                     NULL, NULL, 0, "manual",
+                                     NULL, NULL, blob,
+                                     sizeof blob);
+        CHECK(got == -1, "r3 mc core refuses");
+        e = enc_core_last_error();
+        CHECK(strstr(e, "enc_core_encode_pcm_mc: baked peak "
+                        "refused (baked="),
+              "r3 mc core names gate");
+        CHECK(open_measured(&c, rows, 6, ns, "5.1", 128,
+                            0.0, 0, 0.0) == 0,
+              "r3 mc t0 open");
+        if (c) {
+            CHECK(drive_int(c, rows, 6, ns, ob, sizeof ob,
+                            &nfr) == 0,
+                  "r3 mc t0 encodes");
+            CHECK(nfr == 4, "r3 mc t0 emits 4 frames");
+            ac4enc_close(c);
+        }
+        for (int ch = 0; ch < 6; ch++)
+            free(rows[ch]);
+    }
+    /* bake_round (int32) refusal names ch/idx/value. */
+    {
+        ac4enc_ctx_t *c = NULL;
+        ac4enc_opts_t o;
+        int pcm[2048];
+        int *rows[2] = { pcm, pcm };
+        int nfr = 0;
+        const char *d;
+        memset(&o, 0, sizeof o);
+        memset(pcm, 0, sizeof pcm);
+        o.layout = "stereo";
+        o.rate_kbps = 64;
+        o.ns2_tone = 1;
+        o.shorts = 1;
+        o.priming = 1;
+        o.iframe_total = -1;
+        o.target_db = -24.0;
+        o.has_bake = 1;
+        o.bake_db = 40.0;
+        o.has_measure = 1;
+        o.m_db = -20.0;
+        o.f_flat = 0.1;
+        o.tf_tone = 0.9;
+        o.in_peak = 100;
+        CHECK(ac4enc_open(&c, &o) == 0, "r3 ebake open");
+        pcm[0] = INT_MAX;
+        if (c) {
+            CHECK(drive_int(c, rows, 2, 2048, ob,
+                            sizeof ob, &nfr) == -EIO,
+                  "r3 ebake refuses");
+            CHECK(ac4enc_err_sub(c) ==
+                      AC4ENC_EBAKE_OVERFLOW,
+                  "r3 ebake sub overflow");
+            d = ac4enc_err_detail(c);
+            CHECK(strstr(d, "bake_round gate: int32 "
+                            "overflow at ch=0 idx=0"),
+                  "r3 ebake detail locus");
+            CHECK(strstr(d, "x=2147483647"),
+                  "r3 ebake detail value");
+            ac4enc_close(c);
+        }
+    }
+    /* Detail lifecycle: NULL-safe, empty unless a bake
+     * refusal is the sticky error. */
+    CHECK(!strcmp(ac4enc_err_detail(NULL), ""),
+          "r3 detail null safe");
+}
+
 int
 main(void)
 {
@@ -1251,6 +1587,7 @@ main(void)
     t_prim0();
     t_concurrent();
     t_increquiv();
+    t_r3();
     if (!fails)
         printf("unit: all pass\n");
     return fails ? 1 : 0;
