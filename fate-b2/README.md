@@ -17,6 +17,8 @@ against merged dec-lib (d505b36). Lands in-tree as
   all pins match lib output). Needs scratch samples (see --help).
 - `samples-manifest.md` — blocked-5 acquired-sample pins + provenance
   (ims120, chanbased, 714-caveat; bytes-ready, mail pending).
+- `torture-trio-manifest.md` — TOC-gate trio pins + provenance
+  (t17/t17b/t18; pack-ready, mail drafted, send at clock end).
 
 ## Per-item verdicts
 
