@@ -92,6 +92,15 @@ int enc_step_end(enc_step_ctx_t *c);
 /* 1 = next frame ready (call emit), 0 = need more input (or
  * drained: end() + emitted == plan), <0 sticky failure. */
 int enc_step_ready(enc_step_ctx_t *c);
+/* Pure peek: 1 if a frame would be ready with n more fed
+ * samples (lets callers size/check buffers before feeding).
+ * 0 otherwise. Never fails (NULL -> 0). */
+int enc_step_ready_after(const enc_step_ctx_t *c, int n);
+/* Set the stamp before the first emit (the lib composes it
+ * per-domain at first feed). Allowed iff emitted==0; EPROTO
+ * after. Borrowed like cfg.stamp. */
+int enc_step_set_stamp(enc_step_ctx_t *c,
+                       const enc_core_stamp_t *stamp);
 /* CBR byte size of the next emittable frame (pure peek; no
  * advance), or -1. Sized buffers never go short. */
 int enc_step_next_size(enc_step_ctx_t *c);

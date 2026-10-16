@@ -5109,6 +5109,37 @@ enc_step_ready(enc_step_ctx_t *c)
 }
 
 int
+enc_step_ready_after(const enc_step_ctx_t *c, int n)
+{
+    int j, i, start;
+    if (!c || n < 0)
+        return 0;
+    if (c->fail_rc)
+        return 0;
+    j = c->emitted;
+    if (c->ended)
+        return j < c->end_frames ? 1 : 0;
+    i = j + step_coff(c);
+    if (i < 2)
+        return c->fed_max + n > 0 ? 1 : 0;
+    start = or_start(i);
+    return c->fed_max + n >= start + emit_ahead(c) ? 1
+                                                  : 0;
+}
+
+int
+enc_step_set_stamp(enc_step_ctx_t *c,
+                   const enc_core_stamp_t *stamp)
+{
+    if (!c)
+        return -EINVAL;
+    if (c->emitted != 0 || c->fail_rc)
+        return step_fail(c, ENC_STEP_EPROTO, -EINVAL);
+    c->stamp = stamp;
+    return 0;
+}
+
+int
 enc_step_next_size(enc_step_ctx_t *c)
 {
     if (!c)

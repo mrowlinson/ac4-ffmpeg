@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "../src/ac4enc_lib.h"
+#include "../src/enc_core.h"
 
 static int fails = 0;
 
@@ -62,37 +63,43 @@ t_misuse(void)
     o.priming = 1;
     o.iframe_total = -1;
     CHECK(ac4enc_open(&c, &o) == 0, "good open");
-    /* feed misuse */
-    CHECK(ac4enc_encode_frame(c, rows, NULL, 0, NULL) == 0,
-          "frame ok");
-    CHECK(ac4enc_encode_frame_f(c, drows, NULL, 0, NULL) ==
-              -EINVAL,
-          "mixed domains rejected");
-    CHECK(ac4enc_encode_tail(c, rows, 0, NULL, 0, NULL) ==
-              -EINVAL,
-          "tail 0 rejected");
-    CHECK(ac4enc_encode_tail(c, rows, 2049, NULL, 0, NULL) ==
-              -EINVAL,
-          "tail >2048 rejected");
-    CHECK(ac4enc_encode_tail(c, rows, 100, NULL, 0, NULL) ==
-              0,
-          "tail ok");
-    CHECK(ac4enc_encode_frame(c, rows, NULL, 0, NULL) ==
-              -EINVAL,
-          "frame after tail rejected");
-    CHECK(ac4enc_flush2(c, out, sizeof out, &olen, NULL) ==
-              -EINVAL,
-          "small outcap rejected");
+    /* feed: incremental (real buffers; 1 = frame ready) */
     {
-        static uint8_t big[AC4ENC_OUTCAP_SAFE];
-        int frc, n = 0;
+        static uint8_t ob[AC4ENC_OUTCAP_SAFE];
+        size_t flen = 0;
+        int is_if = -1, frc, n = 0;
+        frc = ac4enc_encode_frame2(c, rows, ob, sizeof ob,
+                                   &flen, &is_if);
+        CHECK(frc == 1 && flen > 0, "frame emits priming");
+        n++;
+        CHECK(ac4enc_encode_frame_f(c, drows, NULL, 0,
+                                    NULL) == -EINVAL,
+              "mixed domains rejected");
+        CHECK(ac4enc_encode_tail(c, rows, 0, NULL, 0,
+                                 NULL) == -EINVAL,
+              "tail 0 rejected");
+        CHECK(ac4enc_encode_tail(c, rows, 2049, NULL, 0,
+                                 NULL) == -EINVAL,
+              "tail >2048 rejected");
+        frc = ac4enc_encode_tail2(c, rows, 100, ob,
+                                  sizeof ob, &flen, &is_if);
+        CHECK(frc == 1 && flen > 0, "tail emits");
+        n++;
+        CHECK(ac4enc_encode_frame(c, rows, NULL, 0, NULL) ==
+                  -EINVAL,
+              "frame after tail rejected");
+        olen = 0;
+        CHECK(ac4enc_flush2(c, out, sizeof out, &olen,
+                            NULL) == -EINVAL,
+              "small outcap rejected");
+        CHECK(olen > sizeof out, "short reports need");
         for (;;) {
-            frc = ac4enc_flush2(c, big, sizeof big, &olen,
+            frc = ac4enc_flush2(c, ob, sizeof ob, &flen,
                                 NULL);
             if (frc <= 0)
                 break;
             n++;
-            CHECK(olen > 0, "frame len > 0");
+            CHECK(flen > 0, "frame len > 0");
         }
         CHECK(frc == 0 && n == 4, "4 frames then done");
     }

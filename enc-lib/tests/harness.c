@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "../src/ac4enc_lib.h"
+#include "../src/enc_core.h"
 #include "../src/pycompat.h"
 
 static void
@@ -611,6 +612,37 @@ main(int argc, char **argv)
                     "peak=%d dpeak=%.17g hasd=%d\n",
                 m.m_db, m.f_flat, m.tf_tone, m.in_peak,
                 m.d_peak, m.has_d_peak);
+        if (nch == 2) {
+            /* H6 pass over the L row (mc ignores lines). */
+            const double *Lr = NULL;
+            double *Lc = NULL;
+            int nl = 0, sl[7], slrc;
+            if (use_float) {
+                Lr = drows;
+            } else {
+                Lc = malloc((size_t)(ns > 0 ? ns : 1) *
+                            sizeof *Lc);
+                if (!Lc)
+                    goto done;
+                for (int k = 0; k < ns; k++)
+                    Lc[k] = (double)irows[k];
+                Lr = Lc;
+            }
+            slrc = ac4enc_spectral_lines(
+                Lr, ns, &m, opts.target_db,
+                opts.has_bake, opts.bake_db, &nl, sl);
+            free(Lc);
+            if (slrc) {
+                fprintf(stderr,
+                        "error: spectral lines rc=%d\n",
+                        slrc);
+                goto done;
+            }
+            opts.has_spec_lines = 1;
+            opts.n_spec_lines = nl;
+            memcpy(opts.spec_lines, sl, sizeof sl);
+            fprintf(fm, "speclines n=%d\n", nl);
+        }
     } else {
         fm = fopen(meta_out, "w");
         if (!fm) {
@@ -624,57 +656,6 @@ main(int argc, char **argv)
         fprintf(stderr, "error: ac4enc_open failed\n");
         goto done;
     }
-    {
-        int full = ns / AC4ENC_FRAME_SAMPLES;
-        int rem = ns % AC4ENC_FRAME_SAMPLES;
-        for (int f = 0; f < full; f++) {
-            int erc;
-            if (use_float) {
-                const double *rr[6];
-                for (int c = 0; c < nch; c++)
-                    rr[c] = drows + c * ns +
-                        f * AC4ENC_FRAME_SAMPLES;
-                erc = ac4enc_encode_frame_f(ctx, rr, NULL,
-                                            0, NULL);
-            } else {
-                const int *rr[6];
-                for (int c = 0; c < nch; c++)
-                    rr[c] = irows + c * ns +
-                        f * AC4ENC_FRAME_SAMPLES;
-                erc = ac4enc_encode_frame(ctx, rr, NULL, 0,
-                                          NULL);
-            }
-            if (erc) {
-                fprintf(stderr, "error: encode frame %d "
-                                "rc=%d\n",
-                        f, erc);
-                goto done;
-            }
-        }
-        if (rem > 0) {
-            int erc;
-            if (use_float) {
-                const double *rr[6];
-                for (int c = 0; c < nch; c++)
-                    rr[c] = drows + c * ns +
-                        full * AC4ENC_FRAME_SAMPLES;
-                erc = ac4enc_encode_tail_f(ctx, rr, rem,
-                                           NULL, 0, NULL);
-            } else {
-                const int *rr[6];
-                for (int c = 0; c < nch; c++)
-                    rr[c] = irows + c * ns +
-                        full * AC4ENC_FRAME_SAMPLES;
-                erc = ac4enc_encode_tail(ctx, rr, rem, NULL,
-                                         0, NULL);
-            }
-            if (erc) {
-                fprintf(stderr, "error: encode tail rc=%d\n",
-                        erc);
-                goto done;
-            }
-        }
-    }
     ff = fopen(frames_out, "wb");
     if (!ff) {
         fprintf(stderr, "error: cannot write %s\n",
@@ -682,16 +663,116 @@ main(int argc, char **argv)
         goto done;
     }
     {
-        int idx = 0;
+        int full = ns / AC4ENC_FRAME_SAMPLES;
+        int rem = ns % AC4ENC_FRAME_SAMPLES;
+        int idx = 0, maxp, f;
+        size_t olen = 0;
+        int is_if = 0, erc;
+        uint8_t *pkt = NULL;
+        maxp = ac4enc_max_packet(rate);
+        if (maxp <= 0) {
+            fprintf(stderr, "error: bad rate %d\n", rate);
+            goto done;
+        }
+        pkt = malloc((size_t)maxp);
+        if (!pkt)
+            goto done;
+        for (f = 0; f < full; f++) {
+            if (use_float) {
+                const double *rr[6];
+                for (int c = 0; c < nch; c++)
+                    rr[c] = drows + c * ns +
+                        f * AC4ENC_FRAME_SAMPLES;
+                erc = ac4enc_encode_frame_f2(ctx, rr, pkt,
+                                             (size_t)maxp,
+                                             &olen, &is_if);
+            } else {
+                const int *rr[6];
+                for (int c = 0; c < nch; c++)
+                    rr[c] = irows + c * ns +
+                        f * AC4ENC_FRAME_SAMPLES;
+                erc = ac4enc_encode_frame2(ctx, rr, pkt,
+                                           (size_t)maxp,
+                                           &olen, &is_if);
+            }
+            if (erc < 0) {
+                fprintf(stderr, "error: encode frame %d "
+                                "rc=%d (%s/%s)\n",
+                        f, erc,
+                        ac4enc_subcode_str(
+                            ac4enc_err_sub(ctx)),
+                        ac4enc_err_stage(ctx));
+                free(pkt);
+                goto done;
+            }
+            if (erc == 1) {
+                if (fwrite(pkt, 1, olen, ff) != olen) {
+                    fprintf(stderr,
+                            "error: frames write\n");
+                    free(pkt);
+                    goto done;
+                }
+                fprintf(fm, "frame %d len %lu iframe %d\n",
+                        idx, (unsigned long)olen, is_if);
+                idx++;
+            }
+        }
+        if (rem > 0) {
+            if (use_float) {
+                const double *rr[6];
+                for (int c = 0; c < nch; c++)
+                    rr[c] = drows + c * ns +
+                        full * AC4ENC_FRAME_SAMPLES;
+                erc = ac4enc_encode_tail_f2(ctx, rr, rem,
+                                            pkt,
+                                            (size_t)maxp,
+                                            &olen, &is_if);
+            } else {
+                const int *rr[6];
+                for (int c = 0; c < nch; c++)
+                    rr[c] = irows + c * ns +
+                        full * AC4ENC_FRAME_SAMPLES;
+                erc = ac4enc_encode_tail2(ctx, rr, rem, pkt,
+                                          (size_t)maxp,
+                                          &olen, &is_if);
+            }
+            if (erc < 0) {
+                fprintf(stderr, "error: encode tail "
+                                "rc=%d (%s/%s)\n",
+                        erc,
+                        ac4enc_subcode_str(
+                            ac4enc_err_sub(ctx)),
+                        ac4enc_err_stage(ctx));
+                free(pkt);
+                goto done;
+            }
+            if (erc == 1) {
+                if (fwrite(pkt, 1, olen, ff) != olen) {
+                    fprintf(stderr,
+                            "error: frames write\n");
+                    free(pkt);
+                    goto done;
+                }
+                fprintf(fm, "frame %d len %lu iframe %d\n",
+                        idx, (unsigned long)olen, is_if);
+                idx++;
+            }
+        }
+        free(pkt);
         for (;;) {
             uint8_t out[AC4ENC_OUTCAP_SAFE];
-            size_t olen = 0;
-            int is_if = 0, frc;
+            int frc;
+            olen = 0;
+            is_if = 0;
             frc = ac4enc_flush2(ctx, out, sizeof out, &olen,
                                 &is_if);
             if (frc < 0) {
-                fprintf(stderr, "error: flush rc=%d\n",
-                        frc);
+                fprintf(stderr, "error: flush rc=%d "
+                                "(%s/%s)\n",
+                        frc,
+                        ac4enc_subcode_str(
+                            ac4enc_err_sub(ctx)),
+                        ac4enc_err_stage(ctx));
                 goto done;
             }
             if (frc == 0)
