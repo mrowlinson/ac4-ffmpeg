@@ -1,4 +1,6 @@
-/* ac4dsi.c - standalone AC-4 DSI serializer implementation.
+/**
+ * @file ac4dsi.c
+ * @brief Standalone AC-4 DSI serializer implementation.
  *
  * Bit layout: DSI-CONTRACT.md section 2 (header + pv framing + v1 block),
  * cross-checked field-by-field against tools/dac4_probe.py parse order.
@@ -57,7 +59,8 @@ void ac4dsi_stream_init(ac4dsi_stream_t *s)
     s->frame_rate_index = 13;
     s->b_program_id = 0;
     s->bit_rate_mode = 2;
-    s->bit_rate = 0; /* caller must set target */
+    s->bit_rate = 0; /* NOT emittable in mode 2: serialize rejects it
+                      * (DSI-7), so the caller must set a target rate */
     s->bit_rate_precision = 0xFFFFFFFFu;
 }
 
@@ -222,7 +225,14 @@ static int stream_check(const ac4dsi_stream_t *s, size_t n_pres)
         return AC4DSI_EINVAL;
     if (s->fs_index > 1u || s->frame_rate_index > 15u)
         return AC4DSI_EINVAL;
-    if (s->bit_rate_mode > 3u)
+    /* Table E.8 defines modes 1-3 only (DSI-15). */
+    if (s->bit_rate_mode == 0u || s->bit_rate_mode > 3u)
+        return AC4DSI_EINVAL;
+    /* Mode 2 (ABR) without a target rate is the init-default footgun:
+     * reject so a caller that forgot s.bit_rate fails loudly instead of
+     * emitting mode-2/rate-0 (DSI-7). Mode 3 (VBR) with rate 0 stays
+     * legal: wild vectors carry unknown rate. */
+    if (s->bit_rate_mode == 2u && s->bit_rate == 0u)
         return AC4DSI_EINVAL;
     if ((s->b_program_id & ~1) != 0 || (s->b_uuid & ~1) != 0)
         return AC4DSI_EINVAL;

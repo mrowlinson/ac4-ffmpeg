@@ -13,7 +13,9 @@ cleanroom `dac4_probe.py` parse order (read-only).
 
 - `ac4dsi.h` / `ac4dsi.c` — serializer (`ac4dsi_serialize` + init helpers).
 - `dsi_test.c` — golden byte-exact tests + unit negatives.
-- `Makefile` — `make test` builds with `-Wall -Wextra -Wpedantic` and runs.
+- `Makefile` — `make test` builds with `-Wall -Wextra -Wpedantic` and runs;
+  `make test-werror` adds `-Werror`, `make test-asan` runs the suite under
+  ASan+UBSan.
 
 ## API
 
@@ -62,8 +64,8 @@ those bits, so emitting them would be unverifiable.
 - Boundary pins: 63-char tag (max legal, bytes verbatim), 300 B opaque
   pres_bytes escape (0xFF + u16), exact-fit / off-by-one, ch_mode 11-14
   loop, out_len NULL, EINVAL-keeps-len.
-- Warning-clean: `-Wall -Wextra -Wpedantic` (+ `-Werror` in CI shape).
+- Warning-clean: `-Wall -Wextra -Wpedantic`, `-Werror` via `make test-werror`.
 - Unit negatives pass (NULLs, range violations, pv0, bsv1+prog,
   uuid-without-prog, 64-char tag, small-buffer ENOSPC with size).
-- ASan+UBSan clean; 4 extra shapes (stereo/5.1/uuid/no-content-type)
+- ASan+UBSan clean (`make test-asan`); 4 extra shapes (stereo/5.1/uuid/no-content-type)
   re-parsed exact by the independent cleanroom probe.
