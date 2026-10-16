@@ -1,0 +1,47 @@
+Subject: [PATCH 0/3] native AC-4 decoder for raw .ac4 streams
+
+This series adds a native AC-4 audio decoder, wired to the raw .ac4
+demuxer. It sits on Series A0 (demux params + timestamps), which must
+land first: the decoder assumes stream copy exits 0 with seekable pts.
+
+Patches:
+  [PATCH 1/3] avcodec: add native AC-4 decoder core
+    Decoder engine: bit reader, entropy, IMDCT/MDCT, QMF, A-SPX,
+    ACPL, loudness, channel/render logic, static tables. No lavc API
+    surface yet; ported from the ff/dec-lib vendor tree.
+  [PATCH 2/3] avcodec: wire ff_ac4_decoder
+    AVCodec wrapper: init/decode/flush/close, extradata-less raw
+    input, gap-note handling, skip_samples/latency reporting,
+    private options. First patch exposing decoder behavior.
+  [PATCH 3/3] avcodec/ac4: fill A/V delay + drain (conditional)
+    Delay/drain handling if priming measurement (Q2) shows nonzero
+    latency; the 1-frame-delay finding suggests it is needed,
+    otherwise folded into 2/3 before post.
+
+Why: FFmpeg has no AC-4 decoder; raw carriage plus A0 params make a
+minimal reviewable unit before docs/FATE (Series B) and encoder
+(Series C) build on it.
+
+Testing:
+  ffmpeg -i clip.ac4 out.wav
+  framecrc/md5 vs reference PCM goldens (no energy asserts; no
+  silence round-trip); 1-frame-late/level behavior pinned, not
+  asserted (wrapper no-audio policy).
+  standalone --enable-decoder=ac4 build; ASan + trasher on decode
+  paths; patcheck clean; full fate green.
+
+FATE: none in this series; decoder tests land in Series B (B2).
+
+Provenance: this AC-4 decoder is an independent cleanroom
+implementation in C, written from the published ETSI specifications
+TS 103 190-1 V1.4.1 and TS 103 190-2 V1.3.1 plus black-box behavioral
+observation. No Dolby SDK, reference code, or disassembly was used in
+the submitted code; numeric codebook/coefficient tables are
+value-only transcriptions from the ETSI deliverables (generators and
+source versions cited per table), and all comments are original prose
+referencing the standards by table/clause number only. Note AC-4 is
+covered by Dolby patents; this submission addresses copyright-clean
+code only and implementers/distributors should consider patent
+licensing.
+
+Signed-off-by on each patch: [OWNER NAME] <[OWNER EMAIL]>

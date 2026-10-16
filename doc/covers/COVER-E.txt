@@ -1,0 +1,46 @@
+Subject: [PATCH 0/2] MPEG-TS mux descriptors for AC-4
+
+This series teaches the MPEG-TS muxer to signal AC-4 streams. Posts
+after Series C merges: every test command runs `-c:a ac4` (the
+encoder is the only sample_rate-carrying source; .ts stream-copy
+sources are barred until the Series D parser lands). lavf-only code,
+no C symbols needed.
+
+Patches:
+  [PATCH 1/2] lavf/mpegtsenc: write AC-4 descriptors
+    get_dvb_stream_type AC-4 case (stays 0x06 private data, kills the
+    "may not be recognized" warning), AC-4 registration descriptor
+    in the PMT audio block, DVB AC-4 descriptor (0x7F/0x15,
+    channel_mode from channel count) in the SYSTEM_B block with
+    Opus-pattern overflow guard. Demux untouched (already works:
+    REGD/PES auto). v1 omits toc/additional_info (flags say so).
+  [PATCH 2/2] fate: ac4 ts mux tests
+    Encoder->ts PMT-section pin (fate-ac4-mpegts-pmt) + probe test
+    (fate-ac4-mpegts-probe) from synth asynth inputs (zero new
+    samples); PMT bytes assert 0x06 + regdesc + 0x7F/0x15, no
+    framecrc stage yet (needs Series D parser).
+    Encoder-sourced only, never .ts stream-copy.
+
+Testing:
+  ffmpeg -i tone.wav -c:a ac4 -f mpegts out.ts   (add
+  -loudness_target 0 for full-span stereo per Series C)
+  ffprobe -show_streams: codec_name=ac4, codec_tag_string=AC-4.
+  PMT byte-checks; descriptor shape cross-checked vs TSDuck sources
+  (tsp/MP4Box binaries unavailable);
+  negative: pre-patch binary MUST print "may not be recognized".
+  Round-trip decode framecrc once Series A is in (else deferred,
+  noted at post).
+
+FATE: 2/2 only; deterministic re-run (cmp clean).
+
+Provenance: mux wiring only; exercised encoder is the Series C
+independent cleanroom implementation (ETSI TS 103 190-1 V1.4.1 /
+-2 V1.3.1, value-only tables, no Dolby SDK/reference/disassembly,
+CLI-parity layer excluded). AC-4 patent note from Series A applies.
+
+Branch state (draft, unposted): ac4/E1-tsdesc-r2@98486f6
+(1 commit) + ac4/E2-tsfate-r2@09a1bd2 (stacked, 2 commits) over
+baseline 3e6cd5e (message reflows of 5772a4e/39d4eab); posts as
+2 patches.
+
+Signed-off-by on each patch: [OWNER NAME] <[OWNER EMAIL]>

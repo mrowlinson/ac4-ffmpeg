@@ -1,0 +1,58 @@
+Subject: [PATCH] lavf/ac4: fill codecpar + timestamps from first frame
+
+This is the head patch of the native AC-4 submission stack. It teaches
+the raw .ac4 demuxer to fill codec parameters and packet timestamps
+from the first frame, so that stream copy exits 0 and output is
+seekable with sane pts. Every later series (decoder, docs/FATE,
+encoder, TS mux, MP4) assumes this behavior.
+
+What: peek the first frame's TOC, publish sample rate / channel
+layout / bit rate to codecpar, and derive packet duration from the
+frame's samples-per-frame x sample-rate multiplier. Never publishes
+the grid rate (frame-rate-derived rates such as 46034/51200 stay
+internal; decoder latch decides final).
+
+Why first: without params the demuxer cannot drive copy, seek, or the
+mux round-trips the later FATE tests rely on. Raw-first ordering:
+carriage params before codec.
+
+Testing:
+  ffmpeg -i clip.ac4 -c:a copy -f null -
+  ffprobe -show_streams clip.ac4   (rate/ch/bit_rate present)
+  seek + remux checks; ASan + trasher over the peek path;
+  standalone lavf demux build; patcheck clean.
+Peek stays bounded (no 120 s slow-reject tails).
+
+FATE: carried on this 1-patch submit (M3): fate-ac4-demux/-51
+(demux.mak, FATE_SAMPLES_DEMUX) + fate-seek-extra-ac4 (seek.mak,
+FATE_SEEK_EXTRA) with 3 refs. Needs ac4/clip-stereo.ac4 +
+ac4/clip-51-real.ac4 live in fate-suite before post; samples mail
+(ff-samples-pack/REQUEST.txt) still UNSENT ([OWNER NAME]
+unfilled). Series B (B2) still gated on this patch.
+M3 local pins (ff-A0-M3-local/, no suite samples): 8/10 review
+sub-items pinned by a 58/58-gate battery over synth vectors
+(bit-mutations of a local c-ac4enc sine clip): trunc/bad-sync/
+fri-14-15/bv-0-1-3/multi-pres negatives exit 234 (EINVAL),
+fri-5/6/10/11/12 positives exact pts/dur, B1-NOPTS unvisited
+seek via a byte-seek driver. SUITE-REQUIRED: fri-0-4/7-9
+positives (one first-frame TOC with real mult-info per row
+family: 2-bit rows 2-4, 1-bit rows 0/1/7/8/9) + trio samples.
+Mechanism: timestamp-seek NOPTS pin infeasible —
+seek_frame_generic forward-scans to target, so only byte seeks
+land unvisited; current seek.mak cannot express that.
+
+Provenance: independent cleanroom implementation in C, written from
+the published ETSI specifications TS 103 190-1 V1.4.1 and TS 103 190-2
+V1.3.1 plus black-box behavioral observation. No Dolby SDK, reference
+code, or disassembly was used. Comments reference the standards by
+table/clause number only. Note AC-4 is covered by Dolby patents; this
+submission addresses copyright-clean code only and
+implementers/distributors should consider patent licensing.
+
+Branch state (draft, unposted): ac4/A0-submit@c22b0fe over
+baseline 3e6cd5e (1-commit squash; supersedes ee82042 with the peek
+re-review: bounded two-stage peek + malformed single-probe skip).
+Dev branch ac4/A0-demux-params@bbad279 (adds 38b8721 + bbad279 +
+FATE 2f7e33f).
+
+Signed-off-by: [OWNER NAME] <[OWNER EMAIL]>
