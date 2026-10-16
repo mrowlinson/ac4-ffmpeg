@@ -1,6 +1,6 @@
-From ccea3d262d0e6b74730dfb3a39b91d95fad98b0f Mon Sep 17 00:00:00 2001
+From 5602d33890999fa8827f39ca09ea547e28c96de4 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
-Date: Fri, 16 Oct 2026 13:29:25 -0400
+Date: Fri, 16 Oct 2026 14:40:50 -0400
 Subject: [PATCH 1/2] avcodec: add native AC-4 decoder core
 
 Vendored streaming decoder core (bit reader, entropy, IMDCT, QMF,
@@ -37,7 +37,7 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  libavcodec/aspx_tab.c    |  361 ++
  libavcodec/aspx_tab.h    |   95 +
  libavcodec/dec_lib.c     | 7689 ++++++++++++++++++++++++++++++++++++++
- libavcodec/entropy.c     | 1226 ++++++
+ libavcodec/entropy.c     | 1225 ++++++
  libavcodec/entropy.h     |  118 +
  libavcodec/huffman_tab.c | 1153 ++++++
  libavcodec/huffman_tab.h |  186 +
@@ -51,7 +51,7 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  libavcodec/sfb_offsets.h |   34 +
  libavcodec/snf_tab.c     |   69 +
  libavcodec/snf_tab.h     |   38 +
- 24 files changed, 13739 insertions(+)
+ 24 files changed, 13738 insertions(+)
  create mode 100644 libavcodec/ac4_stages.h
  create mode 100644 libavcodec/ac4d.h
  create mode 100644 libavcodec/acpl.c
@@ -96,12 +96,12 @@ index 249b0fe..1e8a0c8 100644
  OBJS-$(CONFIG_AHX_DECODER)             += mpegaudiodec_float.o
 diff --git a/libavcodec/ac4_stages.h b/libavcodec/ac4_stages.h
 new file mode 100644
-index 0000000..29649cf
+index 0000000..e26187d
 --- /dev/null
 +++ b/libavcodec/ac4_stages.h
 @@ -0,0 +1,162 @@
 +/*
-+ * ac4_stages.h — decode-stage interfaces (e3 integrator owned).
++ * ac4_stages.h -- decode-stage interfaces (e3 integrator owned).
 + * Copyright (c) 2026 Michael Rowlinson
 + *
 + * This file is part of FFmpeg.
@@ -121,7 +121,7 @@ index 0000000..29649cf
 + * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 + */
 +
-+/* ac4_stages.h — decode-stage interfaces (e3 integrator owned).
++/* ac4_stages.h -- decode-stage interfaces (e3 integrator owned).
 + *
 + * Wave05 stage-1 split: e0 = Huffman tables, e1 = entropy/section
 + * decode, e2 = IMDCT+OLA. Each stage lands its own .c + header on its
@@ -264,12 +264,12 @@ index 0000000..29649cf
 +#endif /* AC4_STAGES_H */
 diff --git a/libavcodec/ac4d.h b/libavcodec/ac4d.h
 new file mode 100644
-index 0000000..00e7d18
+index 0000000..5cfb932
 --- /dev/null
 +++ b/libavcodec/ac4d.h
 @@ -0,0 +1,121 @@
 +/*
-+ * ac4d.h — streaming AC-4 decoder library API (opaque context).
++ * ac4d.h -- streaming AC-4 decoder library API (opaque context).
 + * Copyright (c) 2026 Michael Rowlinson
 + *
 + * This file is part of FFmpeg.
@@ -289,7 +289,7 @@ index 0000000..00e7d18
 + * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 + */
 +
-+/* ac4d.h — streaming AC-4 decoder library API (opaque context).
++/* ac4d.h -- streaming AC-4 decoder library API (opaque context).
 + *
 + * Refactored from the c-ac4dec batch decoder (single TU, all-static) into
 + * a heap-instance streaming API for ffmpeg integration. Design:
@@ -381,7 +381,7 @@ index 0000000..00e7d18
 +const char *ac4d_strerror(int rc);
 +const char *ac4d_gap_note(const ac4d_ctx *c); /* never NULL after GAP */
 +int ac4d_get_info(const ac4d_ctx *c, ac4d_info *i);
-+/* (design §1 names this ac4d_info; renamed: C forbids sharing the
++/* (design Sec. 1 names this ac4d_info; renamed: C forbids sharing the
 + * name with the ac4d_info struct type) */
 +
 +#ifdef __cplusplus
@@ -391,12 +391,12 @@ index 0000000..00e7d18
 +#endif
 diff --git a/libavcodec/acpl.c b/libavcodec/acpl.c
 new file mode 100644
-index 0000000..83e1fe4
+index 0000000..af21ab0
 --- /dev/null
 +++ b/libavcodec/acpl.c
 @@ -0,0 +1,613 @@
 +/*
-+ * acpl.c — A-CPL data parse + diff-decode + dequant (duet3-dec-writerB).
++ * acpl.c -- A-CPL data parse + diff-decode + dequant (duet3-dec-writerB).
 + * Copyright (c) 2026 Michael Rowlinson
 + *
 + * This file is part of FFmpeg.
@@ -416,7 +416,7 @@ index 0000000..83e1fe4
 + * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 + */
 +
-+/* acpl.c — A-CPL data parse + diff-decode + dequant (duet3-dec-writerB).
++/* acpl.c -- A-CPL data parse + diff-decode + dequant (duet3-dec-writerB).
 + * Own code from ETSI P1 Tables 61/63/64/65 (syntax), Pseudocode 8
 + * (book select), Pseudocode 121 (diff decode), Tables 203-206
 + * (dequant). Probe phase: parse + print (alpha_dq, beta_dq); QMF
@@ -2220,7 +2220,7 @@ index 0000000..6ad24c6
 +#endif
 diff --git a/libavcodec/dec_lib.c b/libavcodec/dec_lib.c
 new file mode 100644
-index 0000000..e1c5c58
+index 0000000..999a9a4
 --- /dev/null
 +++ b/libavcodec/dec_lib.c
 @@ -0,0 +1,7689 @@
@@ -2247,7 +2247,7 @@ index 0000000..e1c5c58
 +
 +/* In-tree port of the dec-lib streaming core: CLI/shim code stripped at
 + * vendor time (see lavc-dec/README.md Q1); DSP below is dec-lib verbatim. */
-+/* ac4dec — CLI shell per tests/CLI.md. C11, zero deps.
++/* ac4dec -- CLI shell per tests/CLI.md. C11, zero deps.
 + *
 + * Wave e4 (Part-2 structural skip): decode wired to container demux
 + * (TS with prefix-strip + PAT/PMT/ES pick, MP4 moof/moov sample tables,
@@ -2352,7 +2352,7 @@ index 0000000..e1c5c58
 +    int de_gate;
 +    int has_de_cfg;
 +    unsigned de_method, de_maxgain, de_chanconfig;
-+    unsigned de_skip_bits; /* T78-prep: post-cfg → tools-end bits (de_data region size) */
++    unsigned de_skip_bits; /* T78-prep: post-cfg -> tools-end bits (de_data region size) */
 +    unsigned de_region_bits; /* P2: de_data region bits (cfg-independent) */
 +    int de_keep; /* P2: -1 n/a, I-frame 0 (implied), non-I 1st region bit */
 +    int de_par_ok; /* P2 walk: 1 ok, -1 fail, 0 skipped */
@@ -2508,7 +2508,7 @@ index 0000000..e1c5c58
 +    /* H1 ring sizes (absolute-indexed, fixed): skeleton/spill hold 4
 +     * frames of 2048; compand raw holds 3 frames + flush margin. */
 +/* Push-fed ring sizing (sk/tf/spill): worst-case occupancy is
-+ * skew + (4+need)*spf — steady 4-frame emit lag (OLA-debt stall +
++ * skew + (4+need)*spf -- steady 4-frame emit lag (OLA-debt stall +
 + * h_need lookahead) plus bursty OLA pushes (telescoping window
 + * sizes: up to 3*spf in one frame on long->short changes; 5632
 + * observed). spf_max=2048, need=1: 10240 + skew (0 on corpus;
@@ -2780,7 +2780,7 @@ index 0000000..e1c5c58
 +}
 +
 +/* H1 absolute-indexed ring helpers (fixed-size; readers must stay within
-+ * one ring length behind the write head — enforced by checks at emit). */
++ * one ring length behind the write head -- enforced by checks at emit). */
 +static void ac4d_rput_d(double *ring, long ringn, long w, const double *src,
 +                        int k) {
 +    long o = w % ringn;
@@ -2852,7 +2852,7 @@ index 0000000..e1c5c58
 + * default 0; A-82 Q1 mirror). P1 DRIVE LIVE: bg-duck + hard-cap-9 +
 + * chanconfig routing (post-trim pre-emit gain pass). P2 (T78 de_data
 + * activity + boost/cut-if-active + fade-in primer) pending. user=0 /
-+ * user<0 / no-cfg → pass skipped (PCM-identity by construction).
++ * user<0 / no-cfg -> pass skipped (PCM-identity by construction).
 + * DEDEC diagnostic line under AC4DEC_DEBUG. */
 +/* ctx-member */
 +/* ctx-member */
@@ -2880,7 +2880,7 @@ index 0000000..e1c5c58
 +/* (wav spool deleted: shim spools itself; lib emits raw frames) */
 +/* E3 writer-defined (no DRP ref per A-64/A4): s16 sample -> output
 + * width. 24-bit = LE s16 + zero-pad byte (sign-preserving; full
-+ * 24-bit resolution would need float-stage plumbing — tracked). 32f
++ * 24-bit resolution would need float-stage plumbing -- tracked). 32f
 + * = s16/32768 LE float. Shared by --wav spool + raw path (single
 + * semantics). Returns bytes written (2/3/4). */
 +static int wav_s16_to_bytes(short v, int bps, uint8_t out[4]) {
@@ -3100,7 +3100,7 @@ index 0000000..e1c5c58
 +    size_t sizes[E4_MAXNS];
 +    int npres, pres_ver0;
 +    int b_pres_ndot; /* TOC b_pres_ndot (fresh-parse trigger; NOT an
-+                      * I-gate — A-80: displayed-config = derived rule) */
++                      * I-gate -- A-80: displayed-config = derived rule) */
 +    int bed_si; /* audio substream index, -1 = none */
 +    int bed_obj; /* !b_channel_coded of bed group (CH5X obj; no-bed:
 +                  * first selected group) */
@@ -3393,7 +3393,7 @@ index 0000000..e1c5c58
 +            if (cm >= 122 && cm <= 125)
 +                (void)br_u(b, 1); /* add_ch_base */
 +            /* Table 9 b_iframe x frame_rate_factor (was misread as
-+             * ndot and dropped: duet3-dec-writer fix — the ELEMENT's
++             * ndot and dropped: duet3-dec-writer fix -- the ELEMENT's
 +             * I-flag lives here, not in TOC b_iframe_global. First
 +             * subframe's bit governs our single-element decode. */
 +            int bif = 0;
@@ -3487,7 +3487,7 @@ index 0000000..e1c5c58
 +}
 +
 +/* D47 iframe-flush: splice-aware sequence-counter step classifier
-+ * (spec/iframe-flush-scte35-flex9.md §3). Counter runs 1..1020,
++ * (spec/iframe-flush-scte35-flex9.md Sec. 3). Counter runs 1..1020,
 + * wraps 1020->1; 0 is the splicer-marked splice frame (valid, NOT
 + * a jump); a frame after 0 resumes any counter. Anything else off
 + * the +1 chain is an unmarked jump (source change). */
@@ -3745,7 +3745,7 @@ index 0000000..e1c5c58
 + * trim = 10^((ref-dn)/20), ref -31 (DRP truth default); dn =
 + * -dialnorm_bits/4 from substream-0 byte 0 low 7 bits (3/3 vectors
 + * match DRP info: 96/96/72). /32768: chain is S16-scale, d2s16
-+ * needs unit (normative stage home OPEN — ask-back to memo; output
++ * needs unit (normative stage home OPEN -- ask-back to memo; output
 + * placement is functionally exact). No-s0 fallback: unity. */
 +/* ctx-member */
 +/* ctx-member */
@@ -3904,7 +3904,7 @@ index 0000000..e1c5c58
 + * AC4DEC_SHFN=<maxn> caps eligible block size (default 256; 128 =
 + * short-train only, transition 256s untouched). Chains AFTER M4
 + * (operates on post-M4 spectra). Default OFF: zero behavior change.
-+ * Diagnostic only — fit, never land as default. */
++ * Diagnostic only -- fit, never land as default. */
 +/* ctx-member */
 +/* ctx-member */
 +/* ctx-member */
@@ -4907,10 +4907,10 @@ index 0000000..e1c5c58
 +    e3_5x_m2 = -1;
 +}
 +
-+/* D47 §3 joint-rule fix (RULE-113-S3 + RULE-110-S3 DUAL-FORMED):
++/* D47 Sec. 3 joint-rule fix (RULE-113-S3 + RULE-110-S3 DUAL-FORMED):
 + * splice-side slot preserve. The companding post-pass v2 gates
 + * every frame f from recorded slot f, and e3_cmp_begin() assigns
-+ * one slot per kept frame — so slot index MUST stay the kept-frame
++ * one slot per kept frame -- so slot index MUST stay the kept-frame
 + * ordinal across a splice. e3_cmp_reset() here used to restart n
 + * at 0, letting B-side frames overwrite A-side recorded slots and
 + * retroactively re-process frames 0..22 with post-splice companding
@@ -5119,11 +5119,11 @@ index 0000000..e1c5c58
 +        /* ASPX_ACPL_2 MINIMAL (Table 25 + 5.3.4.3.2/Table 181 + Pseu 117):
 +         * parse everything (endpos-clean), render L/R/C live via the
 +         * Table-181 map, Ls/Rs SILENT (QMF A-CPL synthesis not wired;
-+         * honest partial — scored, parked as acpl-qmf-unimpl gap). */
++         * honest partial -- scored, parked as acpl-qmf-unimpl gap). */
 +        is_aspx = 1; /* s52: codec-3 rides the ASPX bit-path (bank
 +                         @e8cb1a5): shared post-LFE companding(3) +
 +                         ASPX tails. Dropped in the d036544 LFE-share
-+                         reshape → SFINFO read 3 bits early
++                         reshape -> SFINFO read 3 bits early
 +                         (sfinfo-fail-5x, 51 DONE-path red). */
 +        if (ig) {
 +            /* Table-25 I-frame order: aspx_config then acpl_config_1ch(FULL)
@@ -5244,7 +5244,7 @@ index 0000000..e1c5c58
 +    if (!is_acpl3) {
 +        m2 = ebr_u(b, 1); /* 2ch_mode: pair->speaker map
 +                             * (SIMPLE/ASPX only; no m2 on ACPL
-+                             * paths — AB-14 literal, QB-21). */
++                             * paths -- AB-14 literal, QB-21). */
 +        if (b->err) {
 +            *note = "5x-trunc";
 +            return -1;
@@ -5254,7 +5254,7 @@ index 0000000..e1c5c58
 +        /* three_channel_data (Table 27, AB-14): ONE sf_info shared
 +         * L/R/C + matsel 4b + 2x chparam + 3x sf_data. Slots
 +         * [0,1,2] = L,R,C ASSUMED (QB-21); coupling apply TBD
-+         * (topology QB-21) — parse only for alignment. */
++         * (topology QB-21) -- parse only for alignment. */
 +        r = asf_info_parse(b, spf, &info[0]);
 +        if (r != AC4E_OK) {
 +            *note = "sfinfo-fail-5x3";
@@ -5864,8 +5864,8 @@ index 0000000..e1c5c58
 +        }
 +        /* Table 20 (spectral, per-tile): H'' = a'0*D' + H' etc., with
 +         * a' = mat-a - 1 (sap_gain; numerically forced: a'0 = 1.00 on
-+         * 768k ⟺ Ls fit 2.8284; QB-2 addendum pending memo confirm).
-+         * u = 0 ⟹ step-4 identity (D' = D). Geometry: D/E/F/G infos
++         * 768k <=> Ls fit 2.8284; QB-2 addendum pending memo confirm).
++         * u = 0 => step-4 identity (D' = D). Geometry: D/E/F/G infos
 +         * (ch[4..7]); H-K bands align (same windows: verified below). */
 +        static const int t20d[4] = {4, 5, 6, 7};
 +        for (int q = 0; q < 4; q++) {
@@ -6075,7 +6075,7 @@ index 0000000..e1c5c58
 +                for (int l = 0; l < info[q].win_len[w]; l++)
 +                    ch[q].co[w][l] *= 2.0 * 1.4142135623730951;
 +        /* Backs (z6/z8) zeroed at OUTPUT COPY (caller, mode 3): F/G
-+         * spectra stay live here — the pending ACPL port consumes
++         * spectra stay live here -- the pending ACPL port consumes
 +         * their post-IMDCT time signals as module inputs. */
 +    }
 +    return (int)mode;
@@ -6397,7 +6397,7 @@ index 0000000..e1c5c58
 +/* ctx-member */
 +/* ctx-member */
 +
-+/* E8 verb f0 drc-config latch (first-frame state; mpa20-absent ⟹ 0).
++/* E8 verb f0 drc-config latch (first-frame state; mpa20-absent => 0).
 + * (Sibling plain-int latches live with the compand globals above.) */
 +/* ctx-member */
 +/* ctx-member */
@@ -6557,7 +6557,7 @@ index 0000000..e1c5c58
 +/* ctx-member */
 +/* ctx-member */
 +/* ctx-member */
-+/* P2 drive activity bridge (metadata-time → emit-time, same frame). */
++/* P2 drive activity bridge (metadata-time -> emit-time, same frame). */
 +/* ctx-member */
 +/* ctx-member */
 +/* ctx-member */
@@ -6652,7 +6652,7 @@ index 0000000..e1c5c58
 +                            int b_iframe, info_audmeta_t *o) {
 +    memset(o, 0, sizeof *o);
 +    o->de_keep = -1;
-+    /* Drive bridge safe defaults (parse-fail → inactive, routing
++    /* Drive bridge safe defaults (parse-fail -> inactive, routing
 +     * holds carried cfg); overwritten at normal end. */
 +    e_de_cur_active = 0;
 +    e_de_cur_mabs = 0;
@@ -7304,13 +7304,13 @@ index 0000000..e1c5c58
 +    }
 +}
 +
-+/* D10 P1 duck curve (A-82 Q2 bed, KDAF-bg = G4-all): 3→−0.75,
-+ * 6→−3.5, 9→−6.2 dB; piecewise-linear between (provisional —
++/* D10 P1 duck curve (A-82 Q2 bed, KDAF-bg = G4-all): 3->-0.75,
++ * 6->-3.5, 9->-6.2 dB; piecewise-linear between (provisional --
 + * beds pin only 3/6/9 + origin); HARD CAP at 9 (A-82 Q1:
-+ * de12≡de9 byte-identical = Gmax). */
++ * de12==de9 byte-identical = Gmax). */
 +/* D10 P2 laws (A-85 EXACT pins; piecewise-lin between; caller caps
 + * a at 9 = R3 both-signs cap). duck: bg-ch (sd=0.00). boost/cut: P2
-+ * compromise single laws (content-split residuals → P3). */
++ * compromise single laws (content-split residuals -> P3). */
 +/* (deleted: belonged to removed DRC-apply/DE-drive legs) */
 +
 +/* (deleted: belonged to removed DRC-apply/DE-drive legs) */
@@ -7328,7 +7328,7 @@ index 0000000..e1c5c58
 + * duck/unity-if-inactive, per-frame cc from activity map). */
 +/* (deleted: belonged to removed DE-drive leg) */
 +
-+/* D47: drop de_data walk context (prior-frame decode state, §4.1).
++/* D47: drop de_data walk context (prior-frame decode state, Sec. 4.1).
 + * Called per-stream at decode head and per-splice mid-stream. */
 +static void e_dewalk_reset(void) {
 +    e_dewalk_have = 0;
@@ -7444,7 +7444,7 @@ index 0000000..e1c5c58
 +}
 +
 +/* D47 splice flush, bounded (batch rescanned raws/ts; here the current
-+ * frame only; sample pipeline kept per §4.3). */
++ * frame only; sample pipeline kept per Sec. 4.3). */
 +static void ac4d_splice_flush_single(const raw_t *r, const toc_t *t) {
 +    e_dewalk_reset();
 +    e_ax_have_cfg = 0;
@@ -7454,7 +7454,7 @@ index 0000000..e1c5c58
 +        e_ax_have_prev[q] = 0;
 +        e_ax_prev_stop[q] = 0;
 +    }
-+    e3_cmp_splice(); /* §3 joint rule: preserve A-side recorded slots */
++    e3_cmp_splice(); /* Sec. 3 joint rule: preserve A-side recorded slots */
 +    e_cmp_f0latched = 0;
 +    e_cmp_f0nch = e_cmp_f0sync = e_cmp_f0mask = e_cmp_f0avg = 0;
 +    e_5x_f0latched = 0;
@@ -7891,7 +7891,7 @@ index 0000000..e1c5c58
 +        if (cx->h_dshave) {
 +            int dsk = e_splice_step(cx->h_dsprev, toc->seq);
 +            if (dsk == SPL_MARKED || dsk == SPL_JUMP) {
-+                ac4d_splice_flush_single(&r1, toc); /* §4.1/4.4-4.6 */
++                ac4d_splice_flush_single(&r1, toc); /* Sec. 4.1/4.4-4.6 */
 +                if (e9_debug())
 +                    fprintf(stderr, "SPLF i=%zu seq=%u kind=%s\n", i,
 +                            toc->seq,
@@ -7969,7 +7969,7 @@ index 0000000..e1c5c58
 +             * eff = H-DE predicted gain (PROVISIONAL: min(user,Gmax)?
 +             * iff DI&&gate&&user!=0; A-82 decides truth). dsk =
 +             * post-cfg skip bits (de_data region size; Q4 variance
-+             * observable). Diagnostic text only — PCM-neutral. */
++             * observable). Diagnostic text only -- PCM-neutral. */
 +            if (e9_debug()) {
 +                int de_gmax = am.has_de_cfg ?
 +                    (int)(am.de_maxgain + 1) * 3 : -1;
@@ -7986,7 +7986,7 @@ index 0000000..e1c5c58
 +                        de_di, am.de_gate, am.has_de_cfg,
 +                        de_eff, am.de_skip_bits);
 +            }
-+            /* P2 T78 activity probe (diagnostic text only —
++            /* P2 T78 activity probe (diagnostic text only --
 +             * PCM-neutral). nch via Table 171 (own cfg, else
 +             * carried e_decfg). keep: 0 I-implied, wire bit
 +             * non-I, -1 no region. */
@@ -9358,7 +9358,7 @@ index 0000000..e1c5c58
 +                                     * heals gap-steps (f13 1.49 / f36
 +                                     * 1.5); cold-fill would crush, so
 +                                     * cold gaps stay passthrough (f48
-+                                     * 0.11 keep → cliff safe). A-46. */
++                                     * 0.11 keep -> cliff safe). A-46. */
 +                                    double fmv = chon ? m : mavg;
 +                                    if (fmv >= 1.0) {
 +                                        for (int sb = 0; sb < sb1; sb++)
@@ -9370,8 +9370,8 @@ index 0000000..e1c5c58
 +                                        Q[c * slots + ts][sb] *= held[c];
 +                                }
 +                                /* AC4DEC_IMSEQ=g00..g15:g10..g15 (duet26
-+                                 * IMS-f0 A-49): 16-band × 2ch EQ (1.5kHz
-+                                 * bands ⟺ 4 QMF SBs) at f==0, ts<8
++                                 * IMS-f0 A-49): 16-band x 2ch EQ (1.5kHz
++                                 * bands <=> 4 QMF SBs) at f==0, ts<8
 +                                 * (t=0-511). Chained AFTER m (all 64
 +                                 * SBs). Default unset/malformed = off. */
 +                                if (f == 0 && ts < 8 && c < 2) {
@@ -9557,7 +9557,7 @@ index 0000000..e1c5c58
 +
 +/* Stage skeleton frame f into dst as PRE-GAIN floats (plain FIFO
 + * partition, or mode-0 track mix which batch ran once over full
-+ * streams — the mix is per-sample stateless so per-frame is
++ * streams -- the mix is per-sample stateless so per-frame is
 + * identical). Gain applies at consume so a DN re-latch on the first
 + * P-frame stays bit-exact. */
 +static int ac4d_gather_f(long f, double (*dst)[2048]) {
@@ -9903,7 +9903,7 @@ index 0000000..e1c5c58
 +
 +
 +/* E8 --print-info TAG dump (A-78 Q3: order FMT VER DN DRC DRCSEL CH5X
-+ * CMP CRC LOUD; TAG k=v on stdout; HYBRID mirror — DRP values quoted
++ * CMP CRC LOUD; TAG k=v on stdout; HYBRID mirror -- DRP values quoted
 + * verbatim where ours computes the same quantity, writer-defined keys
 + * documented in tests/CLI.md). Values with spaces/commas are
 + * double-quoted (grep-able units). */
@@ -9915,12 +9915,12 @@ index 0000000..e1c5c58
 +} shim_pkt_t;
 diff --git a/libavcodec/entropy.c b/libavcodec/entropy.c
 new file mode 100644
-index 0000000..1b43ef9
+index 0000000..c4c0015
 --- /dev/null
 +++ b/libavcodec/entropy.c
-@@ -0,0 +1,1226 @@
+@@ -0,0 +1,1225 @@
 +/*
-+ * entropy.c — ASF spectral-frontend decode (see entropy.h).
++ * entropy.c -- ASF spectral-frontend decode (see entropy.h).
 + * Copyright (c) 2026 Michael Rowlinson
 + *
 + * This file is part of FFmpeg.
@@ -9940,7 +9940,7 @@ index 0000000..1b43ef9
 + * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 + */
 +
-+/* entropy.c — ASF spectral-frontend decode (see entropy.h).
++/* entropy.c -- ASF spectral-frontend decode (see entropy.h).
 + * Own implementation from the pinned tables; no ETSI prose copied.
 + */
 +#include "entropy.h"
@@ -10111,7 +10111,7 @@ index 0000000..1b43ef9
 +    int diff = (base >= 1536 && !is_long && t0 != t1);
 +    /* max_sfb widths are per-index (4.3.6.2.1 Table 106: "depends on
 +     * the transform length"; believer f15 proves it: t=3/0 needs
-+     * 6b/4b — shared-6b reads ms=49/59 with cap 14 and misaligns).
++     * 6b/4b -- shared-6b reads ms=49/59 with cap 14 and misaligns).
 +     * Same-index frames behave exactly as before. */
 +    int l0 = base, l1 = base;
 +    if (!is_long) {
@@ -10671,7 +10671,7 @@ index 0000000..1b43ef9
 +                scaled[g][k] = gv * rec;
 +            }
 +            /* A-73 Q3: per-row coefficient energy (post-dequant,
-+             * pre-IMDCT; pre-SAP — SAP scales M/S-band energy
++             * pre-IMDCT; pre-SAP -- SAP scales M/S-band energy
 +             * uniformly per band, fraction-robust to first order). */
 +            if (getenv("AC4DEC_DEBUG") && g == 0) {
 +                double se = 0.0;
@@ -10757,7 +10757,7 @@ index 0000000..1b43ef9
 +        const int *so = sfb_offsets48(wlen);
 +        int ms = grp_maxsfb(info, g);
 +        /* AC4DEC_UNGORD=1 (duet45 Q-59 discriminant): within-band flat
-+         * order variant — line-major (t = (l-so[s])*nw + w) instead of
++         * order variant -- line-major (t = (l-so[s])*nw + w) instead of
 +         * window-major (t = w*bw + (l-so[s])). Default unset = shipped
 +         * order (byte-identical). Diagnostic only. */
 +        int uo = 0;
@@ -10910,7 +10910,7 @@ index 0000000..1b43ef9
 +            }
 +        }
 +    }
-+    { /* OPDUMP section OP per channel-decode (pipe3 clean-back §2
++    { /* OPDUMP section OP per channel-decode (pipe3 clean-back Sec. 2
 +         * D-correct OP leg; env-gated, same precedent as QDUMP).
 +         * Record v2: int32 oseq, ngr, per-group (int32 ms + ms
 +         * int32 band_book + ms int32 band_peak + ms doubles gainv),
@@ -11144,15 +11144,14 @@ index 0000000..1b43ef9
 +        win += nw;
 +    }
 +}
-+           
 diff --git a/libavcodec/entropy.h b/libavcodec/entropy.h
 new file mode 100644
-index 0000000..4fc62c2
+index 0000000..eadd14d
 --- /dev/null
 +++ b/libavcodec/entropy.h
 @@ -0,0 +1,118 @@
 +/*
-+ * entropy.h — ASF spectral-frontend decode: sf_info + sections +
++ * entropy.h -- ASF spectral-frontend decode: sf_info + sections +
 + * Copyright (c) 2026 Michael Rowlinson
 + *
 + * This file is part of FFmpeg.
@@ -11172,7 +11171,7 @@ index 0000000..4fc62c2
 + * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 + */
 +
-+/* entropy.h — ASF spectral-frontend decode: sf_info + sections +
++/* entropy.h -- ASF spectral-frontend decode: sf_info + sections +
 + * spectral + scalefactors + noise-fill + ungrouping -> per-window coeffs.
 + *
 + * Lane e3-pcm, wave6. Behavior pins (own words): ETSI P1 Tables
@@ -12622,12 +12621,12 @@ index 0000000..3ea1957
 +#endif
 diff --git a/libavcodec/imdct.c b/libavcodec/imdct.c
 new file mode 100644
-index 0000000..74c1457
+index 0000000..99e7e58
 --- /dev/null
 +++ b/libavcodec/imdct.c
 @@ -0,0 +1,438 @@
 +/*
-+ * imdct.c — clean AC-4 IMDCT + KBD window + overlap-add core.
++ * imdct.c -- clean AC-4 IMDCT + KBD window + overlap-add core.
 + * Copyright (c) 2026 Michael Rowlinson
 + *
 + * This file is part of FFmpeg.
@@ -12647,7 +12646,7 @@ index 0000000..74c1457
 + * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 + */
 +
-+/* imdct.c — clean AC-4 IMDCT + KBD window + overlap-add core.
++/* imdct.c -- clean AC-4 IMDCT + KBD window + overlap-add core.
 + * Tile-centered lattice; see imdct.h + spec/imdct-clean-e2.md S2.
 + * Naive O(N^2) transforms (correctness first; FFT fast path later).
 + */
@@ -12930,7 +12929,7 @@ index 0000000..74c1457
 +    imdct_imdct(X, y, n);
 +    imdct_bridge(w, n, pn, nn, alpha, palpha, nalpha);
 +    /* AC4DEC_EDGEA (duet26 Track-I; s52: REVERTED to probe-gated,
-+     * default OFF — the land-ea01 default-ON regressed the banked
++     * default OFF -- the land-ea01 default-ON regressed the banked
 +     * bit-exact DONE-gate (514 mains + 51 mains pins, duet15B);
 +     * first-push re-taper perturbs frames 0-1 on beds. The IMS
 +     * cold-start heal (IMS-f0ts00 239->87) stays available
@@ -13066,12 +13065,12 @@ index 0000000..74c1457
 +}
 diff --git a/libavcodec/imdct.h b/libavcodec/imdct.h
 new file mode 100644
-index 0000000..40de5f7
+index 0000000..de72bc1
 --- /dev/null
 +++ b/libavcodec/imdct.h
 @@ -0,0 +1,137 @@
 +/*
-+ * imdct.h — clean AC-4 IMDCT + KBD window + overlap-add core.
++ * imdct.h -- clean AC-4 IMDCT + KBD window + overlap-add core.
 + * Copyright (c) 2026 Michael Rowlinson
 + *
 + * This file is part of FFmpeg.
@@ -13091,7 +13090,7 @@ index 0000000..40de5f7
 + * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 + */
 +
-+/* imdct.h — clean AC-4 IMDCT + KBD window + overlap-add core.
++/* imdct.h -- clean AC-4 IMDCT + KBD window + overlap-add core.
 + *
 + * Lane e2, wave5. C11, zero deps. Math from public DSP textbook
 + * formulas (tmp/wave05/WEB-e2.md) + clean specs spec/mdct-sizes.md
@@ -13209,12 +13208,12 @@ index 0000000..40de5f7
 +#endif /* AC4_IMDCT_H */
 diff --git a/libavcodec/qmf.c b/libavcodec/qmf.c
 new file mode 100644
-index 0000000..ed3d205
+index 0000000..fef3379
 --- /dev/null
 +++ b/libavcodec/qmf.c
 @@ -0,0 +1,138 @@
 +/*
-+ * qmf.c — complex QMF analysis/synthesis C port (duet3-dec-writerB).
++ * qmf.c -- complex QMF analysis/synthesis C port (duet3-dec-writerB).
 + * Copyright (c) 2026 Michael Rowlinson
 + *
 + * This file is part of FFmpeg.
@@ -13234,7 +13233,7 @@ index 0000000..ed3d205
 + * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 + */
 +
-+/* qmf.c — complex QMF analysis/synthesis C port (duet3-dec-writerB).
++/* qmf.c -- complex QMF analysis/synthesis C port (duet3-dec-writerB).
 + * Own code from tools/qmf_bed.py structure (P1 pseudocodes 65/66):
 + * 64 subbands, 640-tap QWIN prototype, 640-sample analysis memory,
 + * 1280-sample synthesis memory. f64 throughout.
@@ -13635,12 +13634,12 @@ index 0000000..2077e0a
 +#endif
 diff --git a/libavcodec/sfb_offsets.c b/libavcodec/sfb_offsets.c
 new file mode 100644
-index 0000000..4fc58e3
+index 0000000..8a3436a
 --- /dev/null
 +++ b/libavcodec/sfb_offsets.c
 @@ -0,0 +1,166 @@
 +/*
-+ * sfb_offsets.c — GENERATED by tools/sfb_gen.py; DO NOT HAND-EDIT.
++ * sfb_offsets.c -- GENERATED by tools/sfb_gen.py; DO NOT HAND-EDIT.
 + * Copyright (c) 2026 Michael Rowlinson
 + *
 + * This file is part of FFmpeg.
@@ -13660,7 +13659,7 @@ index 0000000..4fc58e3
 + * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 + */
 +
-+/* sfb_offsets.c — GENERATED by tools/sfb_gen.py; DO NOT HAND-EDIT. */
++/* sfb_offsets.c -- GENERATED by tools/sfb_gen.py; DO NOT HAND-EDIT. */
 +#include "sfb_offsets.h"
 +
 +#include <stddef.h>
@@ -13807,12 +13806,12 @@ index 0000000..4fc58e3
 +}
 diff --git a/libavcodec/sfb_offsets.h b/libavcodec/sfb_offsets.h
 new file mode 100644
-index 0000000..c0accdf
+index 0000000..a4beee0
 --- /dev/null
 +++ b/libavcodec/sfb_offsets.h
 @@ -0,0 +1,34 @@
 +/*
-+ * sfb_offsets.h — 48k scale-factor-band offset ladders.
++ * sfb_offsets.h -- 48k scale-factor-band offset ladders.
 + * Copyright (c) 2026 Michael Rowlinson
 + *
 + * This file is part of FFmpeg.
@@ -13832,7 +13831,7 @@ index 0000000..c0accdf
 + * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 + */
 +
-+/* sfb_offsets.h — 48k scale-factor-band offset ladders.
++/* sfb_offsets.h -- 48k scale-factor-band offset ladders.
 + * GENERATED by tools/sfb_gen.py; DO NOT HAND-EDIT.
 + * Values: m5 TSV (ANSWER-e1-1) + own B.7 transcription; B.1 prefix.
 + * Layout own; zero ETSI prose copied. */
@@ -13968,9 +13967,9 @@ index 0000000..a393435
 2.56.0
 
 
-From 82a49d842221ea4ddf81f46c7358d55d25e26331 Mon Sep 17 00:00:00 2001
+From de33e4735b7c99e31c95d9ca18c2d4cd4216ba03 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
-Date: Fri, 16 Oct 2026 13:29:25 -0400
+Date: Fri, 16 Oct 2026 14:40:50 -0400
 Subject: [PATCH 2/2] avcodec: wire ff_ac4_decoder
 
 AVCodec wrapper over the 1/2 core: init/decode/flush/close against

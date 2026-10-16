@@ -1,18 +1,20 @@
 # A-OWNER-SEND-STEPS — Series A decoder post (owner posts)
 
-Final pack, gated 2026-10-16 on master `7ba72eb` (contains `ec78459`;
-zero drift in mbox scope since). Pre-flight record:
-`doc/post/A-PREFLIGHT-CHECKLIST.md`. Background gates:
+Final pack re-cut 3, gated 2026-10-16 on master `cc42e2c` (contains
+`b86587f` re-vendored core + `5c8740a` hygiene; re-cut from the merged
+staging, supersedes the `a66f84e` pack). Pre-flight record:
+`doc/post/A-PREFLIGHT-CHECKLIST.md`. Background gates (re-cut 2,
+behavioral, carried via strip-identity proof):
 `doc/post/DEC-POST-CHECKLIST.md`.
 
 Pack: `doc/post/series-A-decoder.mbox` (2 patches vs `3e6cd5e`,
-605740 B) + `doc/covers/COVER-A.txt` (`[PATCH 0/2]`).
+606385 B) + `doc/covers/COVER-A.txt` (`[PATCH 0/2]`, unchanged).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
 ## 0. Preconditions (all true at gate time)
 
 - P3 confirmed: Series-A letter + decoder-first flip approved. (This
-  file existing on `ff/doc-A-post-final` with READY-TO-POST = the flip
+  file existing on `ff/doc-A-post-r2` with READY-TO-POST = the flip
   is approved; runbook step 10 still says A0 first — stale, fix later.)
 - NOTHING sent yet: no SENT marker in repo; Series A and mail-1 both
   unsent. No suite/sample wait for this series (zero sample deps).
@@ -41,8 +43,10 @@ Expected send order / threading:
 3. `[PATCH 2/2] avcodec: wire ff_ac4_decoder` (ac4dec.c + allcodecs.c)
 
 Expect benign informational 8bit warnings from `git send-email`
-(UTF-8 em-dash/arrow/§ in code comments, no MIME headers in mbox) —
-sends fine. Verify the archive/outbox shows 0/2 + 1/2 + 2/2 threaded
+(3 non-ASCII lines total, no MIME headers in mbox: 1 em-dash in a
+1/2 code comment + the 2 long-carried cover em-dashes) — sends
+fine. The `entropy.c` whitespace wart is GONE (hygiene re-cut).
+Verify the archive/outbox shows 0/2 + 1/2 + 2/2 threaded
 in order, then record the Message-IDs + date in the checklist copy.
 
 ## 2. Separately: mail-1 samples request (blocks A0/B2, NOT this series)
