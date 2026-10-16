@@ -246,7 +246,7 @@ from_engine(ac4enc_ctx_t *c, const char *stage, int rc)
         }
         snprintf(c->err_detail, sizeof c->err_detail,
                  "baked peak gate: baked_peak=%d >= 32767 "
-                 "(bake x%.17g)", pk, nb);
+                 "(max-|bake| x%.17g)", pk, nb);
         return rc;
     }
     if (detail == ENC_STEP_ESHORT)

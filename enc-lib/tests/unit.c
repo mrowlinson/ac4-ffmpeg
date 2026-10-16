@@ -1419,9 +1419,10 @@ t_r3(void)
                   "r3 hot detail names gate");
             CHECK(sscanf(d,
                          "baked peak gate: baked_peak=%d",
-                         &v) == 1 && v >= 32767,
-                  "r3 hot detail trips at 32767");
-            CHECK(strstr(d, "bake x"), "r3 hot detail bake");
+                         &v) == 1 && v == 37281,
+                  "r3 hot detail peak 37281");
+            CHECK(strstr(d, "max-|bake| x"),
+                  "r3 hot detail bake");
             CHECK(ac4enc_reset(c) == 0, "r3 hot reset ok");
             CHECK(ac4enc_err_sub(c) == AC4ENC_EOK,
                   "r3 hot reset clears sub");
