@@ -45,6 +45,16 @@ enc_core_abs_sat(int v)
 #define ENC_CORE_FRAME_SAMPLES 2048
 #define ENC_CORE_SAMPLE_RATE 48000
 #define ENC_CORE_DIG_GAIN 3.0
+/* S5FU: stereo spectral gain is 2.0, not 3.0. DEE stages
+ * stereo coefficients at x2.0 of the forward correlation
+ * (pre-IMDCT CODUMP ratio DEE/forward = 1.9934 on G7 997Hz;
+ * residual -0.03 dB is analysis-window coherent-gain delta,
+ * inside codec tolerance) while 5.1 stages at x3.0 (G5
+ * spectral ratio ours/DEE = 0.99). The uniform 3.0 decoded
+ * every stereo file exactly 3/2 (+3.52 dB) hot on all
+ * correct decoders (DRP G7 = -30.17, ours = -26.56, same
+ * dialnorm). Multichannel keeps ENC_CORE_DIG_GAIN. */
+#define ENC_CORE_DIG_GAIN_STEREO 2.0
 #define ENC_CORE_X_EMIT_MAX 80000000.0
 #define ENC_CORE_DEE_SUB0_P 6
 #define ENC_CORE_DEE_SUB0_I 10

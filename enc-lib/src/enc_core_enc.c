@@ -2433,11 +2433,11 @@ try_fit(int i, const double *XL, const double *XR, int shift,
     int n_audio, n = -1;
     if (!XL || !XR)
         return -1;
-    if (enc_core_quantize_full(XL, 2048, ENC_CORE_DIG_GAIN,
+    if (enc_core_quantize_full(XL, 2048, ENC_CORE_DIG_GAIN_STEREO,
                                shift, kcap, floor_adaptive,
                                &cL))
         return -1;
-    if (enc_core_quantize_full(XR, 2048, ENC_CORE_DIG_GAIN,
+    if (enc_core_quantize_full(XR, 2048, ENC_CORE_DIG_GAIN_STEREO,
                                shift, kcap, floor_adaptive,
                                &cR))
         return -1;
@@ -2538,11 +2538,11 @@ try_fit_mixed(int i, const double *const *specsL9,
         return -1;
     }
     if (enc_core_quantize_mixed(specsL9, orient,
-                                ENC_CORE_DIG_GAIN, shift,
+                                ENC_CORE_DIG_GAIN_STEREO, shift,
                                 kcap, cL, NULL))
         goto done;
     if (enc_core_quantize_mixed(specsR9, orient,
-                                ENC_CORE_DIG_GAIN, shift,
+                                ENC_CORE_DIG_GAIN_STEREO, shift,
                                 kcap, cR, NULL))
         goto done;
     if (!mixed_any(cL) && !mixed_any(cR))
@@ -5464,11 +5464,11 @@ st_emit(enc_step_ctx_t *c, int j, uint8_t *out, size_t outcap,
                 if (enc_core_quantize_frame(
                         c->rows[0], wlen0, ts, c->lines,
                         c->nlines, c->win,
-                        ENC_CORE_DIG_GAIN, &cL) ||
+                        ENC_CORE_DIG_GAIN_STEREO, &cL) ||
                     enc_core_quantize_frame(
                         c->rows[1], wlen1, ts, c->lines,
                         c->nlines, c->win,
-                        ENC_CORE_DIG_GAIN, &cR))
+                        ENC_CORE_DIG_GAIN_STEREO, &cR))
                     return step_fail(c, ENC_STEP_EEMIT,
                                      -EIO);
                 if (cL.n > 0 || cR.n > 0) {

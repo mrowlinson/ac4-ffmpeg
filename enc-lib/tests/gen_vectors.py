@@ -31,6 +31,11 @@ def content(name, n, ch=0):
     if name == "sine1k":
         return [0.5 * math.sin(2 * math.pi * 1000 * i / SR + ph)
                 for i in range(n)]
+    if name == "sine997":
+        # S5FU pin: 997Hz dual-mono (no per-channel phase;
+        # G7-shaped honest-loudness tone).
+        return [0.5 * math.sin(2 * math.pi * 997 * i / SR)
+                for i in range(n)]
     if name == "sine10k":
         return [0.3 * math.sin(2 * math.pi * 10000 * i / SR + ph)
                 for i in range(n)]
@@ -165,9 +170,11 @@ def main():
          "f32": write_raw_f32}[kind](p, rows)
         files.append(p)
 
-    st10 = ["silence", "sine440", "sine1k", "sine10k", "sweep",
-            "dual", "clicks", "noise", "speechish", "sparse"]
-    for nm in st10:
+    stereo_contents = ["silence", "sine440", "sine1k",
+                       "sine10k", "sweep", "dual", "clicks",
+                       "noise", "speechish", "sparse",
+                       "sine997"]
+    for nm in stereo_contents:
         for ln in (2049, 24000, 240000):
             wav("st_%s_%d" % (nm, ln), stereo(nm, ln))
     for ln in (1, 100, 1000, 2047, 2048, 4096, 48000, 96000):

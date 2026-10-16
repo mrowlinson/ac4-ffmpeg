@@ -9,6 +9,7 @@
 
 #include "../src/ac4enc_lib.h"
 #include "../src/enc_core.h"
+#include "../src/mdct.h"
 
 #include <pthread.h>
 
@@ -1769,6 +1770,113 @@ t_empty(void)
     }
 }
 
+/* S5FU: stereo spectral staging is x2.0 (DEE), not x3.0.
+ * The uniform 3.0 decoded every stereo file exactly 3/2
+ * (+3.52 dB) hot vs DEE at the same dialnorm (G7 997Hz:
+ * ours -26.56 vs DEE/DRP -30.12/-30.17); 5.1 stages x3.0
+ * on both sides (G5 match). Pins the constants, the legs
+ * staging ratio on a 997Hz tone, and end-to-end lib bytes. */
+static unsigned long long
+s5fu_fnv(const uint8_t *b, size_t n)
+{
+    unsigned long long h = 1469598103934665603ULL;
+    for (size_t i = 0; i < n; i++) {
+        h ^= (unsigned long long)b[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static void
+t_s5fu(void)
+{
+    static double dL[24000], dR[24000];
+    static int iL[24000], iR[24000];
+    static double win[4096];
+    static uint8_t libb[1 << 20];
+    static int lines[7];
+    const int *pi[2] = { iL, iR };
+    int lens[2] = { 24000, 24000 };
+    int flags[64], nl = 0, sl[7], librc, libn, pinmax = 0;
+    ac4enc_opts_t o;
+    ac4enc_measure_t m;
+    enc_core_leg_t leg;
+    double g, ratio = 0.0, qpeak = 0.0;
+    int Lpeak = 0;
+    CHECK(ENC_CORE_DIG_GAIN_STEREO == 2.0,
+          "s5fu stereo gain 2.0");
+    CHECK(ENC_CORE_DIG_GAIN == 3.0, "s5fu mc gain 3.0");
+    for (int k = 0; k < 24000; k++) {
+        double v = 16384.0 *
+            sin(2.0 * 3.141592653589793 * 997.0 * k /
+                48000.0);
+        dL[k] = v;
+        dR[k] = v;
+        iL[k] = (int)round(v);
+        iR[k] = (int)round(v);
+    }
+    mdct_kbd_window(4096, 3.0, win);
+    nl = mdct_lines_for_freq(
+        mdct_estimate_freq(dL, 24000, 50.0, 20000.0), 3,
+        lines);
+    CHECK(nl == 7, "s5fu 7 lines");
+    CHECK(enc_core_quantize_frame(dL, 24000, 10 * 2048,
+                                  lines, nl, win,
+                                  ENC_CORE_DIG_GAIN_STEREO,
+                                  &leg) == 0,
+          "s5fu legs ok");
+    CHECK(leg.n > 0, "s5fu legs nonempty");
+    for (int k = 0; k < leg.n; k++)
+        if (fabs((double)leg.qs[k]) > fabs(qpeak)) {
+            qpeak = (double)leg.qs[k];
+            Lpeak = leg.lines[k];
+        }
+    g = enc_core_gain_for_ref(leg.ref);
+    {
+        double xf = mdct_forward_direct_1(dL, 24000,
+                                          10 * 2048, 2048,
+                                          Lpeak, win);
+        double xemit = copysign(pow(fabs(qpeak), 4.0 / 3.0),
+                                qpeak) * g;
+        if (xf != 0.0)
+            ratio = xemit / xf;
+    }
+    CHECK(ratio > 1.995 && ratio < 2.005,
+          "s5fu staging x2.0");
+    CHECK(ac4enc_measure2(pi, lens, 2, &m) == 0,
+          "s5fu measure");
+    memset(&o, 0, sizeof o);
+    o.layout = "stereo";
+    o.rate_kbps = 64;
+    o.interval = "1sec";
+    o.ns2_tone = 1;
+    o.shorts = 1;
+    o.priming = 1;
+    o.iframe_total = -1;
+    o.target_db = -24.0;
+    o.has_measure = 1;
+    o.m_db = m.m_db;
+    o.f_flat = m.f_flat;
+    o.tf_tone = m.tf_tone;
+    o.in_peak = m.in_peak;
+    o.d_peak = m.d_peak;
+    o.has_d_peak = m.has_d_peak;
+    if (ac4enc_spectral_lines(dL, 24000, &m, -24.0, 0, 0.0,
+                              &nl, sl) == 0) {
+        o.has_spec_lines = 1;
+        o.n_spec_lines = nl;
+        memcpy(o.spec_lines, sl, sizeof sl);
+    }
+    librc = lib_run(&o, pi, NULL, 2, 24000, libb,
+                    sizeof libb, flags, 64, &pinmax);
+    CHECK(librc >= 0, "s5fu lib encodes");
+    libn = librc & 0xFFFFFF;
+    CHECK(libn == 4779, "s5fu 4779 bytes");
+    CHECK(s5fu_fnv(libb, (size_t)libn) ==
+              0xea3fb9da0725054dULL,
+          "s5fu golden");
+}
+
 int
 main(void)
 {
@@ -1786,6 +1894,7 @@ main(void)
     t_r3();
     t_absmin();
     t_empty();
+    t_s5fu();
     if (!fails)
         printf("unit: all pass\n");
     return fails ? 1 : 0;
