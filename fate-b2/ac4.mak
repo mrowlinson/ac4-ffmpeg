@@ -8,7 +8,7 @@
 #   A0 demux proof + 6 corrections: ff-a0-fate-local/A0-FATE-LOCAL.md
 #   C encoder goldens: ff-C-fate-local/C-FATE-LOCAL.md (b9ee552)
 #   span note: ff-span-triage/SPAN-TRIAGE.md
-#   parser slots: ff-parser-torture/TORTURE.md (30 samples)
+#   parser slots: ff-parser-torture/TORTURE.md (31 samples)
 #   D4 fate decisions: ff-dec-wrapaddendum/WRAP-ADDENDUM.md §D4 (folded, v3)
 #   mechanical check: ff-mak-check/MAK-CHECK.md F1-F7 + A1 (folded, v3)
 #   crc/gap recipes: ff-fate-more/FATE-MORE.md §1-§2 (via MAK-CHECK F4/F7)
@@ -51,9 +51,9 @@
 #     stub stream (assert sample_rate=0); real failure signal is
 #     mux-header EINVAL, exit 234. UNVERIFIED, owner demux/A0.
 #     (A0 corr 6)
-# 12. NEW parser-torture slot block: 30 samples (t01-t29 + t14b)
-#     with expected parser emit counts. UNVERIFIED, owner parser
-#     track. (TORTURE.md)
+# 12. NEW parser-torture slot block: 31 samples (t01-t29 + t14b +
+#     t17b rate14-f0, pinned torture-30 G2) with expected parser
+#     emit counts. UNVERIFIED, owner parser track. (TORTURE.md)
 #
 # --- v3 changelog (delta + source) ---
 # 13. fate-ac4-gap-fails REDEFINED per D4: CMD pcm -> framemd5, input
@@ -370,8 +370,9 @@ FATE_AC4_REMUX-$(call REMUX, AC4) += $(FATE_AC4_REMUX)
 
 # --- parser torture slots (UNVERIFIED, owner parser track; TORTURE.md) ---
 # Samples in ff-parser-torture/samples/ + SHA256SUMS (deterministic
-# build.py, 30 samples from clip-stereo.ac4: 3x AC41 frames at off
-# 0/348/695); upload to fate-suite as ac4/tNN-*.ac4 at implementation.
+# build.py, 31 samples from clip-stereo.ac4: 3x AC41 frames at off
+# 0/348/695; 31st is t17b rate14-f0, TOC-head control, torture-30 G2);
+# upload to fate-suite as ac4/tNN-*.ac4 at implementation.
 # Mechanism TBD (parser FATE harness or demux+framecrc packet counts).
 # Expected parser emits (assert PARSER behavior, not decoder parity):
 #   3 pkts: t01 noise-prefix, t03 noise-suffix, t04 swapped-endian,
@@ -382,7 +383,8 @@ FATE_AC4_REMUX-$(call REMUX, AC4) += $(FATE_AC4_REMUX)
 #   2 pkts: t08 crc-bad-mid (drop f1), t10 crc-field-corrupt (drop f0),
 #     t11 trunc-tail-midframe, t12 trunc-header, t16 extlen-huge
 #     (drop head, resync f1+f2), t17 rate14 + t18 rate15 (TOC gate
-#     drops f1; t17 -v debug proves oracle skips it at decode)
+#     drops f1; t17 -v debug proves oracle skips it at decode),
+#     t17b rate14-f0 (TOC gate drops f0; oracle exit0 1f no-ig)
 #   0 pkts, clean EOF, no hang: t06 empty, t07 noise-only,
 #     t09 crc-bad-all, t13 trunc-ext-incomplete, t14 ext-hdr-nopayload,
 #     t14b trunc-single, t23 ac40-single-naked, t24 ac40-false-embed
@@ -392,7 +394,8 @@ FATE_AC4_REMUX-$(call REMUX, AC4) += $(FATE_AC4_REMUX)
 #   t25 ac40-falsechain: bounded recovery (re-lock at f1, no
 #     hang/overread), NEVER rejection — the oracle itself false-locks
 #     (§10.1 residual is real: bogus [10,388) + f1 + f2)
-# (TORTURE.md finding 3 is truncated in the source file; used as-is.)
+# (TORTURE.md finding 3 tail present post-D11 re-emit, :74-84;
+#  t17 FRM i=0,2 re-verified in torture-30.)
 # DEMUX CONTRAST (NEGPROOF.md, A0r2 — do NOT assert demuxer resync;
 # resync belongs to the parser lane; cite case #s, not parser counts):
 #   t01 noise-prefix: PARSER 3 pkts, but DEMUX → 234 + 0 pkts, no
