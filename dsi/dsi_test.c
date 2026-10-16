@@ -272,6 +272,39 @@ static void test_negatives(void)
               AC4DSI_EINVAL, "mode 4");
     }
     {
+        /* Table E.8 defines modes 1-3 only (DSI-15). */
+        ac4dsi_stream_t b = s;
+        b.bit_rate_mode = 0;
+        CHECK(ac4dsi_serialize(&b, &p, 1, out, sizeof(out), &len) ==
+              AC4DSI_EINVAL, "mode 0");
+    }
+    {
+        /* DSI-7: fresh init defaults (mode 2, rate unset) must fail
+         * loudly, not emit mode-2/rate-0. */
+        ac4dsi_stream_t b;
+        ac4dsi_stream_init(&b);
+        CHECK(ac4dsi_serialize(&b, &p, 1, out, sizeof(out), &len) ==
+              AC4DSI_EINVAL, "mode2 rate0 (unset default)");
+    }
+    {
+        /* DSI-7: mode 2 with an explicit rate still emits. */
+        ac4dsi_stream_t b;
+        ac4dsi_stream_init(&b);
+        b.bit_rate = 64000;
+        len = 0;
+        CHECK(ac4dsi_serialize(&b, &p, 1, out, sizeof(out), &len) ==
+              AC4DSI_OK && len == 32, "mode2 rate64k emits");
+    }
+    {
+        /* DSI-7: mode 3 (VBR) with rate 0 stays legal (wild vectors).
+         * dashif/livesim2 goldens pin this too; assert the rc here. */
+        ac4dsi_stream_t b;
+        ac4dsi_stream_init(&b);
+        b.bit_rate_mode = 3;
+        CHECK(ac4dsi_serialize(&b, &p, 1, out, sizeof(out), &len) ==
+              AC4DSI_OK, "mode3 rate0 ok");
+    }
+    {
         /* bsv<=1 carries no program-id block; asking for one is EINVAL. */
         ac4dsi_stream_t b = s;
         b.bitstream_version = 1;
@@ -375,12 +408,15 @@ static void test_negatives(void)
     CHECK(strcmp(ac4dsi_strerror(-999), "unknown error") == 0,
           "str unknown");
 
-    /* Mode rule helper (Table E.8). */
+    /* Mode rule helper (Table E.8). Negatives are nonsense but documented
+     * to follow the "else" row (DSI-10). */
     CHECK(ac4dsi_mode_for_wait_frames(0) == 1, "wait0->1");
     CHECK(ac4dsi_mode_for_wait_frames(1) == 2, "wait1->2");
     CHECK(ac4dsi_mode_for_wait_frames(6) == 2, "wait6->2");
     CHECK(ac4dsi_mode_for_wait_frames(7) == 3, "wait7->3");
     CHECK(ac4dsi_mode_for_wait_frames(100) == 3, "wait100->3");
+    CHECK(ac4dsi_mode_for_wait_frames(-1) == 3, "wait-1->3");
+    CHECK(ac4dsi_mode_for_wait_frames(-100) == 3, "wait-100->3");
 
     /* Sanity: default stereo synth is 32 B (12 B header without program
      * id + pv/pb + 18 B v1) with framing intact. */

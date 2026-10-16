@@ -1,4 +1,6 @@
-/* ac4dsi.h - standalone AC-4 DSI (dac4 payload) serializer, pure C.
+/**
+ * @file ac4dsi.h
+ * @brief Standalone AC-4 DSI (dac4 payload) serializer, pure C.
  *
  * Emits one ac4_dsi_v1 structure (ETSI TS 103 190-2 Annex E) exactly as it
  * must appear in the MP4 dac4 box payload: no box header, runs to end of box.
@@ -14,6 +16,9 @@
  *    passthrough (bytes copied verbatim, never parsed).
  * Not emitted (rejected with -EINVAL): pv==0 legacy v0 blocks, ch_mode 11-14
  * back/top modifiers (no wire vectors to verify against).
+ *
+ * NOTE: no license header yet. This tree carries no LICENSE file; the
+ * SPDX/copyright line is added at lavc-submit time (DSI-15 remainder).
  */
 #ifndef AC4DSI_H
 #define AC4DSI_H
@@ -37,9 +42,11 @@ extern "C" {
 #define AC4DSI_EINVAL (-22)  /* bad parameter / unsupported shape */
 #define AC4DSI_ENOSPC (-28)  /* output buffer too small */
 
-/* Human-readable name for an AC4DSI_* return code ("ok",
+/**
+ * Human-readable name for an AC4DSI_* return code ("ok",
  * "invalid argument / unsupported shape", "output buffer too small",
- * "unknown error"). Never returns NULL. */
+ * "unknown error"). Never returns NULL.
+ */
 const char *ac4dsi_strerror(int rc);
 
 #define AC4DSI_DSI_VERSION 1
@@ -61,10 +68,14 @@ typedef struct {
     uint8_t  program_uuid[16];   /* used iff b_uuid. */
     /* Stream bitrate block (Table E.8 rule: wait_frames==0 -> mode 1,
      * 1..6 -> mode 2, else mode 3; see ac4dsi_mode_for_wait_frames).
-     * Default: mode 2 (our encoder wait_frames=6), rate 0 (CALLER MUST
-     * set the target bitrate), precision 0xFFFFFFFF (unknown). */
-    uint8_t  bit_rate_mode;      /* 2 bits. */
-    uint32_t bit_rate;
+     * Default: mode 2 (our encoder wait_frames=6), rate 0, precision
+     * 0xFFFFFFFF (unknown). The rate 0 default is NOT emittable in mode 2:
+     * serialize rejects mode==2 && rate==0 with -EINVAL, so a caller that
+     * forgets to set the target bitrate fails loudly instead of emitting
+     * a dubious mode-2/rate-0 header (DSI-7). Mode 3 (VBR) with rate 0
+     * stays legal (wild vectors carry unknown rate). */
+    uint8_t  bit_rate_mode;      /* 2 bits, 1..3 (Table E.8; 0 rejected). */
+    uint32_t bit_rate;            /* Target bitrate; MUST be set for mode 2. */
     uint32_t bit_rate_precision;
 } ac4dsi_stream_t;
 
@@ -103,36 +114,55 @@ typedef struct {
     size_t         opaque_len; /* bytes; 0 with NULL is legal (empty entry) */
 } ac4dsi_pres_t;
 
-/* Fill *s with the documented stream defaults. rate/precision/mode left for
- * the caller only where noted above (rate MUST be set). */
+/**
+ * Fill *s with the documented stream defaults. NOTE: the defaults are not
+ * all emittable — bit_rate stays 0 and serialize rejects mode==2 with a
+ * zero rate (DSI-7), so set s.bit_rate before serializing.
+ */
 void ac4dsi_stream_init(ac4dsi_stream_t *s);
 
-/* Fill *p with the documented stereo v1 defaults (pv=1, md=0, pres_id=0,
- * ch_mode=1, mask 0x1, content on/"en", DE=1, imm=0). */
+/**
+ * Fill *p with the documented stereo v1 defaults (pv=1, md=0, pres_id=0,
+ * ch_mode=1, mask 0x1, content on/"en", DE=1, imm=0).
+ */
 void ac4dsi_pres_init_v1(ac4dsi_pres_t *p);
 
-/* Set the channel trio (md_compat, ch_mode, channel_groups) from a layout
- * name: "stereo" (0/1/0x000001) or "5.1" (1/4/0x000047). Returns AC4DSI_OK
- * or AC4DSI_EINVAL on unknown layout. */
+/**
+ * Set the channel trio (md_compat, ch_mode, channel_groups) from a layout
+ * name: "stereo" (0/1/0x000001) or "5.1" (1/4/0x000047).
+ *
+ * @return AC4DSI_OK, or AC4DSI_EINVAL on unknown layout.
+ */
 int ac4dsi_pres_set_layout(ac4dsi_pres_t *p, const char *layout);
 
-/* Table E.8 wait_frames -> bit_rate_mode rule: 0 -> 1 (CBR), 1..6 -> 2
- * (ABR), else 3 (VBR). */
+/**
+ * Table E.8 wait_frames -> bit_rate_mode rule: 0 -> 1 (CBR), 1..6 -> 2
+ * (ABR), else 3 (VBR). Negative inputs are nonsense but conform to the
+ * "else" row, so they also yield 3 (documented, not clamped); callers
+ * should not pass them (DSI-10).
+ */
 int ac4dsi_mode_for_wait_frames(int wait_frames);
 
-/* Serialize one ac4_dsi_v1 payload.
- *  s      stream header (must be non-NULL)
- *  pres   array of n_pres presentations (n_pres >= 1; pres non-NULL)
- *  out    output buffer (non-NULL), out_cap its size in bytes
- *  out_len receives the payload length in bytes (may be NULL)
- * Returns AC4DSI_OK, AC4DSI_EINVAL (bad/unsupported field), or
- * AC4DSI_ENOSPC (out_cap too small; *out_len still set to needed size).
+/**
+ * Serialize one ac4_dsi_v1 payload.
+ *
+ * @param s       stream header (must be non-NULL)
+ * @param pres    array of n_pres presentations (n_pres >= 1; non-NULL)
+ * @param n_pres  presentation count, 1..511
+ * @param out     output buffer (non-NULL), out_cap its size in bytes
+ * @param out_cap output buffer size in bytes
+ * @param out_len receives the payload length in bytes (may be NULL)
+ * @return AC4DSI_OK, AC4DSI_EINVAL (bad/unsupported field — including
+ *         bit_rate_mode==0 and mode==2 with bit_rate==0), or AC4DSI_ENOSPC
+ *         (out_cap too small; *out_len still set to needed size).
+ *
  * Two-call sizing pattern: pass a small/empty buffer, then realloc to
  * *out_len and retry (validation precedes all writes, so ENOSPC is
  * purely about sizing — a retry with the reported size cannot fail).
  * Failure semantics: on EINVAL, out is untouched and *out_len (if any)
  * is left unchanged; on ENOSPC, out holds the zero-padded partial
- * payload (out_cap bytes, truncated) and *out_len is the full need. */
+ * payload (out_cap bytes, truncated) and *out_len is the full need.
+ */
 int ac4dsi_serialize(const ac4dsi_stream_t *s, const ac4dsi_pres_t *pres,
                      size_t n_pres, uint8_t *out, size_t out_cap,
                      size_t *out_len);
