@@ -8,10 +8,9 @@ against merged dec-lib (d505b36). Lands in-tree as
 
 - `ac4.mak` — staged decode/demux mak, byte-identical to
   `ff-B2-prep/stage/mak/ac4-decode-demux.mak` v3n
-  (sha256 a0f5c9a9...dddf717, 422 lines). Landing: copy to
-  `tests/fate/ac4.mak`; add `include $(SRC_PATH)/tests/fate/ac4.mak`
-  to tests/Makefile between ac3.mak and adpcm.mak (~line 156).
-  ENC tail re-added at C4 (see mak tail + ac4.mak.v3-full in stage).
+  (sha256 a0f5c9a9...dddf717, 422 lines). Landing: see
+  `## Landing (APPEND+MERGE, never copy)` below. ENC tail
+  re-added at C4 (see mak tail + ac4.mak.v3-full in stage).
 - `pins.txt` — pins validated vs dec-lib output bytes (this branch).
 - `validate.py` — runnable pin gate (`python3 validate.py`, exit 0 =
   all pins match lib output). Needs scratch samples (see --help).
@@ -41,7 +40,7 @@ the real wrapper (not attempted, per brief).
 | 16 | probe-garbage stanza (REF pinned string) | APPLIED; suite-bytes re-confirm SUITE-GATED |
 | 17 | F6 gate split + A1 wiring + B tail (in-mak) | APPLIED |
 | 18 | Parser block comments + demux contrast | APPLIED; mechanism + 30-sample upload SUITE-GATED |
-| 19 | tests/Makefile include line | APPLIED (landing note above) |
+| 19 | tests/Makefile include line | APPLIED (already in-tree :157; landing = append+merge, no include step) |
 | 20 | M3 fate-refs (demux.mak/seek.mak + 3 refs) | N/A already landed (ffmpeg-clone 2f7e33f, verified) |
 | 21 | Owner samples mail + 24h clock | SUITE-GATED (owner action) |
 | 22 | `fate-ac4` full + `--disable-everything` run | SUITE-GATED (needs wrapper) |
@@ -54,6 +53,35 @@ Out of scope: B1 decoder docs (rides A2-tail; A2 not landed).
   shim build; see scratch ff-B2-stage/parity-run.py output).
 - `python3 fate-b2/validate.py` PASS (23 checks: 5 pins
   byte-identical, props, negatives).
+
+## Landing (APPEND+MERGE, never copy) — F1 fix
+
+NEVER plain-copy this file over in-tree `tests/fate/ac4.mak`: that
+file already exists (E-track TS-mux tests) and the tests/Makefile
+include line is already present (line 157). A copy would CLOBBER
+the E tests, and both files define a single-colon `fate-ac4:`
+target — make keeps the last, silently dropping the other set.
+
+Land instead (mechanical, byte-verbatim stanza move, zero content
+change; validated by the ff/doc-b2f1 dry-run):
+
+1. Anchor: the single `fate-ac4:` aggregate line of in-tree
+   `tests/fate/ac4.mak` (E-track tail).
+2. Insert fate-b2/ac4.mak lines 151-369 (16 test stanzas + F6
+   gates + F6 comment, byte-verbatim, single-blank separators)
+   immediately BEFORE the aggregate line. Do NOT land lines
+   1-150 (draft header, staging-only), 371-417 (parser staging
+   block), or 422 (this file's own `fate-ac4:` line).
+3. Land the B2 wiring with the other wiring lines, just above the
+   aggregate: `# --- B2 wiring (decode/demux only; ENC terms
+   re-added at C4) ---` + line 420 (`FATE_SAMPLES_AVCONV +=
+   $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes)`).
+4. Extend the ONE aggregate with the B2 vars (E vars first):
+   `fate-ac4: $(FATE_AC4_MPEGTS_PMT-yes)
+   $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4-yes)
+   $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes)`.
+5. Verify: `grep -c '^fate-ac4:'` = 1; E stanza + all 16 B2 tests
+   present; no `overriding recipe` from `make -p`.
 
 ## Re-record rule (from APPLY-CHECKLIST §3, binding at B-time)
 
