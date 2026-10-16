@@ -1,0 +1,106 @@
+To: samples-request@ffmpeg.org
+Subject: [samples-request] new AC-4 decoder FATE samples (ac4/)
+Attachments: clip-stereo.ac4, clip-stereo-ref.pcm, clip-51-real.ac4,
+  clip-51-real-ref.pcm, clip-crc-bad.ac4, clip-crc-bad-ref.pcm,
+  clip-gap-fail.ac4, clip-stereo51.ac4, clip-impulse.ac4, garbage.ac4,
+  clip-stereo-seek-0.05.pcm, clip-ims120.ac4, clip-chanbased.ac4,
+  clip-714.ac4, chromium-LICENSE.txt (15 files, 279 KB total)
+
+Hello,
+
+Please upload these files under fate-suite `ac4/` for the new native
+AC-4 decoder FATE tests (tests/fate/ac4.mak, `fate-ac4-*`):
+
+Suite files (needed by the tests):
+  ac4/clip-stereo.ac4       1042 bytes
+    sha256 254c7ebc319e43c93af835f19f9524fe0fcea625cbc3db5245f58a7087f95089
+  ac4/clip-stereo-ref.pcm   16384 bytes (s16le 48 kHz 2ch, REF for
+    fate-ac4-stereo / fate-ac4-seek byte-exact pcm compare)
+    sha256 5fe8ef4c0748dc507c51ef1fb1d6f90bb65d6a12194c945224c09ac4201bb4ae
+  ac4/clip-51-real.ac4      2066 bytes
+    sha256 0e7cf65e2c16e26bd5b308ab0a579e284afaf4448ef84334feb9013faf3b4a70
+  ac4/clip-stereo51.ac4     2066 bytes (stereo tones in a 6ch
+    container, L/R content + 4 digital-silent channels;
+    fate-ac4-stereo51)
+    sha256 ace6ffc9657f7fbfe8c19167d741568ee3ae3dcd9cf37b342878bc999abcf776
+  ac4/clip-impulse.ac4      2084 bytes (stereo bed tones + impulses
+    for the 1-frame-delay pin; fate-ac4-delay)
+    sha256 52a44f38348b20445599b7cf4b338aeb05a8c5393f617099a51704733fa02c32
+  ac4/clip-crc-bad.ac4      1042 bytes (1 bad frame rejected + counted,
+    1 frame decodes; fate-ac4-crc-bad)
+    sha256 527fac3f4cae8e4c87bf931fd9af27652bd05fef5f8a14fce28d205b17dd8402
+  ac4/clip-gap-fail.ac4     500 bytes (truncated mid-frame, decode must
+    fail audibly, never silent-pass; negative test)
+    sha256 e54faf833dcdfaa717748cdf007510a714dbdf7fd9d3b5fedda0f5121691f9b1
+  ac4/garbage.ac4           1024 bytes (deterministic pseudo-random
+    bytes, decodes to no-sync; fate-ac4-probe-garbage negative)
+    sha256 b6c0fe397f4b8c644cd6e48beafddba62a637ac9086282bf5b008bd891075f10
+  ac4/clip-stereo-seek-0.05.pcm 8192 bytes (s16le 48 kHz 2ch, REF
+    for fate-ac4-seek byte-exact pcm compare; byte-identical to
+    the 2nd half of clip-stereo-ref.pcm above, and to
+    clip-crc-bad-ref.pcm below)
+    sha256 2ee1ade1b1bd4af89a3175225bee8d9aeb7834492a747d062e64b64f35ee0176
+  ac4/clip-ims120.ac4       48697 bytes (immersive-stereo cm120 6ch,
+    fate-ac4-ims120; BSD-3 Chromium, see Provenance)
+    sha256 0cf487d03255297eb934e6a0da894ac19e39d1e7fd9bb3cbb82c8d6918c6347f
+  ac4/clip-chanbased.ac4    138694 bytes (channel-based cm14 6ch 44.1 kHz,
+    fate-ac4-51 alternate input; BSD-3 Chromium, see Provenance)
+    sha256 dd8139c37d749e3178dece55f37ad6c400abb1131b3fbcab753c7b56c7ad4477
+  ac4/clip-714.ac4          4681 bytes (cm253 8ch 7.1, fate-ac4-714;
+    BROADCAST EXCERPT — your call, see flag below)
+    sha256 d2a1f4c96ef1fb833ec5b0a2be425c6a94b795d68595d304994ac5d8870381c7
+
+Reference-only attachments (decode ground truth, for the record; suite
+placement optional):
+  clip-51-real-ref.pcm      49152 bytes (s16le 48 kHz 6ch)
+    sha256 354f6e0cfb6179ec4dd82d3986475fe1bfca34ac5e8d16edfd52ec3235ad12c6
+  clip-crc-bad-ref.pcm      8192 bytes (s16le 48 kHz 2ch, = 2nd half of
+    clip-stereo-ref.pcm)
+    sha256 2ee1ade1b1bd4af89a3175225bee8d9aeb7834492a747d062e64b64f35ee0176
+  chromium-LICENSE.txt      1536 bytes (BSD-3-Clause notice for the two
+    Chromium clips; verbatim copy of
+    https://raw.githubusercontent.com/chromium/chromium/main/LICENSE)
+    sha256 368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b
+
+Provenance / license: the PCM sources are pure sine tones I synthesized
+myself (48 kHz s16; stereo 440/880 Hz, 5.1 SMPTE order 440/560/680/90/
+320/500 Hz), encoded with our own cleanroom AC-4 encoder (c-ac4enc, an
+independent implementation; no Dolby SDK, code, or bytes involved).
+The two further `.ac4` clips (stereo51, impulse) are likewise tones I
+synthesized myself and encoded with c-ac4enc; `garbage.ac4` is 1024
+bytes from a seeded PRNG (seed 0xAC40), not audio at all; the seek
+`.pcm` is a decoded slice of my own clip. No third-party content in
+those eleven. I release all eleven files for unrestricted
+redistribution as part of the FFmpeg FATE suite.
+
+The three further clips are acquired (not encoded by me):
+- clip-ims120.ac4 and clip-chanbased.ac4 are Chromium test files
+  (BSD-3-Clause, (c) 2015 The Chromium Authors), fetched from
+  https://raw.githubusercontent.com/chromium/chromium/main/media/test/data/
+  (ac4-ims.ac4, ac4-channel-based-coding.ac4) and renamed to the
+  proposed suite names. Redistribution permitted with the notice
+  attached (chromium-LICENSE.txt).
+- clip-714.ac4 is a 4681-byte excerpt (3 sync frames) I carved from a
+  DVB TVE UHD capture already on the FFmpeg samples server
+  (A-codecs/ac-4/esc-tve-uhd-ac4.ts). FLAG: this is broadcast program
+  content, so suite acceptance is entirely your call — happy to drop
+  this file if broadcast excerpts don't belong in the suite.
+
+Stream details: sync AC41, fri13, spf2048; stereo cm2, 5.1 cm14;
+stereo51 cm14 6ch, impulse cm2 stereo; CRC ok except clip-crc-bad
+(1 frame). Acquired: ims120 cm120 6ch 48 kHz, chanbased cm14 6ch
+44.1 kHz, 714 cm253 8ch. Total ~279 KB.
+
+Notes:
+- File names are proposed; happy to rename to whatever fits suite
+  conventions (earlier draft used `crc-bad.ac4` for the CRC clip).
+- `ac4/` is a new suite directory (no existing files to clobber).
+- With this mail every decoder-test clip that has available bytes is
+  proposed for the suite; nothing further outstanding from me.
+- Still none, anywhere: mono AC-4 (no public mono AC-4 exists) and
+  5.1 codec-4 / ACPL (no public codec-4 bytes exist). Not requested
+  here — noted so the set reads complete. Their tests stay TBD.
+- I can re-send the attachments on request.
+
+Thanks,
+Michael Rowlinson <mrowlinson@gmail.com>
