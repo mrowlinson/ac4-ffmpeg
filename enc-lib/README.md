@@ -1,9 +1,11 @@
-# enc-lib: AC-4 encoder library (opaque-ctx API, v1)
+# enc-lib: AC-4 encoder library (opaque-ctx API, r2 incremental)
 
-V1 status: measured-loudness parity vs `c-ac4enc` is **100/102
-runs PASS** (2 bilateral consistent refusals, 0 non-parity);
-see `parity/PARITY.md`. Vendored core patch is purely additive
-(0 removed lines); see `VENDOR.md`.
+R2 status: measured-loudness parity vs `c-ac4enc` is **100/102
+runs PASS** (2 bilateral consistent refusals, 0 non-parity;
+same counts as v1, refusals now fail fast at open); see
+`parity/PARITY.md`. The core is refactored into an incremental
+engine (see `VENDOR.md`); the whole-stream drivers survive as
+thin wrappers proving zero-divergence.
 
 ## What this is
 
@@ -11,86 +13,141 @@ see `parity/PARITY.md`. Vendored core patch is purely additive
 `ENC-LIBDESIGN.md` sec 1 over vendored encoder-core sources.
 Packets are bare AC-4 raw frames (TOC..pad, NO sync/size/CRC);
 the muxer adds framing. Byte-identical to the CLI's raw
-payloads when opts+measure match (parity-gated).
+payloads when opts+measure (+spec lines) match (parity-gated).
 
-## v1 adaptations (deliberate, documented)
+## r2 (incremental ctx)
 
-1. **Buffered whole-stream ctx.** `encode_frame[_f]` buffers and
-   returns 0; the first `flush` runs the core once over the full
-   input, splits the sync-framed blob, and serves bare frames
-   one per call. H2/H3/H4/H6 are sidestepped honestly: nframes
-   is known at flush and the core sees the exact whole input it
-   was written for. Cost: whole-stream latency/RAM. The header
-   is forward-compatible with a future incremental ctx.
-2. **H1 is real, not buffered away.** The stamp+bake path is
-   driven by the CALLER's pass-1 measure (`has_measure` via
-   `ac4enc_measure2[_f]`) through new `_m` core entries that
-   take the measure as input. Without a measure the lib uses
-   the NEUTRAL path (no stamp, no bake, flat_file=0). No silent
-   default pretends CLI parity. Neutral divergence is measured
-   and documented in `parity/PARITY.md` (lengths always equal;
-   stamp bytes + rebaked PCM + flat flag differ).
-3. **`ac4enc_flush2` (design gap).** The design's `flush` never
-   reports the frame length, so callers cannot size packets.
-   `flush2` adds the required `out_len` out-param. `flush`
-   remains as a draining shim. Prefer `flush2`.
-4. **`ac4enc_encode_tail[_f]` (design gap).** Streams are rarely
-   a multiple of 2048; the tail call feeds the final
-   1..2048 samples so the lib encodes the exact sample count.
-5. **`ac4enc_measure2[_f]` (design gap).** The design's measure
-   twins return only an int peak, which loses the float-path
-   peak (`content16_f` needs the double). The `2` twins fill
-   the full struct incl. `d_peak`. The narrow twins remain.
-6. **Forced indices are CORE indices.** The CLI shifts csvfile
-   user indices +1 (`enc_cli.c`: `idx[nidx++] = k + 1`).
-   The lib takes post-shift indices (parity spawns both sides
-   accordingly).
-7. **Meter taps (H10): no gap exists.** `fold_8ch_to_51_meter`
-   is literally `fold_8ch_to_51`, so measuring on audio rows
-   == measuring on meter rows. 8ch->5.1 parity PASSES (4/4).
-8. **Thread-safety (H7): OPEN.** Ctx owns lib state, but the
-   core keeps function-static scratch. Single-threaded only.
+1. **TRUE incremental encode (B2).** `encode_frame[_f]` feeds
+   2048 samples and returns 1 frame ready / 0 need-more-input;
+   lookahead is 1 frame (2 for priming=0 joint mode). Memory is
+   bounded (sliding window + scratch, ~1MB worst case);
+   open-ended streams work. No whole-stream run exists in the
+   lib path. The engine (`src/enc_step.h`, private) is shared
+   with the whole-stream core drivers (now wrappers), so
+   wrapper-vs-original equivalence is structural.
+2. **H1 is real:** stamp+bake from the CALLER's pass-1 measure
+   (`has_measure` via `ac4enc_measure2[_f]`); per-domain stamp
+   select at first feed (int default). Without a measure:
+   NEUTRAL (no stamp, no bake, flat_file=0, default spec
+   lines). **H6 is real:** measured stereo takes caller spec
+   lines (`ac4enc_spectral_lines` over the full, possibly
+   baked, L row); without them the neutral default
+   (nlines=0, fullband-only LONG path) applies and diverges on
+   tonal content. Neutral divergence stays documented in
+   `parity/PARITY.md` (lengths always equal).
+3. **Thread-safe separate ctx (B1).** All mutable scratch is
+   heap-owned by the ctx; zero shared mutable state
+   tree-wide. Concurrent encodes on separate ctx are safe
+   (threaded unit test, TSan-clean). One ctx stays
+   single-threaded.
+4. **Diagnostics (M1).** `ac4enc_strerror`, sticky
+   `ac4enc_err_sub/_stage/_frame` (subcode + stage +
+   frame). Refusals fail fast: stamp-shape at open (-EIO),
+   bake overflow at feed, baked peak at tail/flush. NOTE: the
+   lib may emit prefix frames before discovering a baked-peak
+   refusal (the check needs the whole stream); callers must
+   treat a mid-stream error as failed output.
+5. **Open validates everything (M2).** Interval rule, DRC
+   contents (dry-run through the real writer), all flags 0/1,
+   measure/peak/line ranges, rate, preset, sample rate — all
+   `-EINVAL` at open. `iframe_base`/`iframe_total` accept any
+   int (`total<0` = open-ended); `dmx` is range-free
+   (bit-packed, any 5 ints safe + deterministic). Refusals
+   (valid config, core says no) stay `-EIO`.
+6. **48 kHz only (M3).** `sample_rate` 0 (=48000) or 48000;
+   else `-EINVAL`. Loudness ops assume 48 kHz throughout.
+7. **Slim public header (M4).** `ac4enc_lib.h` exposes no core
+   internals (no `enc_core.h`); public DRC mirror converted at
+   open (layout-static-asserted). In-tree core consumers
+   include `enc_core.h` directly.
+8. **Flags contract (M5).** Build requires `-ffp-contract=off
+   -fno-builtin-sin -fno-builtin-cos -fno-builtin-pow` (pinned
+   in `Makefile`); the header hard-errors on
+   `-ffast-math`/`-ffinite-math-only`, and `ac4enc_fp_ok()`
+   probes contraction at runtime (open refuses when unsafe).
+9. **Length reporting (M8).** `ac4enc_max_packet(rate)` is the
+   exact CBR period max; sized buffers never go short. The
+   `2`-variants (`encode_frame2[_f]`, `encode_tail2[_f]`,
+   `flush2`) set `*out_len` on success AND to the needed size
+   on short-buffer `-EINVAL` (retryable, consumes nothing).
+   Pinning test asserts no emit exceeds the max.
+10. **Lifecycle (M7).** One stream per ctx; `ac4enc_reset`
+    reuses it (same opts) for a new stream. After an
+    encode/memory error the ctx is sticky-failed until reset.
+11. **priming=0 covered (M6).** Joint-mode unit test (bytes +
+    count + flags vs core, default + explicit total). Joint
+    open-ended edge: `iframe_base>0` + default total keeps
+    late-cadence marks past the unknown total (documented;
+    base==0 and explicit totals are exact).
+12. **Forced indices are CORE indices.** The CLI shifts csvfile
+    user indices +1 (`enc_cli.c`: `idx[nidx++] = k + 1`).
+    The lib takes post-shift indices (parity spawns both sides
+    accordingly).
+13. **Meter taps (H10): no gap exists.** `fold_8ch_to_51_meter`
+    is literally `fold_8ch_to_51`, so measuring on audio rows
+    == measuring on meter rows. 8ch->5.1 parity PASSES (4/4).
+
+## API breaks vs v1 (all review-mandated)
+
+- `encode_frame[_f]`/`encode_tail[_f]` now emit incrementally
+  (1/0 contract live; `out`/`outcap` required when a frame is
+  ready) instead of buffering to flush.
+- `opts.drc` is now `const ac4enc_drc_t *` (public mirror, no
+  core header). Field names identical.
+- New required-ish fields: `sample_rate` (0 ok),
+  `has_spec_lines`/`n_spec_lines`/`spec_lines` (0 ok, neutral
+  default).
+- `has_bake` without `has_measure`, `mc+joint_shorts`,
+  `mc+priming=0` now fail open (were silently ignored).
+- Refusals surface earlier (open/feed/tail instead of flush)
+  with subcodes; mid-stream failure may follow emitted
+  frames (see 4 above).
 
 ## H-status vs the design (H1-H11)
 
 | # | State | Note |
 |---|---|---|
-| H1 stamp+bake | RESOLVED | caller measure + `_m` entries + neutral fallback |
-| H2 nframes planning | v1-buffered | known at flush; open-ended bounded by RAM |
-| H3 MDCT rings | v1-buffered | whole input to core |
-| H4 orient lookahead | v1-buffered | latency = stream |
-| H5 bake rewrites PCM | RESOLVED | same op order; bake-db variants pass |
-| H6 freq estimate | v1-buffered | runs inside core on buffered input |
-| H7 thread-safety | OPEN | core statics remain; single-threaded only |
-| H8 error model | RESOLVED | -EINVAL/-ENOMEM/-EIO; unit-tested |
-| H9 float discipline | RESOLVED | flags pinned in Makefile; parity enforces |
+| H1 stamp+bake | RESOLVED | caller measure + per-domain stamp + neutral fallback |
+| H2 nframes planning | RESOLVED | positional CBR/iframe rules; plan at end |
+| H3 MDCT rings | RESOLVED | sliding window, bounded |
+| H4 orient lookahead | RESOLVED | 1-frame latency (2 joint); flush drains |
+| H5 bake rewrites PCM | RESOLVED | same op order on ingest; peak check at end |
+| H6 freq estimate | RESOLVED | caller pass-1 lines + neutral default |
+| H7 thread-safety | RESOLVED | zero shared mutable state; TSan-clean |
+| H8 error model | RESOLVED | -EINVAL/-ENOMEM/-EIO + subcode/stage/frame |
+| H9 float discipline | RESOLVED | flags pinned + compile guard + runtime probe |
 | H10 meter taps | RESOLVED | meter fold == audio fold; 851 passes |
-| H11 malloc-per-frame | PARTIAL | ctx owns PCM; core internals unchanged |
+| H11 malloc-per-frame | RESOLVED | ctx-owned reusable scratch + emit bufs |
 
 R-notes: R1 holds as stated (blind single-pass = neutral,
-divergent by design); R2 moot in v1 (no reorder); R3:
-priming=0 encodes (unit-smoked) but has no CLI oracle (CLI
-always passes priming=1); R4 closed (`_f` on integer-valued
-input == int path, 4 force-float variants PASS); R5 closed
-(flags pinned + parity gate).
+divergent by design); R2 closed (incremental reorder proven
+byte-identical by parity + equivalence matrix); R3 closed
+(priming=0 unit-tested vs core incl. flags); R4 closed (`_f`
+on integer-valued input == int path, 4 force-float variants
+PASS); R5 closed (flags pinned + guard + probe + parity gate).
 
 ## Heisenbugs / quirks found
 
 - CLI `--forced-iframes csvfile:` paths may not contain `:`.
 - CLI fails SILENTLY (rc 1, zero stderr) on bake peak
-  overflow (e.g. short noise at -24); the lib returns -EIO
-  for the same input. Both refuse consistently (2 cases).
+  overflow (e.g. short noise at -24); the lib refuses the same
+  input (now fail-fast at open). Both refuse consistently
+  (2 cases).
+- Sparse I-frame stamp shape (`compose_sub0` returns 11, not
+  12) is a core refusal path, distinct from bake overflow;
+  the lib mirrors it exactly (fail-fast `-EIO` at open).
 - CLI requires `--output-manifest` (hard error without it).
 
 ## Build / test
 
 ```sh
 make            # libac4enc.a (gitignored)
-make harness    # $OUTDIR/encharness (default: scratch)
+make harness    # $OUTDIR/encharness (OUTDIR=... to override)
 make unit       # $OUTDIR/unit
 python3 tests/gen_vectors.py $SCRATCH/vectors
-python3 tests/parity_run.py
+ENC_PARITY_S=$SCRATCH ENC_PARITY_VEC=$VECDIR \
+  python3 tests/parity_run.py
 ```
 
-Parity paths are absolute to the `ff-enc-librefactor` scratch
-by design (vectors ~50MB stay out of the repo).
+Parity vectors (~50MB) stay out of the repo; point
+`ENC_PARITY_VEC` at them (v1 scratch has a set).

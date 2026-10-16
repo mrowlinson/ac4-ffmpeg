@@ -41,3 +41,28 @@ Regeneration: re-copy the 30 files, re-apply the appended
 `/* ac4enc-lib H1 */` blocks (header block + trailing .c
 block). Verify with `diff` (expect 0 `^<` lines) plus
 `tests/unit.c` `_m`-vs-original equivalence.
+
+## r2 delta (ff/enc-libr2: engine split, upstream-readiness)
+
+The v1 "0 removed lines" claim is superseded: r2 refactors the
+core drivers into an incremental engine (review BLOCKERs B1/B2
++ MAJORs). Upstream source unchanged; all edits are ours:
+
+- `enc_core_enc.c`: `encode_pcm_frames` /
+  `encode_pcm_mc_frames` loop bodies moved into the appended
+  `/* ac4enc-lib r2 */` engine (ctx-owned scratch, sliding
+  window, orient ring, positional CBR/iframe rules); the
+  drivers are now thin wrappers (feed all, drain with sync
+  wrap), byte-identical by construction (parity + equivalence
+  gates). All 10 mutable function-static scratch tiles
+  removed; `is_iframe` subsumed by rule predicates (deleted).
+  `+errno.h/+limits.h/+enc_step.h` includes.
+- `enc_core.h`: untouched by r2 (no core public-API change;
+  the engine API is the private, lib-owned `enc_step.h`).
+- `ac4enc_lib.[hc]`: rewritten over the engine (incremental
+  API); `tests/` updated to the incremental protocol.
+
+Regeneration for r2: re-copy upstream, re-apply H1 blocks,
+then re-apply the r2 branch (or cherry-pick `ff/enc-libr2`
+c1). Gates: unit (incl. `_m`-vs-original + lib-vs-core
+equivalence) + parity 100/102.

@@ -16,6 +16,14 @@ iframe flags), **2 BOTH-FAIL** (bilateral consistent refusal,
 same input class fails identically on both sides), **6
 DIVERGE-neutral** (neutral-mode divergence docs, by design).
 
+r2 (ff/enc-libr2, 2026-10-16): same 100/102 + 2 + 6 through
+the incremental lib (frames pulled per feed, not buffered).
+The 2 BOTH-FAIL cases now refuse fail-fast at open (sparse
+stamp shape, `-EIO`) instead of late at flush; the parity
+class is unchanged (both sides refuse). Neutral stats are
+byte-identical to v1 (the neutral spec-lines default matches
+on all 6 cases).
+
 Per-file: 71/73 vector files pass outright; the 2
 `st_noise_2049` files refuse on both sides at default -24
 (bake peak overflow: short noise measures loud, rebake
@@ -66,9 +74,10 @@ in the priming frame differ. All else follows the bake gain.
 ## Reproduce
 
 ```sh
-make && make harness
-python3 tests/gen_vectors.py $SCRATCH/vectors
-python3 tests/parity_run.py   # expect 100 PASS + 2 BOTH-FAIL + 6 neutral
+make && make harness OUTDIR=$SCRATCH && make unit OUTDIR=$SCRATCH
+python3 tests/gen_vectors.py $VECDIR   # or reuse an existing set
+ENC_PARITY_S=$SCRATCH ENC_PARITY_VEC=$VECDIR \
+  python3 tests/parity_run.py   # expect 100 PASS + 2 BOTH-FAIL + 6 neutral
 ```
 
 Full per-run rows: `parity_results.csv` (copied beside this
