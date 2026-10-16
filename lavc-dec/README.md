@@ -1,16 +1,22 @@
-# lavc-dec: AC-4 lavc decoder wrapper (staged for the ffmpeg tree)
+# lavc-dec: AC-4 lavc decoder (staged for the ffmpeg tree)
 
-`ff/dec-wrap` stages the Series-A decoder against merged dec-lib
-(d505b36). Lands in-tree as `libavcodec/ac4dec.c` + the two wiring
-hunks once the Q1 port question is settled (below).
+`ff/dec-wrap` stages the Series-A decoder; `ff/dec-wrap-q1` closes
+Q1 by staging the in-tree core port with it. Lands in-tree as
+`libavcodec/ac4dec.c` + the 23 `core/` files + the two wiring
+hunks. No out-of-tree link, no extra libs/flags.
 
 ## Files
 
 - `ac4dec.c` — the wrapper (thin; no DSP). Landing:
-  `libavcodec/ac4dec.c`.
+  `libavcodec/ac4dec.c`. UNCHANGED by the Q1 port (it already calls
+  only the public `ac4d_*` API; the port swaps the provider, not the
+  wrapper logic).
+- `core/` — the 23 vendored dec-lib sources (11 `.c` + 12 `.h`),
+  landing flat in `libavcodec/`. Filenames kept (zero collisions at
+  `3e6cd5e`); port delta is headers + CLI strip only (see Q1).
 - `wiring.patch` — `allcodecs.c` extern + `Makefile` OBJS hunks, vs
   ffmpeg master `3e6cd5e`. Apply with `git apply` inside the tree,
-  then copy `ac4dec.c` in. `configure` auto-detects
+  then copy `ac4dec.c` + `core/*` in. `configure` auto-detects
   `CONFIG_AC4_DECODER` from the new extern; no `configure` edit needed
   (v1 has no parser dep).
 - `README.md` — this file.
@@ -19,28 +25,65 @@ hunks once the Q1 port question is settled (below).
 
 - ffmpeg tree: master `3e6cd5e` (raw `ac4` demuxer/muxer already
   upstream; no parser, no `dac4`, no lavc `ac4*`).
-- dec-lib: `d505b36` (`ff/dec-lib-merged`, REVIEW-DEC-LIB
-  APPROVE-WRAP). Core links out-of-tree until Q1 (the in-tree port)
-  is decided; the wrapper is written so the port only swaps the
-  `ac4d_*` provider, not the wrapper logic.
+- dec-lib: `0fc894c` tree `d2d641a`
+  (`ff/dec-lib-merged` content, REVIEW-DEC-LIB APPROVE-WRAP;
+  dec-lib/ identical `d505b36..0fc894c`). `core/` is the in-tree
+  port of exactly this rev (see Q1).
+
+## Q1 resolution (DEC-WRAPDESIGN Q1, CLOSED by `ff/dec-wrap-q1`)
+
+Q1's exact text (DEC-WRAPDESIGN.md §8):
+
+> - **Q1 (HARDEST): where does the ported core live and who owns its
+>   upstreaming?** Native decoder means ~10 KLOC of ported DSP moves
+>   INTO `libavcodec/` — but the cleanroom repo keeps evolving (gap
+>   fixes flip stubs to real). Either (a) port once and develop future
+>   fixes directly in ffmpeg (cleanroom repo becomes stale, dual-home
+>   drift), or (b) keep cleanroom authoritative and re-port per wave
+>   (ffmpeg reviewers see bulk drops, review pain, `git blame` lies).
+>   No good answer; needs owner decision before patch 1. Sub-issue:
+>   lib "24-bit" packing must be pinned before advertising S32.
+
+Answer:
+
+- WHERE: in-tree, `libavcodec/` flat, same filenames (zero
+  collisions at `3e6cd5e`), built under `CONFIG_AC4_DECODER` with no
+  defines and no extra flags — the `AC4D_LIB_ONLY` behavior (no
+  `main`, callback logging) is unconditional in the ported copy.
+- WHO OWNS: snapshot-vendoring, i.e. (b) before upstream acceptance
+  and (a) after. Until the patch lands upstream, dec-lib stays
+  authoritative for DSP and `core/` is a pinned snapshot, re-ported
+  per release by the mechanical procedure below (re-ports diff
+  cleanly against the staged set, so reviewers never see a second
+  bulk drop). Once upstream accepts, the ffmpeg tree is authoritative:
+  fixes land upstream-first and backport to dec-lib/cleanroom.
+- PORT DELTA (whole list): FFmpeg LGPL header prepend per file
+  (title = original title verbatim, DSI-L3 precedent) + `dec_lib.c`
+  `AC4D_LIB_ONLY` strip (39 CLI/shim spans deleted, 2 lib spans
+  spliced inline; guards verified else-free) + one provenance line
+  atop `dec_lib.c`. Nothing else: no renames, no hygiene changes,
+  no behavior edits. Provenance pin: dec-lib tree `d2d641a`.
+- RE-VENDOR RULE (mechanical): take `dec-lib/src/*` at the new pin
+  → apply the delta above → diff against staged `core/` (expect DSP
+  changes only) → update the pin → re-run the full gate table below.
+  Never hand-edit `core/` (generate, then diff); never re-prepend
+  headers over headed files (always regenerate from dec-lib source).
+- SUB-ISSUE (already settled): 24-bit packing pinned s16LE+`0x00`
+  (WRAP-DRIFTCHECK 27, no true 24-bit path); S32 stays unwired.
 
 ## Local validation build (exact recipe)
 
 ```
-# 1. core archive (AC4D_LIB_ONLY; its own flags, zero warnings)
-cp -r <parent>/dec-lib /tmp/corelib && cd /tmp/corelib && make
-# 2. ffmpeg tree with ac4dec.c + wiring.patch applied
+# ffmpeg tree with ac4dec.c + core/* + wiring.patch applied
 mkdir build && cd build
-$FFWT/configure --extra-cflags="-I/tmp/corelib/src" \
-  --extra-libs="/tmp/corelib/build/libac4d.a" --disable-doc
+$FFSRC/configure --disable-doc   # NO extra-cflags/extra-libs: Q1 closed
 make -j$(nproc) ffmpeg
 # decode needs -strict experimental (EXPERIMENTAL cap until mature)
 ./ffmpeg -strict experimental -i in.ac4 -map 0:a -f s16le out.pcm
 ```
 
-Upstream will never take the out-of-tree link; that is Q1's port
-(DEC-WRAPDESIGN Q1, still open, owner decision). The staged
-`Makefile` hunk carries a comment saying so.
+The built binary's `configuration:` line shows `--disable-doc` with no
+extras — the Q1 close is visible in the artifact itself.
 
 ## Lib-contract honors (brief checklist, with code sites)
 
@@ -58,7 +101,9 @@ Upstream will never take the out-of-tree link; that is Q1's port
 - UNSUPPORTED at init (`ac4_lib_open`): `drc=1` or `de_level!=0`
   fails open with `EINVAL` + a log naming the option. (Also note the
   lib reads `AC4DEC_DRC=1` from the environment — ambient-env wart,
-  lib-owned, documented not fixed.)
+  lib-owned, documented not fixed. `AC4DEC_CMPLEAD`/`AC4DEC_HEIGHTS`
+  are silently dropped by the lib (REVIEW MINOR-5/6); `AC4DEC_*DUMP`
+  file writes stay lib-owned too.)
 - Error table (`ac4_lib_fatal` + feed map): BAD_PACKET skips loud
   (`WARNING` per packet); BITSTREAM(-5) -> `INVALIDDATA` fatal
   (never skip); CONFIG_CHANGE -> `INVALIDDATA` fatal (D6, not
@@ -70,8 +115,10 @@ Upstream will never take the out-of-tree link; that is Q1's port
 - channels==0 fails loud at the latch (`ac4_latch`): no-bed/exotic
   class → `EINVAL` naming channels/mask/note. Mask→layout must also
   agree with the channel count.
-- `AC4D_LIB_ONLY` defines the core build (its `Makefile` already
-  does for `lib_*.o`); without it lib diagnostics hit real stderr.
+- In-tree, the `AC4D_LIB_ONLY` behavior is unconditional (no
+  `main`, lib diagnostics via the log callback); the define no longer
+  exists in the ported copy. (In dec-lib proper, its `Makefile` still
+  passes `-DAC4D_LIB_ONLY` for `lib_*.o`.)
 - 24-bit packing pinned s16LE+`0x00` (3-byte LE): known, NOT wired
   (carries no true 24-bit path); S16-only v1 per D3. FLT is
   requantized int (`s16/32768`) and stays ungated behind the same
@@ -116,34 +163,41 @@ Upstream will never take the out-of-tree link; that is Q1's port
   remainder. Underflow (lib invariant break) falls back to last+spf
   with a one-time warning.
 
-## Gates (this wave, all in scratch, out-of-tree builds only)
+## Gates (Q1 wave, all in scratch, out-of-tree builds only)
 
-- Build: `make ffmpeg` exit 0, zero `ac4` warnings (normal and
-  ASan/UBSan builds). dec-lib core: zero warnings under its own
-  flags (unchanged behavior).
+- Build: pure in-tree (`configure --disable-doc`, no extras):
+  `make ffmpeg` exit 0, zero `ac4` warnings (normal and ASan/UBSan
+  builds; 34 pre-existing tree warnings, none `ac4`). Ported core:
+  zero warnings under dec-lib's own flags too, with no `-D`.
+- Port equivalence (mechanical): ported `dec_lib.c` preprocessed
+  output is byte-identical to `-DAC4D_LIB_ONLY` dec-lib source
+  modulo blank lines; all other core files are comment-prepend
+  only. Neg outputs (`bad40`, `ims`) are `cmp`-identical to the
+  out-of-tree wrap's own outputs.
 - Byte-exact vs dec-lib: 11/11 vectors `cmp`-identical to BOTH the
   shim (`build/shim decode --bits 16`) and an independent streaming
   driver (feed-all + drain-per-feed + flush loop): stereo (2),
-  5.1 cm14 incl 44.1k (3), 7.1 cm253 (3), IMS120 (2), all-gap
-  `5x-acpl-unimpl` (2, silence bytes). Plus the ims splice prefix
-  (12 frames) identical to the streaming driver.
+  5.1 cm14 incl 44.1k (2), 5.1 all-gap (2, silence bytes),
+  7.1 (3), IMS (2). Plus the ims splice prefix (12 frames)
+  identical to the streaming driver.
 - Neg controls: splice CONFIG_CHANGE → loud `INVALIDDATA`,
   byte-exact 12-frame prefix, terminates (exit 69); ajoc ch=0 →
   loud `EINVAL` + `Conversion failed!`; mid-stream garbage →
-  1 loud skip, exit 0, 87/88 frames, 38-frame head prefix exact
-  (frame 39+ inside the ~2-frame DN latch horizon, expected);
-  garbage file → 17 skips + cap abort, terminates; under-cap
-  all-skip → clean EOF; `drc=1` / `de_level=6` → init
-  `UNSUPPORTED` fail-open; `request_sample_fmt=FLT` → init `EINVAL`
-  (API-level, T4); empty file → loud mux-level failure.
+  1 loud skip, exit 0, 87/88 frames, 39-frame head prefix exact
+  (divergence at frame 40, inside the ~2-frame DN latch horizon,
+  expected); garbage file → 17 skips + cap abort, terminates;
+  under-cap all-skip → decoder-clean EOF (mux reports empty);
+  `drc=1` / `de_level=6` → init `UNSUPPORTED` fail-open;
+  `request_sample_fmt=FLT` → init `EINVAL` (API-level, T4);
+  empty file → loud mux-level failure.
 - C-API suite (`tseek`, scratch): T1 straight, T2 flush+re-decode
   IDENTICAL, T3 flush+other-layout IDENTICAL with 2ch→6ch relatch,
   T4 req-flt fails, T5 stuck `pres_sel=15` → 17 skips + fatal,
   T6 virgin-drain clean EOF. ALL PASS.
-- ASan/UBSan (`-fsanitize=address,undefined`, instrumented core):
-  6/6 clean, zero reports — clean, all-gap, splice-fatal,
-  cap-fatal, no-bed (64 poison-drops), mid-skip. Sanitizer PCM
-  bytes identical to the normal build.
+- ASan/UBSan (`-fsanitize=address,undefined`, whole tree
+  instrumented): 6/6 clean, zero reports — clean, all-gap,
+  splice-fatal, cap-fatal, no-bed (poison-drop + fatal-once + EOF),
+  mid-skip. Sanitizer PCM bytes identical to the normal build.
 
 ## N5 interplay (N5fix unlanded — wrap tracks it)
 
@@ -166,10 +220,9 @@ contract, re-run the full gate table above.
 
 ## Tracked follow-ups (not this wave)
 
-Q1 in-tree port (owner decision; until then the out-of-tree link);
-D5 `priming` + D2 delay/trim; drain-and-reopen upgrade for Q3 (the
-ims splice is live evidence real streams switch); MAJOR-1/2 silent
-corners (ap5 tripwire, cross-splice DN compare); MAJOR-3/4 MT/cache
-redesign (wrapper serializes; env + DUMP-file warts stay lib-owned);
-CRC-at-demux/parser; ffprobe flag export (declined: writer lacks the
-field).
+D5 `priming` + D2 delay/trim (re-vendor + re-gate per the Q1 rule when
+it lands); drain-and-reopen upgrade for Q3 (the ims splice is live
+evidence real streams switch); MAJOR-1/2 silent corners (ap5 tripwire,
+cross-splice DN compare); MAJOR-3/4 MT/cache redesign (wrapper
+serializes; env + DUMP-file warts stay lib-owned); CRC-at-demux/parser;
+ffprobe flag export (declined: writer lacks the field).

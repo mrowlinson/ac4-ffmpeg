@@ -1,18 +1,21 @@
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index 249b0fe..46405e6 100644
+index 249b0fe..5343357 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
-@@ -216,6 +216,10 @@ OBJS-$(CONFIG_AC3_DECODER)             += ac3dec_float.o ac3dec_data.o ac3.o \
-                                           kbdwin.o ac3tab.o ac3_channel_layout_tab.o
- OBJS-$(CONFIG_AC3_FIXED_DECODER)       += ac3dec_fixed.o ac3dec_data.o ac3.o \
-                                           kbdwin.o ac3tab.o ac3_channel_layout_tab.o
-+# AC-4 decoder core lives outside this tree until the Q1 port lands;
-+# link the dec-lib static archive (built with AC4D_LIB_ONLY) via
-+# --extra-libs, with its headers on --extra-cflags.
-+OBJS-$(CONFIG_AC4_DECODER)             += ac4dec.o
- OBJS-$(CONFIG_AC3_ENCODER)             += ac3enc_float.o ac3enc.o ac3tab.o \
+@@ -220,6 +220,13 @@ OBJS-$(CONFIG_AC3_ENCODER)             += ac3enc_float.o ac3enc.o ac3tab.o \
                                            ac3.o kbdwin.o
  OBJS-$(CONFIG_AC3_FIXED_ENCODER)       += ac3enc_fixed.o ac3enc.o ac3tab.o ac3.o kbdwin.o
+ OBJS-$(CONFIG_AC3_MF_ENCODER)          += mfenc.o mf_utils.o
++# AC-4 decoder: wrapper + vendored dec-lib streaming core (in-tree port,
++# Q1 closed; re-vendor rule in lavc-dec/README.md). No extra libs/flags.
++OBJS-$(CONFIG_AC4_DECODER)             += ac4dec.o dec_lib.o entropy.o imdct.o \
++                                          huffman_tables.o sfb_offsets.o \
++                                          snf_tables.o aspx_tables.o \
++                                          aspx_noise.o acpl.o qmf.o \
++                                          qwin_tables.o
+ OBJS-$(CONFIG_ACELP_KELVIN_DECODER)    += g729dec.o lsp.o celp_filters.o acelp_filters.o acelp_pitch_delay.o acelp_vectors.o g729postfilter.o
+ OBJS-$(CONFIG_AGM_DECODER)             += agm.o jpegquanttables.o
+ OBJS-$(CONFIG_AHX_DECODER)             += mpegaudiodec_float.o
 diff --git a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
 index c344cb5..5921bfb 100644
 --- a/libavcodec/allcodecs.c
