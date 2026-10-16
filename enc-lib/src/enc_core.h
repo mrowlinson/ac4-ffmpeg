@@ -1,11 +1,10 @@
 /* enc_core.h: encoder core — frame assembly, rate loops, TOC.
  *
- * C port of encoder/enc.py + encoder/long51.py + encoder/fit51.py
- * (C-port phase, enc_core lane). enc.py maps to src/enc_core_enc.c,
- * long51.py to src/enc_core_long51.c, fit51.py to
- * src/enc_core_fit51.c; all share this header.
+ * Frame assembly lives in src/enc_core_enc.c, steady-LONG
+ * 5.1 packing in src/enc_core_long51.c, the mode-3 CBR rate
+ * loop in src/enc_core_fit51.c; all share this header.
  *
- * Reuses the ported deps (bits/asf/mdct/loudness/enc_mc3/enc_jshort/
+ * Reuses the shared deps (bits/asf/mdct/loudness/enc_mc3/enc_jshort/
  * enc_tail59/enc_acpl/pycompat/sfb_offsets); nothing is re-ported.
  * Float discipline: builtin sum() of floats is pycompat_sum
  * (Neumaier), round() is pycompat_round_half_even, x**y is libm
@@ -24,11 +23,23 @@
 #ifndef AC4_ENC_CORE_H
 #define AC4_ENC_CORE_H
 
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #include "bits.h"
 #include "enc_mc3.h"
+
+/* m1: INT_MIN-safe int magnitude (abs(INT_MIN) is UB).
+ * Saturates to INT_MAX; identical to abs() on every other
+ * input. All PCM/baked peak scans use this. */
+static inline int
+enc_core_abs_sat(int v)
+{
+    long long lv = v;
+    long long a = lv < 0 ? -lv : lv;
+    return a > INT_MAX ? INT_MAX : (int)a;
+}
 
 #define ENC_CORE_SYNC 0xAC41
 #define ENC_CORE_FRAME_SAMPLES 2048
@@ -195,8 +206,6 @@ int enc_core_preset_id(const char *name);
 /* ---- channel folds (out rows must hold the returned n; -1 NULL) ---- */
 int enc_core_fold_8ch_to_51(const double *const *chs, const int *lens,
                             double **out);
-int enc_core_fold_8ch_to_51_meter(const double *const *chs,
-                                  const int *lens, double **out);
 int enc_core_mix51_to_stereo(const double *const *chs, const int *lens,
                              double **out);
 int enc_core_fold_8ch_to_stereo(const double *const *chs,
@@ -289,11 +298,6 @@ int enc_core_write_raw_frame(int i, int raw_size, const char *layout,
 int enc_core_write_sync_frame(const uint8_t *raw, int n_raw,
                               const char *trailer, uint8_t *out,
                               size_t outcap);
-int enc_core_encode_stream(int nsamples, int rate_kbps,
-                           const char *layout, const char *interval,
-                           const char *trailer, const int *forced,
-                           int nforced, const enc_core_drc_t *drc,
-                           const int *dmx, uint8_t *out, size_t outcap);
 
 /* ---- quantization ---- */
 double enc_core_gain_for_ref(int ref);

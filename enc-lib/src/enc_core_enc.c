@@ -1,5 +1,5 @@
-/* enc_core_enc.c: C port of encoder/enc.py (frame assembly, rate
- * loops, TOC, full-stream drivers). See enc_core.h for the contract. */
+/* enc_core_enc.c: frame assembly, rate loops, TOC,
+ * full-stream drivers. See enc_core.h for the contract. */
 #include "enc_core.h"
 #include "enc_step.h"
 #include <errno.h>
@@ -313,13 +313,6 @@ enc_core_fold_8ch_to_51(const double *const *chs, const int *lens,
                      fold_at(chs[7], lens[7], i)) / 2.0;
     }
     return n;
-}
-
-int
-enc_core_fold_8ch_to_51_meter(const double *const *chs,
-                              const int *lens, double **out)
-{
-    return enc_core_fold_8ch_to_51(chs, lens, out);
 }
 
 int
@@ -1731,70 +1724,6 @@ enc_core_write_sync_frame(const uint8_t *raw, int n_raw,
     out[4 + n_raw] = (uint8_t)(word >> 8);
     out[5 + n_raw] = (uint8_t)word;
     return n_raw + 6;
-}
-
-int
-enc_core_encode_stream(int nsamples, int rate_kbps,
-                       const char *layout, const char *interval,
-                       const char *trailer, const int *forced,
-                       int nforced, const enc_core_drc_t *drc,
-                       const int *dmx, uint8_t *out, size_t outcap)
-{
-    int nframes, *sizes = NULL, *ifr = NULL, nifr = 0;
-    uint8_t *raw = NULL;
-    bytebuf_t stream = { NULL, 0, 0 };
-    int n = -1;
-    if (!layout || !trailer || !out)
-        return -1;
-    if (strcmp(layout, "stereo") && strcmp(layout, "5.1"))
-        return -1;
-    if (strcmp(trailer, "crc") && strcmp(trailer, "zero"))
-        return -1;
-    nframes = enc_core_nframes_for_samples(nsamples);
-    sizes = malloc((size_t)nframes * sizeof *sizes);
-    ifr = malloc((size_t)nframes * sizeof *ifr);
-    raw = malloc(65536 + 6);
-    if (!sizes || !ifr || !raw)
-        goto done;
-    if (enc_core_cbr_raw_sizes(nframes, rate_kbps, sizes))
-        goto done;
-    nifr = enc_core_iframe_set(nframes, interval, forced,
-                               nforced, ifr);
-    if (nifr < 0)
-        goto done;
-    for (int i = 0; i < nframes; i++) {
-        uint8_t *sync;
-        int n_raw, n_sync, is_if = 0;
-        for (int k = 0; k < nifr; k++)
-            if (ifr[k] == i)
-                is_if = 1;
-        n_raw = enc_core_write_raw_frame(i, sizes[i], layout,
-                                         is_if, drc, dmx, raw,
-                                         65536);
-        if (n_raw < 0)
-            goto done;
-        sync = malloc((size_t)n_raw + 6);
-        if (!sync)
-            goto done;
-        n_sync =
-            enc_core_write_sync_frame(raw, n_raw, trailer,
-                                      sync, (size_t)n_raw + 6);
-        if (n_sync < 0 || bb_put(&stream, sync, (size_t)n_sync)) {
-            free(sync);
-            goto done;
-        }
-        free(sync);
-    }
-    if (stream.n > outcap)
-        goto done;
-    memcpy(out, stream.p, stream.n);
-    n = (int)stream.n;
-done:
-    free(sizes);
-    free(ifr);
-    free(raw);
-    bb_free(&stream);
-    return n;
 }
 
 /* All-absent empty leg (Python ({}, 100, {})). */
@@ -3282,11 +3211,11 @@ enc_core_encode_pcm(const int *pcmL, int nL, const int *pcmR,
                         &ng);
         loud_flatness(dL, nL, dR, nR, 2048, &f, &tf);
         for (int k = 0; k < nL; k++)
-            if (abs(pcmL[k]) > in_peak)
-                in_peak = abs(pcmL[k]);
+            if (enc_core_abs_sat(pcmL[k]) > in_peak)
+                in_peak = enc_core_abs_sat(pcmL[k]);
         for (int k = 0; k < nR; k++)
-            if (abs(pcmR[k]) > in_peak)
-                in_peak = abs(pcmR[k]);
+            if (enc_core_abs_sat(pcmR[k]) > in_peak)
+                in_peak = enc_core_abs_sat(pcmR[k]);
         if (has_bake)
             gain = bake_db;
         else if (isinf(m) && m < 0)
@@ -3305,11 +3234,11 @@ enc_core_encode_pcm(const int *pcmL, int nL, const int *pcmR,
             if (bake_round((double)pcmR[k] * bake, &bR[k]))
                 goto done;
         for (int k = 0; k < nL; k++)
-            if (abs(bL[k]) > peak)
-                peak = abs(bL[k]);
+            if (enc_core_abs_sat(bL[k]) > peak)
+                peak = enc_core_abs_sat(bL[k]);
         for (int k = 0; k < nR; k++)
-            if (abs(bR[k]) > peak)
-                peak = abs(bR[k]);
+            if (enc_core_abs_sat(bR[k]) > peak)
+                peak = enc_core_abs_sat(bR[k]);
         if (!(peak < 32767))
             goto done;
         free(dL);
@@ -3582,8 +3511,8 @@ enc_core_encode_pcm_mc(const int *const *chs, const int *lens,
         free(mono6);
         for (int c = 0; c < 6; c++) {
             for (int k = 0; k < metlens[c]; k++)
-                if (abs(met[c][k]) > peak)
-                    peak = abs(met[c][k]);
+                if (enc_core_abs_sat(met[c][k]) > peak)
+                    peak = enc_core_abs_sat(met[c][k]);
             free(dm[c]);
         }
         flat_file = f > ENC_CORE_FLAT_F_THRESH;
@@ -3618,8 +3547,8 @@ enc_core_encode_pcm_mc(const int *const *chs, const int *lens,
             int pk = 0;
             for (int c = 0; c < 6; c++)
                 for (int k = 0; k < lens[c]; k++)
-                    if (abs(pcm[c][k]) > pk)
-                        pk = abs(pcm[c][k]);
+                    if (enc_core_abs_sat(pcm[c][k]) > pk)
+                        pk = enc_core_abs_sat(pcm[c][k]);
             if (!(pk < 32767))
                 goto done;
         }
@@ -3834,11 +3763,11 @@ enc_core_encode_pcm_f(const double *pcmL, int nL,
             if (bake_round(dR[k] * bake, &bR[k]))
                 goto done;
         for (int k = 0; k < nL; k++)
-            if (abs(bL[k]) > peak)
-                peak = abs(bL[k]);
+            if (enc_core_abs_sat(bL[k]) > peak)
+                peak = enc_core_abs_sat(bL[k]);
         for (int k = 0; k < nR; k++)
-            if (abs(bR[k]) > peak)
-                peak = abs(bR[k]);
+            if (enc_core_abs_sat(bR[k]) > peak)
+                peak = enc_core_abs_sat(bR[k]);
         if (!(peak < 32767))
             goto done;
         free(dL);
@@ -4016,8 +3945,8 @@ enc_core_encode_pcm_mc_f(const double *const *chs,
             int pk = 0;
             for (int c = 0; c < 6; c++)
                 for (int k = 0; k < lens[c]; k++)
-                    if (abs(pcm[c][k]) > pk)
-                        pk = abs(pcm[c][k]);
+                    if (enc_core_abs_sat(pcm[c][k]) > pk)
+                        pk = enc_core_abs_sat(pcm[c][k]);
             if (!(pk < 32767))
                 goto done;
         }
@@ -4162,11 +4091,11 @@ enc_core_encode_pcm_m(const int *pcmL, int nL, const int *pcmR,
             if (bake_round((double)pcmR[k] * bake, &bR[k]))
                 goto done;
         for (int k = 0; k < nL; k++)
-            if (abs(bL[k]) > peak)
-                peak = abs(bL[k]);
+            if (enc_core_abs_sat(bL[k]) > peak)
+                peak = enc_core_abs_sat(bL[k]);
         for (int k = 0; k < nR; k++)
-            if (abs(bR[k]) > peak)
-                peak = abs(bR[k]);
+            if (enc_core_abs_sat(bR[k]) > peak)
+                peak = enc_core_abs_sat(bR[k]);
         if (!(peak < 32767))
             goto done;
         free(dL);
@@ -4308,8 +4237,8 @@ enc_core_encode_pcm_mc_m(const int *const *chs, const int *lens,
             int pk = 0;
             for (int c = 0; c < 6; c++)
                 for (int k = 0; k < lens[c]; k++)
-                    if (abs(pcm[c][k]) > pk)
-                        pk = abs(pcm[c][k]);
+                    if (enc_core_abs_sat(pcm[c][k]) > pk)
+                        pk = enc_core_abs_sat(pcm[c][k]);
             if (!(pk < 32767))
                 goto done;
         }
@@ -4431,11 +4360,11 @@ enc_core_encode_pcm_f_m(const double *pcmL, int nL,
             if (bake_round(dR[k] * bake, &bR[k]))
                 goto done;
         for (int k = 0; k < nL; k++)
-            if (abs(bL[k]) > peak)
-                peak = abs(bL[k]);
+            if (enc_core_abs_sat(bL[k]) > peak)
+                peak = enc_core_abs_sat(bL[k]);
         for (int k = 0; k < nR; k++)
-            if (abs(bR[k]) > peak)
-                peak = abs(bR[k]);
+            if (enc_core_abs_sat(bR[k]) > peak)
+                peak = enc_core_abs_sat(bR[k]);
         if (!(peak < 32767))
             goto done;
         free(dL);
@@ -4578,8 +4507,8 @@ enc_core_encode_pcm_mc_f_m(const double *const *chs,
             int pk = 0;
             for (int c = 0; c < 6; c++)
                 for (int k = 0; k < lens[c]; k++)
-                    if (abs(pcm[c][k]) > pk)
-                        pk = abs(pcm[c][k]);
+                    if (enc_core_abs_sat(pcm[c][k]) > pk)
+                        pk = enc_core_abs_sat(pcm[c][k]);
             if (!(pk < 32767))
                 goto done;
         }
@@ -5044,9 +4973,9 @@ ingest_d(enc_step_ctx_t *c, int ch, double x)
             v = x * c->bake0[ch];
         if (bake_round(v, &bi))
             return -1;
-        /* abs() exactly as the core peak scans (see m1). */
-        if (c->do_peak && abs(bi) > c->baked_peak)
-            c->baked_peak = abs(bi);
+        /* INT_MIN-safe magnitudes (m1), same scans as the core. */
+        if (c->do_peak && enc_core_abs_sat(bi) > c->baked_peak)
+            c->baked_peak = enc_core_abs_sat(bi);
         v = (double)bi;
     }
     c->rows[ch][c->fed[ch] - c->wbase] = v;

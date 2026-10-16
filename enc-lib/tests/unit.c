@@ -105,6 +105,10 @@ t_misuse(void)
             CHECK(flen > 0, "frame len > 0");
         }
         CHECK(frc == 0 && n == 4, "4 frames then done");
+        CHECK(ac4enc_fed_samples(c) == 2048 + 100,
+              "m2 fed total");
+        CHECK(ac4enc_emitted_frames(c) == n,
+              "m2 emitted total");
     }
     CHECK(ac4enc_encode_frame(c, rows, NULL, 0, NULL) ==
               -EINVAL,
@@ -673,7 +677,11 @@ t_reset(void)
         memcpy(a + na, ob, olen);
         na += olen;
     }
+    CHECK(ac4enc_fed_samples(c) == 2048 + 100,
+          "reset fed total");
     CHECK(ac4enc_reset(c) == 0, "reset ok");
+    CHECK(ac4enc_fed_samples(c) == 0, "m2 reset fed");
+    CHECK(ac4enc_emitted_frames(c) == 0, "m2 reset emitted");
     CHECK(ac4enc_encode_frame2(c, rows, ob, sizeof ob,
                                &olen, NULL) == 1,
           "reset refeeds");
@@ -1237,6 +1245,193 @@ t_increquiv(void)
     }
 }
 
+/* m1: INT_MIN magnitudes saturate (no abs() UB). */
+static void
+t_absmin(void)
+{
+    int L[4] = { 0, INT_MIN, 100, -200 };
+    int R[4] = { 1, 2, 3, INT_MIN };
+    const int *rr[2] = { L, R };
+    int lens[2] = { 4, 4 };
+    int M[6][2] = { { 0, 0 }, { 0, 0 }, { 0, 0 },
+                    { 0, 0 }, { 0, 0 }, { INT_MIN, 5 } };
+    const int *mr[6];
+    int mlens[6];
+    ac4enc_measure_t m;
+    CHECK(enc_core_abs_sat(0) == 0, "abssat 0");
+    CHECK(enc_core_abs_sat(-5) == 5, "abssat neg");
+    CHECK(enc_core_abs_sat(INT_MAX) == INT_MAX,
+          "abssat max");
+    CHECK(enc_core_abs_sat(INT_MIN) == INT_MAX,
+          "abssat min");
+    CHECK(ac4enc_measure2(rr, lens, 2, &m) == 0,
+          "absmin stereo ok");
+    CHECK(m.in_peak == INT_MAX, "absmin stereo sat");
+    for (int c = 0; c < 6; c++) {
+        mr[c] = M[c];
+        mlens[c] = 2;
+    }
+    CHECK(ac4enc_measure2(mr, mlens, 6, &m) == 0,
+          "absmin mc ok");
+    CHECK(m.in_peak == INT_MAX, "absmin mc sat");
+}
+
+/* m9: empty stream (0 samples fed) is valid: flush drains the
+ * priming plan (2 frames), fed stays 0. Bytes match the core
+ * neutral wrapper on empty input. */
+static void
+t_empty(void)
+{
+    static uint8_t libb[AC4ENC_OUTCAP_SAFE * 2];
+    static uint8_t libb2[AC4ENC_OUTCAP_SAFE * 2];
+    static uint8_t core[1 << 20], coreb[1 << 20];
+    static uint8_t ob[AC4ENC_OUTCAP_SAFE];
+    static int z[1];
+    static const char *layouts[2] = { "stereo", "5.1" };
+    static const int rates[2] = { 64, 128 };
+    CHECK(ac4enc_fed_samples(NULL) == -1, "m2 null fed");
+    CHECK(ac4enc_emitted_frames(NULL) == -1,
+          "m2 null emitted");
+    for (int li = 0; li < 2; li++) {
+        ac4enc_ctx_t *c = NULL;
+        ac4enc_opts_t o;
+        size_t wpos = 0, wpos2 = 0;
+        int flags[8], nf = 0, frc, coren, cnf = 0, nb;
+        int nch = li == 0 ? 2 : 6;
+        memset(&o, 0, sizeof o);
+        o.layout = layouts[li];
+        o.rate_kbps = rates[li];
+        o.interval = "1sec";
+        o.ns2_tone = 1;
+        o.shorts = 1;
+        o.priming = 1;
+        o.iframe_total = -1;
+        o.target_db = 0.0;
+        CHECK(ac4enc_open(&c, &o) == 0, "empty open");
+        CHECK(ac4enc_fed_samples(c) == 0, "empty fed 0");
+        CHECK(ac4enc_emitted_frames(c) == 0,
+              "empty emitted 0");
+        for (;;) {
+            size_t olen = 0;
+            int is_if = 0;
+            frc = ac4enc_flush2(c, ob, sizeof ob, &olen,
+                                &is_if);
+            if (frc <= 0)
+                break;
+            if (wpos + olen > sizeof libb || nf >= 8) {
+                CHECK(0, "empty overflow");
+                break;
+            }
+            memcpy(libb + wpos, ob, olen);
+            wpos += olen;
+            flags[nf++] = is_if;
+        }
+        CHECK(frc == 0, "empty drains");
+        CHECK(nf == 2, "empty 2 frames");
+        CHECK(nf == 2 && flags[0] == 1 && flags[1] == 1,
+              "empty priming iframes");
+        CHECK(ac4enc_fed_samples(c) == 0,
+              "empty fed stays 0");
+        CHECK(ac4enc_emitted_frames(c) == nf,
+              "empty emitted 2");
+        /* Stable done: drain again -> 0 immediately. */
+        {
+            size_t olen = 0;
+            CHECK(ac4enc_flush2(c, ob, sizeof ob, &olen,
+                                NULL) == 0,
+                  "empty stable done");
+        }
+        /* Core twin on empty input (neutral, ms==NULL). */
+        if (nch == 2) {
+            nb = enc_core_encode_pcm_m(z, 0, z, 0, rates[li],
+                                       "stereo", "1sec",
+                                       "zero", NULL, 1, 1,
+                                       0.0, 0, 0.0, 0, NULL,
+                                       0, "manual", NULL,
+                                       NULL, 1, 0, -1, NULL,
+                                       core, sizeof core);
+        } else {
+            const int *chs[6];
+            int lens[6];
+            for (int k = 0; k < 6; k++) {
+                chs[k] = z;
+                lens[k] = 0;
+            }
+            nb = enc_core_encode_pcm_mc_m(
+                chs, lens, rates[li], "1sec", "zero", NULL,
+                0.0, 0, 0.0, 1, NULL, 0, "manual", NULL,
+                NULL, NULL, core, sizeof core);
+        }
+        CHECK(nb > 0, "empty core encodes");
+        coren = strip_blob(core, nb, coreb, sizeof coreb,
+                           &cnf);
+        CHECK(coren == (int)wpos && cnf == nf &&
+                  !memcmp(libb, coreb, wpos),
+              "empty bytes vs core");
+        /* Reset repeats identically. */
+        CHECK(ac4enc_reset(c) == 0, "empty reset");
+        CHECK(ac4enc_fed_samples(c) == 0,
+              "empty reset fed");
+        for (;;) {
+            size_t olen = 0;
+            int is_if = 0;
+            frc = ac4enc_flush2(c, ob, sizeof ob, &olen,
+                                &is_if);
+            if (frc <= 0)
+                break;
+            if (wpos2 + olen > sizeof libb2)
+                break;
+            memcpy(libb2 + wpos2, ob, olen);
+            wpos2 += olen;
+        }
+        CHECK(frc == 0 && wpos2 == wpos &&
+                  !memcmp(libb, libb2, wpos),
+              "empty reset same bytes");
+        ac4enc_close(c);
+    }
+    /* Measured-empty (target 0) drains the same plan. */
+    {
+        ac4enc_ctx_t *c = NULL;
+        ac4enc_opts_t o;
+        const int *rr[2] = { z, z };
+        int lens[2] = { 0, 0 };
+        ac4enc_measure_t m;
+        int nf = 0, frc;
+        CHECK(ac4enc_measure2(rr, lens, 2, &m) == 0,
+              "empty measure ok");
+        memset(&o, 0, sizeof o);
+        o.layout = "stereo";
+        o.rate_kbps = 64;
+        o.interval = "1sec";
+        o.ns2_tone = 1;
+        o.shorts = 1;
+        o.priming = 1;
+        o.iframe_total = -1;
+        o.target_db = 0.0;
+        o.has_measure = 1;
+        o.m_db = m.m_db;
+        o.f_flat = m.f_flat;
+        o.tf_tone = m.tf_tone;
+        o.in_peak = m.in_peak;
+        o.d_peak = m.d_peak;
+        o.has_d_peak = m.has_d_peak;
+        CHECK(ac4enc_open(&c, &o) == 0,
+              "empty measured open");
+        for (;;) {
+            size_t olen = 0;
+            frc = ac4enc_flush2(c, ob, sizeof ob, &olen,
+                                NULL);
+            if (frc <= 0)
+                break;
+            nf++;
+        }
+        CHECK(frc == 0 && nf == 2, "empty measured 2");
+        CHECK(ac4enc_fed_samples(c) == 0,
+              "empty measured fed 0");
+        ac4enc_close(c);
+    }
+}
+
 int
 main(void)
 {
@@ -1251,6 +1446,8 @@ main(void)
     t_prim0();
     t_concurrent();
     t_increquiv();
+    t_absmin();
+    t_empty();
     if (!fails)
         printf("unit: all pass\n");
     return fails ? 1 : 0;

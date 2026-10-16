@@ -1,7 +1,7 @@
 #ifndef AC4_ENC_ACPL_H
 #define AC4_ENC_ACPL_H
 
-/* Encoder-side A-CPL (AISP) param writer: C port of encoder/acpl.py.
+/* Encoder-side A-CPL (AISP) param writer.
  * (Decoder-side parse/synth lives in acpl.[ch]; separate module.)
  * Framing per A-59 §4: interp 1b + nps 1b + slot 5b iff present,
  * then ALPHA/BETA runs in wire order (alpha first, or beta first

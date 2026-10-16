@@ -1,7 +1,7 @@
 #ifndef AC4_ENC_JSHORT_H
 #define AC4_ENC_JSHORT_H
 
-/* Joint SHORT/LONG 2ch block writers: C port of encoder/jshort.py.
+/* Joint SHORT/LONG 2ch block writers.
  * Shared window-group geometry + chparam + 2-leg assembly for
  * joint blocks. Spectral legs reuse src/asf.h (asf_write_sf_data,
  * asf_write_mixed_leg); scalefactor DPCM uses the committed

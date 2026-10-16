@@ -1,5 +1,5 @@
-/* enc_core_long51.c: C port of encoder/long51.py (steady-LONG
- * 5.1 content packing). See enc_core.h for the contract. */
+/* enc_core_long51.c: steady-LONG 5.1 content packing. See
+ * enc_core.h for the contract. */
 #include "enc_core.h"
 
 #include <math.h>

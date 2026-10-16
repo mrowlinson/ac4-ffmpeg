@@ -1,7 +1,7 @@
 #ifndef AC4_ENC_ASPX_H
 #define AC4_ENC_ASPX_H
 
-/* Encoder-side ASPX tail emitters: C port of encoder/aspx.py.
+/* Encoder-side ASPX tail emitters.
  * (Decoder-side tables/noise live in aspx_tables.[ch] and
  * aspx_noise.[ch]; this module only writes bits + q laws.)
  * Steady shapes per viewer A-59 sections 2-3 + A-64 book map.

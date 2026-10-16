@@ -1,5 +1,5 @@
-/* enc_core_fit51.c: C port of encoder/fit51.py (mode-3 5.1 CBR
- * rate loop). See enc_core.h for the contract. */
+/* enc_core_fit51.c: mode-3 5.1 CBR rate loop. See enc_core.h
+ * for the contract. */
 #include "enc_core.h"
 
 #include <math.h>

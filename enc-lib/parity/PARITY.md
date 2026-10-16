@@ -9,12 +9,13 @@ Python recompute of `iframe_set`. Vectors: 73 synthetic files
 (24M, 48 kHz) in scratch `vectors/` — repo has zero PCM
 fixtures, so the battery generates its own (cap 100 files).
 
-## Result: 100/102 PASS + 2 LIB-AHEAD, 0 non-parity
+## Result: 100/103 PASS + 1 BOTH-FAIL + 2 LIB-AHEAD, 0 non-parity
 
-108 runs total: **100 PASS** (byte-identical bare frames +
-iframe flags), **2 LIB-AHEAD** (frozen oracle still refuses
-the S1 sparse class, lib encodes), **6 DIVERGE-neutral**
-(neutral-mode divergence docs, by design).
+109 runs total: **100 PASS** (byte-identical bare frames +
+iframe flags), **1 BOTH-FAIL** (cause-pinned refusal, m8),
+**2 LIB-AHEAD** (frozen oracle still refuses the S1 sparse
+class, lib encodes), **6 DIVERGE-neutral** (neutral-mode
+divergence docs, by design).
 
 r2 (ff/enc-libr2, 2026-10-16): same 100/102 + 2 + 6 through
 the incremental lib (frames pulled per feed, not buffered).
@@ -47,6 +48,16 @@ new expectation (`expect="LIB-AHEAD"`: oracle rc!=0,
 lib rc==0, lib frames>0); all other 106 verdicts are
 unchanged, incl. all 6 neutral-divergence ndiff counts.
 
+## Rerun (ff/enc-lib-minors, m8): 100/103 + 1 BOTH-FAIL, 0 non-parity
+
+109 runs (108 + new `var:refuse-bake60`): **100 PASS**,
+**1 BOTH-FAIL** (`cause=encode-refusal` both sides: oracle
+silent exit 1 after `Step 2/2`, lib `baked peak overflow`
+at tail), **2 LIB-AHEAD**, **6 DIVERGE-neutral** (all ndiff
+counts unchanged). BOTH-FAIL now requires cause equality
+(`lib_fail_class == oracle_fail_class`; unknown on either
+side fails loud as CAUSE-MISMATCH, count 0).
+
 ## Matrix (all PASS unless noted)
 
 - Stereo s16 wav: 10 contents x {2049, 0.5s, 5s} + 8
@@ -62,7 +73,8 @@ unchanged, incl. all 6 neutral-divergence ndiff counts.
   joint-shorts 1 (2), bake-db +3/-6 (2), data-rate
   256/320 (2), forced-iframes csv (2; CLI k+1 quirk
   mapped), iframe interval step 48/11 (2), presets
-  ebu_r128/atsc_a85 (2), force-float `_f`-on-ints (4).
+  ebu_r128/atsc_a85 (2), force-float `_f`-on-ints (4),
+  refusal-cause pin `var:refuse-bake60` (1 BOTH-FAIL).
 - Negatives + `_m`-vs-original equivalence: `tests/unit.c`
   all pass (20 misuse checks; 12 randomized equiv runs over
   int/float x stereo/mc x target -24/0 with fractional PCM).
@@ -94,7 +106,8 @@ in the priming frame differ. All else follows the bake gain.
 make && make harness OUTDIR=$SCRATCH && make unit OUTDIR=$SCRATCH
 python3 tests/gen_vectors.py $VECDIR   # or reuse an existing set
 ENC_PARITY_S=$SCRATCH ENC_PARITY_VEC=$VECDIR \
-  python3 tests/parity_run.py   # expect 100 PASS + 2 LIB-AHEAD + 6 neutral
+  python3 tests/parity_run.py
+# expect 100 PASS + 1 BOTH-FAIL + 2 LIB-AHEAD + 6 neutral, 0 non-parity
 ```
 
 Full per-run rows: `parity_results.csv` (copied beside this
