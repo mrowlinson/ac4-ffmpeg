@@ -47,7 +47,7 @@ harness: libac4enc.a
 
 unit: libac4enc.a
 	$(CC) $(CFLAGS) -o $(OUTDIR)/unit tests/unit.c \
-		libac4enc.a -lm
+		libac4enc.a -lm -pthread
 
 clean:
 	rm -f libac4enc.a *.o

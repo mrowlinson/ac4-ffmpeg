@@ -1,42 +1,61 @@
-/* ac4enc_lib.h: opaque-ctx streaming API over the AC-4 encoder core.
+/* ac4enc_lib.h: opaque-ctx incremental API over the AC-4 core.
  *
- * Design source: ENC-LIBDESIGN.md sec 1. v1 adaptation: the ctx
- * BUFFERS input frames and runs the whole-stream core once at
- * flush (see "v1 buffering" below), so encode_frame always
- * returns 0 until flush. The packet contract is exact: each
- * emitted packet is the bare raw AC-4 frame (TOC..pad, NO
- * sync/size/trailer) for that frame index, byte-identical to
- * the corresponding raw payload inside CLI .ac4 output when
- * opts+measure match.
+ * Design source: ENC-LIBDESIGN.md sec 1. r2 is the incremental
+ * ctx the design calls for: feed 2048-sample frames, pull bare
+ * raw AC-4 frames (TOC..pad, NO sync/size/trailer) with 1-frame
+ * lookahead (2 for priming=0 joint mode), drain the tail at
+ * flush. Memory is bounded (window + scratch, ~1MB worst case);
+ * open-ended streams are NOT bounded by RAM. No whole-stream
+ * run exists anywhere in the lib path.
  *
- * v1 buffering (documented divergence from the design's
- * incremental vision): H2 (nframes planning), H3 (MDCT rings),
- * H4 (orient lookahead), H6 (freq estimate) are all satisfied
- * by holding the full stream: nframes is known at flush, the
- * core sees the exact whole input it was written for. Cost:
- * whole-stream latency and memory, and open-ended streams are
- * bounded by RAM. A future incremental ctx (rings + 1-frame
- * lookahead per the design) keeps this header unchanged.
+ * Packet contract (normative): each emitted packet is exactly
+ * the bytes `assemble_raw` returns for that frame index,
+ * byte-identical to the corresponding raw payload inside CLI
+ * .ac4 output when opts+measure (+spec lines) match, in
+ * measured mode. Muxer adds sync+size (+CRC).
  *
- * H1 (loudness two-pass) is REAL in v1, not buffered away: the
- * core never sees the input before flush, so the stamp+bake
- * path is driven by the CALLER's pass-1 measure (opts.has_measure
- * via ac4enc_measure2[_f]), through the _m core entries. Without
- * a measure the lib uses the NEUTRAL path (no stamp, no bake,
- * flat_file=0) and documents the byte-divergence (README.md).
- * There is no silent default that pretends CLI parity.
+ * H1 (loudness two-pass) is REAL, not buffered away: the
+ * stamp+bake path is driven by the CALLER's pass-1 measure
+ * (opts.has_measure via ac4enc_measure2[_f]). Without a measure
+ * the lib uses the NEUTRAL path (no stamp, no bake,
+ * flat_file=0, default spec lines) and documents the
+ * byte-divergence (README.md). No silent default pretends CLI
+ * parity. H6 (spec lines) likewise needs pass 1:
+ * ac4enc_spectral_lines over the full input; measured stereo
+ * without caller lines uses the neutral default (documented).
  *
- * Thread-safety (H7): v1 is NOT thread-safe. The ctx owns all
- * lib state, but the vendored core still keeps function-static
- * scratch (sL/sR tiles etc.), so concurrent encodes — even on
- * separate ctx — race. Single-threaded use matches the CLI
- * exactly. Killing the core statics is future work.
+ * Thread-safety (H7): RESOLVED. The ctx owns all state and the
+ * engine keeps zero shared mutable state, so concurrent encodes
+ * on SEPARATE ctx objects are safe. One ctx is still
+ * single-threaded (no internal locking).
  *
- * Error model (H8): 0 ok / 1 frame ready / -EINVAL bad arg /
- * -ENOMEM allocation failure / -EIO core encode failure.
- * No other negatives are returned. After -EIO,
+ * Error model (H8): 0 ok / 1 frame ready / -EINVAL bad arg or
+ * config or short buffer / -ENOMEM / -EIO encode refusal or
+ * internal failure. No other negatives are returned.
+ * ac4enc_strerror names the code; ac4enc_err_sub/_stage/_frame
+ * report the sticky last-error detail (subcode + stage +
+ * frame). Short-buffer -EINVAL sets the required size through
+ * the out_len param (2-variants + flush2) and consumes no
+ * input; the call is retryable with room. After -EIO,
  * ac4enc_last_error() carries the core diagnostic when the
  * refusal recorded one (S1 loud failure path).
+ *
+ * Rate contract (M3): 48 kHz ONLY. opts.sample_rate accepts 0
+ * (legacy default = 48000) or 48000; anything else fails open
+ * with -EINVAL. Feeding other rates is not quietly mistreated:
+ * it is refused up front.
+ *
+ * Lifecycle: one stream per ctx. encode frames, optional
+ * encode_tail for a final partial 1..2048 samples, then flush
+ * to drain. After a tail call or the first flush, only flush
+ * (then close) may follow; ac4enc_reset reuses the ctx (same
+ * opts) for a new stream. After an error (-EIO/-ENOMEM) the
+ * ctx is sticky-failed: calls keep returning the error until
+ * reset or close.
+ *
+ * This header is self-contained and exposes NO core internals
+ * (M4): it does not include enc_core.h. In-tree core consumers
+ * (tests, equivalence probes) include enc_core.h directly.
  */
 #ifndef AC4ENC_LIB_H
 #define AC4ENC_LIB_H
@@ -44,7 +63,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "enc_core.h"
+/* M5 compile-time guard: these modes silently break bit-parity
+ * (constant folding, contraction, isinf removal). Downstream
+ * builds must use the flags contract (README.md) instead. */
+#if defined(__FAST_MATH__) || \
+    (defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__ + 0)
+#error "ac4enc: -ffast-math/-ffinite-math-only break bit-parity"
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define AC4ENC_FRAME_SAMPLES 2048
 #define AC4ENC_OUTCAP_SAFE 65536
@@ -64,44 +93,118 @@ typedef struct {
     int has_d_peak;
 } ac4enc_measure_t;
 
+/* Public DRC option mirror (layout-identical to the core
+ * types; the lib converts at open, so the core header stays
+ * private). Contents are validated at open (dry-run through
+ * the real metadata writer): nmodes>=1 required when drc is
+ * present, mid/kind/eac3/gain/curve ranges enforced. */
+typedef struct {
+    int nb_lo;
+    int nb_hi;
+    int maxboost;
+    int lev_b;
+    int nr_b;
+    int g_b;
+    int l_b;
+    int maxcut;
+    int lev_c;
+    int nr_c;
+    int g_c;
+    int l_c;
+    int tcdef;
+    int tc[4];
+    int has_thr;
+    int thr0;
+    int thr1;
+} ac4enc_drc_curve_t;
+
+#define AC4ENC_DRC_DEFAULT 0
+#define AC4ENC_DRC_GAINS 1
+#define AC4ENC_DRC_CURVE 2
+
+typedef struct {
+    int mid;
+    int kind;
+    int gain;
+    ac4enc_drc_curve_t curve;
+} ac4enc_drc_mode_t;
+
+typedef struct {
+    int eac3;
+    const ac4enc_drc_mode_t *modes;
+    int nmodes;
+} ac4enc_drc_t;
+
 /* All whole-stream options. Strings/arrays are copied at open. */
 typedef struct {
-    const char *layout;     /* "stereo" | "5.1" (only) */
-    int rate_kbps;          /* DATA_RATES steps, layout floor */
-    const char *interval;   /* iframe rule, e.g. "1sec"; NULL ok */
+    const char *layout; /* "stereo" | "5.1" (only) */
+    int rate_kbps; /* DATA_RATES steps, layout floor */
+    const char *interval; /* iframe rule: NULL/"1sec"/decimal>=2 */
     const int *forced;
-    int nforced;            /* forced iframe indices */
-    const char *preset;     /* NULL=manual stamp path */
-    const double *window;   /* NULL=KBD4096 default, else 4096 */
-    int ns2_tone;
-    int shorts;
-    int joint_shorts;
-    int priming;
-    int iframe_base;
-    int iframe_total;       /* <0=None */
-    double target_db;
-    int has_bake;
-    double bake_db;
-    const enc_core_drc_t *drc;
-    const int *dmx;         /* NULL or 5 ints */
+    int nforced; /* forced iframe indices (CORE indices: the
+                  * CLI's csvfile user index shifted +1) */
+    const char *preset; /* NULL=manual stamp path */
+    const double *window; /* NULL=KBD4096 default, else 4096 */
+    int ns2_tone; /* 0/1 */
+    int shorts; /* 0/1 */
+    int joint_shorts; /* 0/1; stereo only */
+    int priming; /* stereo: 1 priming (coff 0) | 0 joint (coff 2).
+                  * 5.1: must be 1 (joint is stereo-only). */
+    int iframe_base; /* joint mode global base (any int) */
+    int iframe_total; /* joint mode: >=0 explicit total cap,
+                       * <0 open-ended (exact for base==0) */
+    double target_db; /* 0.0 or -31..-10 */
+    int has_bake; /* 0/1; requires has_measure */
+    double bake_db; /* explicit gain dB (finite, not NaN) */
+    const ac4enc_drc_t *drc; /* NULL or validated modes */
+    const int *dmx; /* NULL or 5 ints (range-free: bit-packed) */
+    int sample_rate; /* 0 (=48000) or 48000; else -EINVAL */
     /* Pass-1 measurement (H1). All-or-nothing: */
     int has_measure;
-    double m_db;
-    double f_flat;
-    double tf_tone;
-    int in_peak;
-    /* v1 float-path extension: float callers should set these
-     * (ac4enc_measure2_f fills the full struct instead). */
-    double d_peak;
+    double m_db; /* not NaN */
+    double f_flat; /* not NaN */
+    double tf_tone; /* not NaN */
+    int in_peak; /* >= 0 */
+    double d_peak; /* >= 0, not NaN when has_d_peak */
     int has_d_peak;
+    /* Pass-1 spec lines (H6, stereo only; mc ignores). Without
+     * these, measured stereo uses the neutral default
+     * (nlines=0: fullband-only LONG path), which is
+     * byte-divergent from the CLI on tonal content. */
+    int has_spec_lines; /* 0/1 */
+    int n_spec_lines; /* 0..7 */
+    int spec_lines[7]; /* each 0..2047 */
 } ac4enc_opts_t;
 
-/* 1 frame ready / 0 need-more-input (v1: always 0 until flush) /
- * <0 error. See header notes. */
+/* Sticky last-error detail (post-open calls only; open reports
+ * the rc alone). */
+typedef enum {
+    AC4ENC_EOK = 0,
+    AC4ENC_EBADCALL, /* protocol misuse (domain mix, feed after
+                      * tail/flush, emit without input...) */
+    AC4ENC_EBADOPT, /* rejected option value (open-time) */
+    AC4ENC_ENOMEM, /* allocation failure */
+    AC4ENC_EBAKE_OVERFLOW, /* bake_round overflow (refusal) */
+    AC4ENC_EBAKE_PEAK, /* baked peak >= 32767 at end (refusal) */
+    AC4ENC_EENCODE, /* per-frame encode refusal / internal */
+    AC4ENC_ESHORTBUF, /* outcap < frame (out_len = needed) */
+    AC4ENC_EFPENV /* unsafe FP environment (open-time) */
+} ac4enc_subcode_t;
+
+/* 0 ok / -EINVAL bad opts / -ENOMEM / -EIO fpenv or core
+ * refusal (e.g. sparse stamp shape: fail-fast at open). Copies
+ * opts content; validates everything (interval rule, DRC
+ * dry-run, measure/line ranges, rate). */
 int ac4enc_open(ac4enc_ctx_t **ctx, const ac4enc_opts_t *opts);
 
-/* Feed exactly 2048 int samples per ch per call (ch-major, same
- * scale as enc_core_encode_pcm). v1: buffers, returns 0. */
+/* Feed exactly 2048 samples per ch (ch-major, same scale as
+ * enc_core_encode_pcm). Returns 1 frame ready (bare frame in
+ * out) / 0 need-more-input / <0 error. If the call makes a
+ * frame ready, out must be non-NULL with outcap >= the packet
+ * size (see ac4enc_max_packet); otherwise -EINVAL WITHOUT
+ * consuming input (retry with room). Non-emitting calls ignore
+ * out/outcap. At most one frame per call; undrained ready
+ * frames never accumulate past one. */
 int ac4enc_encode_frame(ac4enc_ctx_t *c,
                         const int *const *pcm /* nch x 2048 */,
                         uint8_t *out, size_t outcap,
@@ -113,33 +216,82 @@ int ac4enc_encode_frame_f(ac4enc_ctx_t *c,
                           uint8_t *out, size_t outcap,
                           int *is_iframe);
 
-/* v1 tail API (design gap: streams are rarely a multiple of
- * 2048): feed the final 0 < n_valid <= 2048 samples per ch.
- * After a tail call only flush may follow. */
+/* Length-reporting twins (preferred): *out_len always set on
+ * 1, and to the needed size on short-buffer -EINVAL. */
+int ac4enc_encode_frame2(ac4enc_ctx_t *c,
+                         const int *const *pcm,
+                         uint8_t *out, size_t outcap,
+                         size_t *out_len /* required */,
+                         int *is_iframe);
+int ac4enc_encode_frame_f2(ac4enc_ctx_t *c,
+                           const double *const *pcm,
+                           uint8_t *out, size_t outcap,
+                           size_t *out_len /* required */,
+                           int *is_iframe);
+
+/* Tail call: feed the final 0 < n_valid <= 2048 samples per
+ * ch. Ends input (runs the baked-peak check); after a tail
+ * call only flush may follow. Same 1/0/<0 contract. */
 int ac4enc_encode_tail(ac4enc_ctx_t *c,
                        const int *const *pcm /* nch x n_valid */,
-                       int n_valid, uint8_t *out, size_t outcap,
-                       int *is_iframe);
+                       int n_valid, uint8_t *out,
+                       size_t outcap, int *is_iframe);
 int ac4enc_encode_tail_f(ac4enc_ctx_t *c,
                          const double *const *pcm,
-                         int n_valid, uint8_t *out, size_t outcap,
-                         int *is_iframe);
+                         int n_valid, uint8_t *out,
+                         size_t outcap, int *is_iframe);
+int ac4enc_encode_tail2(ac4enc_ctx_t *c,
+                        const int *const *pcm,
+                        int n_valid, uint8_t *out,
+                        size_t outcap,
+                        size_t *out_len /* required */,
+                        int *is_iframe);
+int ac4enc_encode_tail_f2(ac4enc_ctx_t *c,
+                          const double *const *pcm,
+                          int n_valid, uint8_t *out,
+                          size_t outcap,
+                          size_t *out_len /* required */,
+                          int *is_iframe);
 
 /* Drain encoded frames. 1 = bare frame in out, 0 = done,
- * <0 error. First call runs the core encode. */
+ * <0 error. The first call ends input (no-feed streams encode
+ * the priming plan) and runs the baked-peak check. */
 int ac4enc_flush(ac4enc_ctx_t *c, uint8_t *out, size_t outcap,
                  int *is_iframe);
-/* v1 extension (design gap: flush never reports the frame
- * length, so callers cannot size packets). Same as flush but
- * stores the bare-frame byte count in *out_len (required).
- * Prefer this over ac4enc_flush. */
-int ac4enc_flush2(ac4enc_ctx_t *c, uint8_t *out, size_t outcap,
-                  size_t *out_len, int *is_iframe);
+/* Length-reporting flush (preferred): *out_len set on 1, and
+ * to the needed size on short-buffer -EINVAL. */
+int ac4enc_flush2(ac4enc_ctx_t *c, uint8_t *out,
+                  size_t outcap, size_t *out_len,
+                  int *is_iframe);
 void ac4enc_close(ac4enc_ctx_t *c); /* NULL-safe */
+
+/* Reuse the ctx (same opts) for a new stream: clears fed
+ * input, emitted frames, end/error state. 0 ok / -EINVAL NULL
+ * / -ENOMEM reopen failure (ctx stays closed-able). */
+int ac4enc_reset(ac4enc_ctx_t *c);
+
+/* Name an rc (0/1/-EINVAL/-ENOMEM/-EIO, else "unknown"). */
+const char *ac4enc_strerror(int rc);
+/* Name a subcode (else "unknown"). */
+const char *ac4enc_subcode_str(ac4enc_subcode_t sub);
+/* Sticky last-error detail. Stage is one of "-"/"feed"/
+ * "tail"/"flush"/"reset". Frame is the emit index or -1. */
+ac4enc_subcode_t ac4enc_err_sub(const ac4enc_ctx_t *c);
+const char *ac4enc_err_stage(const ac4enc_ctx_t *c);
+int ac4enc_err_frame(const ac4enc_ctx_t *c);
+
+/* Max bare-frame bytes for a rate (exact CBR period max), or
+ * -EINVAL on bad rate. Buffers of this size never go short. */
+int ac4enc_max_packet(int rate_kbps);
+
+/* 1 iff the FP environment is contraction-free (M5 runtime
+ * self-check). ac4enc_open refuses (-EIO) when this is 0. */
+int ac4enc_fp_ok(void);
 
 /* Pass-1 helpers for H1: whole-input measure, feeds opts.
  * nch 2 = stereo ops, 6 = 5.1 ops (integrated_mc + mono6
- * flatness + 6ch peak scan, same op order as the core). */
+ * flatness + 6ch peak scan, same op order as the core).
+ * Inputs are 48 kHz by contract (M3). */
 int ac4enc_measure(const int *const *chs, const int *lens, int nch,
                    double *m_db, double *f_flat, double *tf_tone,
                    int *in_peak);
@@ -153,9 +305,25 @@ int ac4enc_measure2(const int *const *chs, const int *lens,
 int ac4enc_measure2_f(const double *const *chs, const int *lens,
                       int nch, ac4enc_measure_t *out);
 
+/* H6 pass-1: spec-lines estimate over the L row (baked when
+ * target_db != 0, mirroring the core prologue). Stereo only
+ * (mc ignores lines). Int callers convert L exactly to
+ * double. Feeds opts.has_spec_lines/n_spec_lines/spec_lines.
+ * -EIO if the bake itself overflows (the encode would refuse
+ * too: consistent). */
+int ac4enc_spectral_lines(const double *L, int nL,
+                          const ac4enc_measure_t *m,
+                          double target_db, int has_bake,
+                          double bake_db, int *nlines,
+                          int lines[7]);
+
 /* Loud core diagnostic (S1): non-empty iff the most recent
  * core encode call refused with a recorded message. Read
  * immediately after -EIO. Never NULL. */
 const char *ac4enc_last_error(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

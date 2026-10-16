@@ -1,6 +1,9 @@
 /* enc_core_enc.c: C port of encoder/enc.py (frame assembly, rate
  * loops, TOC, full-stream drivers). See enc_core.h for the contract. */
 #include "enc_core.h"
+#include "enc_step.h"
+#include <errno.h>
+#include <limits.h>
 
 #include <assert.h>
 #include <math.h>
@@ -3193,15 +3196,6 @@ fit_51_mixed(int i, const double *const *Xs9,
 
 /* ---- full-stream drivers ---- */
 
-static int
-is_iframe(const int *ifr, int nifr, int j)
-{
-    for (int k = 0; k < nifr; k++)
-        if (ifr[k] == j)
-            return 1;
-    return 0;
-}
-
 /* Half-even round to int with overflow -> -1 (bake path). */
 static int
 bake_round(double v, int *out)
@@ -3384,343 +3378,87 @@ encode_pcm_frames(const double *dL, int nL, const double *dR,
                   const enc_core_stamp_t *stamp, int flat_file,
                   uint8_t *out, size_t outcap)
 {
-    double wstack[4096];
-    const double *win = window;
-    int *sizes = NULL, *ifr = NULL, *orient = NULL;
-    int nframes, coff = 0, nifr = 0, nsamples;
-    int nlines = 0, lines[7];
-    double *pcmM = NULL, *pcmS = NULL;
-    bytebuf_t stream = { NULL, 0, 0 };
-    int n = -1;
+    /* r2: thin wrapper over the incremental engine (feed all,
+     * drain with sync wrap). Byte-identical to the former
+     * whole-stream body by construction (same per-frame code). */
+    enc_step_ctx_t *st = NULL;
+    enc_step_cfg_t cfg;
+    const double *rows[2];
+    int ns[2];
+    int lines[7], nlines, nsamples, nframes;
+    uint8_t *raw = NULL;
+    int n = -1, pos = 0;
+    double freq;
+    if (!dL || !dR || nL < 0 || nR < 0 || !layout ||
+        !trailer || !out)
+        return -1;
     nsamples = nL > nR ? nL : nR;
-    nframes = enc_core_nframes_for_samples(nsamples);
-    if (!priming) {
+    if (priming)
+        nframes = enc_core_nframes_for_samples(nsamples);
+    else if (nsamples <= 0)
+        nframes = 0;
+    else
         nframes = (nsamples + ENC_CORE_FRAME_SAMPLES - 1) /
             ENC_CORE_FRAME_SAMPLES;
-        coff = 2;
-    }
-    sizes = malloc((size_t)(nframes > 0 ? nframes : 1) *
-                   sizeof *sizes);
-    ifr = malloc((size_t)(nframes > 0 ? nframes : 1) *
-                 sizeof *ifr);
-    orient = malloc(
-        (size_t)(nframes + coff > 0 ? nframes + coff : 1) *
-        sizeof *orient);
-    if (!sizes || !ifr || !orient)
+    freq = mdct_estimate_freq(dL, nL, 50.0, 20000.0);
+    nlines = mdct_lines_for_freq(freq, 3, lines);
+    if (nlines < 0)
+        return -1;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.nch = 2;
+    cfg.rate_kbps = rate_kbps;
+    cfg.layout = layout;
+    cfg.interval = interval;
+    cfg.window = window;
+    cfg.ns2_tone = ns2_tone;
+    cfg.shorts = shorts;
+    cfg.joint_shorts = joint_shorts;
+    cfg.forced = forced;
+    cfg.nforced = nforced;
+    cfg.drc = drc;
+    cfg.dmx = dmx;
+    cfg.priming = priming;
+    cfg.iframe_base = iframe_base;
+    cfg.iframe_total =
+        (!priming && iframe_total < 0) ? nframes
+                                       : iframe_total;
+    cfg.stamp = stamp;
+    cfg.flat_file = flat_file;
+    cfg.nlines = nlines;
+    memcpy(cfg.lines, lines, sizeof lines);
+    if (enc_step_open(&st, &cfg))
+        return -1;
+    rows[0] = dL;
+    rows[1] = dR;
+    ns[0] = nL;
+    ns[1] = nR;
+    if (enc_step_feed(st, rows, ns) || enc_step_end(st))
         goto done;
-    for (int k = 0; k < nframes + coff; k++)
-        orient[k] = ENC_CORE_ORIENT_LONG;
-    if (priming)
-        nifr = enc_core_iframe_set(nframes, interval, forced,
-                                   nforced, ifr);
-    else
-        nifr = enc_core_joint_iframes(
-            nframes, iframe_base,
-            iframe_total < 0 ? nframes : iframe_total,
-            interval, forced, nforced, ifr);
-    if (nifr < 0)
+    raw = malloc(65536);
+    if (!raw)
         goto done;
-    if (enc_core_cbr_raw_sizes(nframes, rate_kbps, sizes))
-        goto done;
-    if (!win) {
-        mdct_kbd_window(4096, 3.0, wstack);
-        win = wstack;
-    }
-    {
-        double freq =
-            mdct_estimate_freq(dL, nL, 50.0, 20000.0);
-        nlines = mdct_lines_for_freq(freq, 3, lines);
-        if (nlines < 0)
+    for (;;) {
+        size_t olen = 0;
+        int is_if = 0, rc, n_sync;
+        rc = enc_step_ready(st);
+        if (rc < 0)
             goto done;
+        if (rc == 0)
+            break;
+        rc = enc_step_emit(st, raw, 65536, &olen, &is_if);
+        if (rc != 1 || olen > 65536)
+            goto done;
+        n_sync = enc_core_write_sync_frame(
+            raw, (int)olen, trailer, out + pos,
+            outcap - (size_t)pos);
+        if (n_sync < 0)
+            goto done;
+        pos += n_sync;
     }
-    if (shorts) {
-        for (int i = 2; i < nframes + coff; i++) {
-            static double sL[16][128], sR[16][128];
-            const double *sp[2];
-            int start = (i - 2) * ENC_CORE_FRAME_SAMPLES;
-            int o0 = 0, o1 = 0, rc;
-            tile_specs_128(dL, nL, start, sL);
-            tile_specs_128(dR, nR, start, sR);
-            sp[0] = &sL[0][0];
-            sp[1] = &sR[0][0];
-            rc = tile_orient(sp, 2, start, nsamples, &o0,
-                             &o1, 0);
-            if (rc < 0)
-                goto done;
-            if (rc > 0)
-                orient[i] =
-                    o0 == ENC_CORE_TL_1024
-                        ? ENC_CORE_ORIENT_1024_FIRST
-                        : ENC_CORE_ORIENT_128_FIRST;
-        }
-    }
-    for (int j = 0; j < nframes; j++) {
-        int i = j + coff;
-        int iframe = is_iframe(ifr, nifr, j);
-        uint8_t *raw = NULL;
-        int n_raw = -1, have_full = 0, have_audio = 0;
-        uint8_t *audio = NULL;
-        int n_audio = 0;
-        if (i >= 2) {
-            int start =
-                (i - 2) * ENC_CORE_FRAME_SAMPLES;
-            if (orient[i] != ENC_CORE_ORIENT_LONG) {
-                static double sL[16][128], sR[16][128];
-                static double s9L[9][1024], s9R[9][1024];
-                const double *rL[9], *rR[9];
-                int pf, pl, nf, nl;
-                frame_edge_lens(orient[i - 1], &pf, &pl);
-                frame_edge_lens(
-                    i + 1 < nframes + coff
-                        ? orient[i + 1]
-                        : ENC_CORE_ORIENT_LONG,
-                    &nf, &nl);
-                tile_specs_128(dL, nL, start, sL);
-                tile_specs_128(dR, nR, start, sR);
-                if (joint_shorts) {
-                    static double sM[16][128], sS[16][128];
-                    if (!pcmM) {
-                        int nn = nsamples;
-                        pcmM = malloc(
-                            (size_t)(nn > 0 ? nn : 1) *
-                            sizeof *pcmM);
-                        pcmS = malloc(
-                            (size_t)(nn > 0 ? nn : 1) *
-                            sizeof *pcmS);
-                        if (!pcmM || !pcmS)
-                            goto done;
-                        for (int k = 0; k < nn; k++) {
-                            double a = k < nL ? dL[k] : 0.0;
-                            double b = k < nR ? dR[k] : 0.0;
-                            pcmM[k] = (a + b) / 2.0;
-                            pcmS[k] = (a - b) / 2.0;
-                        }
-                    }
-                    for (int a = 0; a < 16; a++) {
-                        for (int b = 0; b < 128; b++) {
-                            sM[a][b] =
-                                (sL[a][b] + sR[a][b]) / 2.0;
-                            sS[a][b] =
-                                (sL[a][b] - sR[a][b]) / 2.0;
-                        }
-                    }
-                    if (enc_core_mixed_specs_for_frame(
-                            pcmM, nsamples, start,
-                            orient[i], &sM[0][0], pl, nf,
-                            s9L) ||
-                        enc_core_mixed_specs_for_frame(
-                            pcmS, nsamples, start,
-                            orient[i], &sS[0][0], pl, nf,
-                            s9R))
-                        goto done;
-                } else {
-                    if (enc_core_mixed_specs_for_frame(
-                            dL, nL, start, orient[i],
-                            &sL[0][0], pl, nf, s9L) ||
-                        enc_core_mixed_specs_for_frame(
-                            dR, nR, start, orient[i],
-                            &sR[0][0], pl, nf, s9R))
-                        goto done;
-                }
-                for (int g = 0; g < 9; g++) {
-                    rL[g] = s9L[g];
-                    rR[g] = s9R[g];
-                }
-                {
-                    uint8_t *full =
-                        malloc(65536);
-                    int n_full;
-                    if (!full)
-                        goto done;
-                    if (joint_shorts)
-                        n_full =
-                            enc_core_encode_joint_mixed_frame(
-                                j, rL, rR, orient[i],
-                                sizes[j], layout, iframe,
-                                stamp, drc, dmx, full,
-                                65536);
-                    else
-                        n_full =
-                            enc_core_encode_mixed_frame(
-                                j, rL, rR, orient[i],
-                                sizes[j], layout, iframe,
-                                stamp, drc, dmx, full,
-                                65536);
-                    if (n_full >= 0) {
-                        raw = full;
-                        n_raw = n_full;
-                        have_full = 1;
-                    } else {
-                        free(full);
-                    }
-                }
-            } else {
-                static double XL[2048], XR[2048];
-                double wspan[4096];
-                const double *ww = win;
-                int pf, pl, nf, nl, bridged;
-                int tl = 0, tr = 0;
-                frame_edge_lens(orient[i - 1], &pf, &pl);
-                frame_edge_lens(
-                    i + 1 < nframes + coff
-                        ? orient[i + 1]
-                        : ENC_CORE_ORIENT_LONG,
-                    &nf, &nl);
-                if (pl < 2048)
-                    tl = pl;
-                if (nf < 2048)
-                    tr = nf;
-                bridged = tl || tr;
-                if (bridged) {
-                    mdct_bridged_window(2048, tl, tr,
-                                        wspan);
-                    ww = wspan;
-                }
-                mdct_forward_full(dL, nL, start, ww, XL);
-                mdct_forward_full(dR, nR, start, ww, XR);
-                if (nlines > 0 && !bridged &&
-                    enc_core_tile_pure(XL, XR, 2048, lines,
-                                       nlines) > 0) {
-                    enc_core_leg_t cL, cR;
-                    if (enc_core_quantize_frame(
-                            dL, nL, start, lines, nlines,
-                            win, ENC_CORE_DIG_GAIN, &cL) ||
-                        enc_core_quantize_frame(
-                            dR, nR, start, lines, nlines,
-                            win, ENC_CORE_DIG_GAIN, &cR))
-                        goto done;
-                    if (cL.n > 0 || cR.n > 0) {
-                        audio = malloc(65536);
-                        if (!audio)
-                            goto done;
-                        n_audio =
-                            enc_core_write_audio_spectral(
-                                cL.lines, cL.qs, cL.n,
-                                cL.ref, cR.lines, cR.qs,
-                                cR.n, cR.ref, audio,
-                                65536);
-                        if (n_audio < 0) {
-                            free(audio);
-                            goto done;
-                        }
-                        have_audio = 1;
-                    }
-                } else {
-                    uint8_t *full = malloc(65536);
-                    int n_full;
-                    if (!full)
-                        goto done;
-                    n_full =
-                        enc_core_encode_fullband_frame(
-                            j, XL, XR, sizes[j], layout,
-                            iframe, 1, stamp, drc, dmx,
-                            !flat_file, full, 65536);
-                    if (n_full >= 0) {
-                        raw = full;
-                        n_raw = n_full;
-                        have_full = 1;
-                    } else {
-                        free(full);
-                    }
-                }
-            }
-        }
-        if (!have_full) {
-            if (!have_audio) {
-                uint8_t *body = malloc(65536);
-                int n_body;
-                if (!body) {
-                    free(audio);
-                    goto done;
-                }
-                if (stamp && j == 0) {
-                    bytebuf_t s1 = { NULL, 0, 0 };
-                    const uint8_t *subs[3];
-                    int nlens[3];
-                    if (!iframe) {
-                        free(body);
-                        bb_free(&s1);
-                        goto done;
-                    }
-                    if (priming_sub1_bb(&s1, drc, dmx)) {
-                        free(body);
-                        bb_free(&s1);
-                        goto done;
-                    }
-                    subs[0] = stamp->fr0;
-                    nlens[0] = stamp->n_fr0;
-                    subs[1] = s1.p;
-                    nlens[1] = (int)s1.n;
-                    subs[2] = stamp->s4;
-                    nlens[2] = stamp->n_s4;
-                    n_body = assemble_raw(
-                        j, 1, layout, 0, subs, nlens, 3,
-                        sizes[j], body, 65536);
-                    bb_free(&s1);
-                } else {
-                    n_body = enc_core_write_raw_frame(
-                        j, sizes[j], layout, iframe, drc,
-                        dmx, body, 65536);
-                }
-                if (n_body < 0) {
-                    free(body);
-                    goto done;
-                }
-                raw = body;
-                n_raw = n_body;
-            } else {
-                uint8_t *body = malloc(65536);
-                int n_body;
-                if (!body) {
-                    free(audio);
-                    goto done;
-                }
-                n_body = enc_core_assemble_content_frame(
-                    j, audio, n_audio, sizes[j], layout,
-                    iframe, ns2_tone, stamp, drc, dmx,
-                    body, 65536);
-                free(audio);
-                if (n_body < 0) {
-                    free(body);
-                    goto done;
-                }
-                raw = body;
-                n_raw = n_body;
-            }
-        } else {
-            free(audio);
-        }
-        {
-            uint8_t *sync = malloc((size_t)n_raw + 6);
-            int n_sync;
-            if (!sync) {
-                free(raw);
-                goto done;
-            }
-            n_sync = enc_core_write_sync_frame(
-                raw, n_raw, trailer, sync,
-                (size_t)n_raw + 6);
-            free(raw);
-            if (n_sync < 0 ||
-                bb_put(&stream, sync, (size_t)n_sync)) {
-                free(sync);
-                goto done;
-            }
-            free(sync);
-        }
-    }
-    if (stream.n > outcap)
-        goto done;
-    if (stream.n > 0)
-        memcpy(out, stream.p, stream.n);
-    n = (int)stream.n;
+    n = pos;
 done:
-    free(sizes);
-    free(ifr);
-    free(orient);
-    free(pcmM);
-    free(pcmS);
-    bb_free(&stream);
+    free(raw);
+    enc_step_close(st);
     return n;
 }
 
@@ -3956,257 +3694,63 @@ encode_pcm_mc_frames(const double *const *dp, const int *lens,
                      const char *trailer, const double *window,
                      int shorts, const int *forced, int nforced,
                      const enc_core_drc_t *drc, const int *dmx,
-                     const enc_core_stamp_t *stamp51, int flat_file,
-                     uint8_t *out, size_t outcap)
+                     const enc_core_stamp_t *stamp51,
+                     int flat_file, uint8_t *out,
+                     size_t outcap)
 {
-    double wstack[4096];
-    const double *win = window;
-    int *sizes = NULL, *ifr = NULL, *orient = NULL;
-    int nframes, nifr = 0, nsamples;
-    bytebuf_t stream = { NULL, 0, 0 };
-    int n = -1;
-    nsamples = 0;
-    for (int c = 0; c < 6; c++)
-        if (lens[c] > nsamples)
-            nsamples = lens[c];
-    nframes = enc_core_nframes_for_samples(nsamples);
-    sizes = malloc((size_t)nframes * sizeof *sizes);
-    ifr = malloc((size_t)nframes * sizeof *ifr);
-    orient = malloc((size_t)nframes * sizeof *orient);
-    if (!sizes || !ifr || !orient)
+    /* r2: thin wrapper over the incremental engine (feed all,
+     * drain with sync wrap). Byte-identical to the former
+     * whole-stream body by construction (same per-frame code). */
+    enc_step_ctx_t *st = NULL;
+    enc_step_cfg_t cfg;
+    uint8_t *raw = NULL;
+    int n = -1, pos = 0;
+    if (!dp || !lens || !trailer || !out)
+        return -1;
+    for (int ch = 0; ch < 6; ch++)
+        if (!dp[ch] || lens[ch] < 0)
+            return -1;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.nch = 6;
+    cfg.rate_kbps = rate_kbps;
+    cfg.interval = interval;
+    cfg.window = window;
+    cfg.shorts = shorts;
+    cfg.forced = forced;
+    cfg.nforced = nforced;
+    cfg.drc = drc;
+    cfg.dmx = dmx;
+    cfg.stamp = stamp51;
+    cfg.flat_file = flat_file;
+    if (enc_step_open(&st, &cfg))
+        return -1;
+    if (enc_step_feed(st, dp, lens) || enc_step_end(st))
         goto done;
-    for (int k = 0; k < nframes; k++)
-        orient[k] = ENC_CORE_ORIENT_LONG;
-    nifr = enc_core_iframe_set(nframes, interval, forced,
-                               nforced, ifr);
-    if (nifr < 0)
+    raw = malloc(65536);
+    if (!raw)
         goto done;
-    if (enc_core_cbr_raw_sizes(nframes, rate_kbps, sizes))
-        goto done;
-    if (!win) {
-        mdct_kbd_window(4096, 3.0, wstack);
-        win = wstack;
+    for (;;) {
+        size_t olen = 0;
+        int is_if = 0, rc, n_sync;
+        rc = enc_step_ready(st);
+        if (rc < 0)
+            goto done;
+        if (rc == 0)
+            break;
+        rc = enc_step_emit(st, raw, 65536, &olen, &is_if);
+        if (rc != 1 || olen > 65536)
+            goto done;
+        n_sync = enc_core_write_sync_frame(
+            raw, (int)olen, trailer, out + pos,
+            outcap - (size_t)pos);
+        if (n_sync < 0)
+            goto done;
+        pos += n_sync;
     }
-    if (shorts) {
-        for (int i = 2; i < nframes; i++) {
-            static double sp[6][16][128];
-            const double *sl[6];
-            int start = (i - 2) * ENC_CORE_FRAME_SAMPLES;
-            int o0 = 0, o1 = 0, rc;
-            for (int c = 0; c < 6; c++) {
-                tile_specs_128(dp[c], lens[c], start,
-                               sp[c]);
-                sl[c] = &sp[c][0][0];
-            }
-            rc = tile_orient(sl, 6, start, nsamples, &o0,
-                             &o1, 1);
-            if (rc < 0)
-                goto done;
-            if (rc > 0)
-                orient[i] =
-                    o0 == ENC_CORE_TL_1024
-                        ? ENC_CORE_ORIENT_1024_FIRST
-                        : ENC_CORE_ORIENT_128_FIRST;
-        }
-    }
-    for (int i = 0; i < nframes; i++) {
-        int iframe = is_iframe(ifr, nifr, i);
-        uint8_t *raw = NULL;
-        int n_raw = -1;
-        if (i >= 2) {
-            int start = (i - 2) * ENC_CORE_FRAME_SAMPLES;
-            if (orient[i] != ENC_CORE_ORIENT_LONG) {
-                static double sp[6][16][128];
-                static double x9[5][9][1024];
-                static double xlfe[2048];
-                const double *rows[45];
-                const double *sl[6];
-                int pf, pl, nf, nl, any = 0;
-                int chmap[5] = { 0, 1, 2, 4, 5 };
-                frame_edge_lens(orient[i - 1], &pf, &pl);
-                frame_edge_lens(
-                    i + 1 < nframes ? orient[i + 1]
-                                    : ENC_CORE_ORIENT_LONG,
-                    &nf, &nl);
-                for (int c = 0; c < 6; c++) {
-                    tile_specs_128(dp[c], lens[c], start,
-                                   sp[c]);
-                    sl[c] = &sp[c][0][0];
-                }
-                (void)sl;
-                for (int k = 0; k < 5; k++) {
-                    if (enc_core_mixed_specs_for_frame(
-                            dp[chmap[k]], lens[chmap[k]],
-                            start, orient[i],
-                            &sp[chmap[k]][0][0], pl, nf,
-                            x9[k]))
-                        goto done;
-                    for (int g = 0; g < 9; g++)
-                        rows[k * 9 + g] = x9[k][g];
-                }
-                mdct_forward_full(dp[3], lens[3], start,
-                                  win, xlfe);
-                for (int k = 0; k < 5 && !any; k++)
-                    for (int g = 0; g < 9 && !any; g++)
-                        for (int v = 0; v < 1024; v++)
-                            if (fabs(x9[k][g][v]) > 0.0) {
-                                any = 1;
-                                break;
-                            }
-                for (int v = 0; v < 2048 && !any; v++)
-                    if (fabs(xlfe[v]) > 0.0)
-                        any = 1;
-                if (any) {
-                    uint8_t *body = malloc(65536);
-                    int n_body;
-                    if (!body)
-                        goto done;
-                    n_body = fit_51_mixed(
-                        i, rows, xlfe, orient[i],
-                        sizes[i], iframe, stamp51, drc,
-                        dmx, body, 65536);
-                    if (n_body < 0) {
-                        free(body);
-                    } else {
-                        raw = body;
-                        n_raw = n_body;
-                    }
-                }
-            } else {
-                static double xs[6][2048];
-                const double *rows[6];
-                int pf, pl, nf, nl, tl = 0, tr = 0;
-                int any = 0;
-                double wspan[4096];
-                const double *ww = win;
-                frame_edge_lens(orient[i - 1], &pf, &pl);
-                frame_edge_lens(
-                    i + 1 < nframes ? orient[i + 1]
-                                    : ENC_CORE_ORIENT_LONG,
-                    &nf, &nl);
-                if (pl < 2048)
-                    tl = pl;
-                if (nf < 2048)
-                    tr = nf;
-                if (tl || tr) {
-                    mdct_bridged_window(2048, tl, tr,
-                                        wspan);
-                    ww = wspan;
-                }
-                for (int c = 0; c < 6; c++) {
-                    mdct_forward_full(dp[c], lens[c],
-                                      start,
-                                      c == 3 ? win : ww,
-                                      xs[c]);
-                    rows[c] = xs[c];
-                }
-                for (int c = 0; c < 6 && !any; c++)
-                    for (int v = 0; v < 2048; v++)
-                        if (xs[c][v] != 0.0) {
-                            any = 1;
-                            break;
-                        }
-                if (any) {
-                    uint8_t *body = malloc(65536);
-                    int n_body;
-                    if (!body)
-                        goto done;
-                    n_body = fit_51(i, rows, sizes[i],
-                                    iframe, stamp51, drc,
-                                    dmx, !flat_file, body,
-                                    65536);
-                    if (n_body < 0) {
-                        free(body);
-                    } else {
-                        raw = body;
-                        n_raw = n_body;
-                    }
-                }
-            }
-        }
-        if (!raw) {
-            uint8_t *body = malloc(65536);
-            int n_body;
-            if (!body)
-                goto done;
-            if (stamp51 && i == 0) {
-                bytebuf_t s1 = { NULL, 0, 0 };
-                const uint8_t *subs[3];
-                uint8_t *aud;
-                int nlens[3], n_aud;
-                if (!iframe) {
-                    free(body);
-                    bb_free(&s1);
-                    goto done;
-                }
-                aud = malloc(65536);
-                if (!aud) {
-                    free(body);
-                    bb_free(&s1);
-                    goto done;
-                }
-                n_aud = enc_core_write_audio_data(
-                    "5.1", 1, aud, 65536);
-                if (n_aud < 0 ||
-                    sub_audio_bb(&s1, aud, n_aud, "5.1",
-                                 1, drc)) {
-                    free(aud);
-                    free(body);
-                    bb_free(&s1);
-                    goto done;
-                }
-                free(aud);
-                subs[0] = stamp51->fr0;
-                nlens[0] = stamp51->n_fr0;
-                subs[1] = s1.p;
-                nlens[1] = (int)s1.n;
-                subs[2] = stamp51->s4;
-                nlens[2] = stamp51->n_s4;
-                n_body = assemble_raw(i, 1, "5.1", 0, subs,
-                                      nlens, 3, sizes[i],
-                                      body, 65536);
-                bb_free(&s1);
-            } else {
-                n_body = enc_core_write_raw_frame(
-                    i, sizes[i], "5.1", iframe, drc, dmx,
-                    body, 65536);
-            }
-            if (n_body < 0) {
-                free(body);
-                goto done;
-            }
-            raw = body;
-            n_raw = n_body;
-        }
-        {
-            uint8_t *sync = malloc((size_t)n_raw + 6);
-            int n_sync;
-            if (!sync) {
-                free(raw);
-                goto done;
-            }
-            n_sync = enc_core_write_sync_frame(
-                raw, n_raw, trailer, sync,
-                (size_t)n_raw + 6);
-            free(raw);
-            if (n_sync < 0 ||
-                bb_put(&stream, sync, (size_t)n_sync)) {
-                free(sync);
-                goto done;
-            }
-            free(sync);
-        }
-    }
-    if (stream.n > outcap)
-        goto done;
-    if (stream.n > 0)
-        memcpy(out, stream.p, stream.n);
-    n = (int)stream.n;
+    n = pos;
 done:
-    free(sizes);
-    free(ifr);
-    free(orient);
-    bb_free(&stream);
+    free(raw);
+    enc_step_close(st);
     return n;
 }
 
@@ -5102,4 +4646,1123 @@ done:
         free(dp[c]);
     }
     return n;
+}
+
+/* ---- ac4enc-lib r2: incremental engine ----
+ *
+ * Single frame-stepping implementation behind the whole-stream
+ * drivers (thin wrappers below... above) and the incremental
+ * ac4enc_lib ctx. Loop bodies are moved verbatim from
+ * encode_pcm_frames / encode_pcm_mc_frames with mechanical
+ * adaptations only:
+ *   sizes[j] -> running CBR step (positional, exact);
+ *   is_iframe  -> rule predicate (exact; joint open-ended edge
+ *     documented in enc_step.h);
+ *   orient[] whole array -> compute-once ring (exact: masks use
+ *     fed-so-far, which provably equals the true total wherever
+ *     the mask is read pre-end);
+ *   whole-input PCM -> sliding window (all MDCT reads provably
+ *     stay inside fed data pre-end; end() freezes the total);
+ *   function-static scratch -> heap ctx (B1);
+ *   per-frame mallocs -> reusable ctx buffers (H11);
+ *   sync wrap -> caller (lib takes bare frames; wrappers wrap).
+ * lines[] (H6) arrive via cfg from the caller's pass 1.
+ */
+
+struct enc_step_ctx {
+    int nch;
+    int rate_kbps;
+    const char *layout;
+    const char *interval;
+    int ns2_tone;
+    int shorts;
+    int joint_shorts;
+    int priming;
+    int iframe_base;
+    int iframe_total;
+    const int *forced;
+    int nforced;
+    const enc_core_drc_t *drc;
+    const int *dmx;
+    const enc_core_stamp_t *stamp;
+    int flat_file;
+    int do_bake;
+    int do_peak;
+    int bake_two;
+    double bake0[6];
+    double bake1[6];
+    int nlines;
+    int lines[7];
+    double win[4096];
+    long long cbr_num;
+    long long cbr_acc;
+    int if_rule;
+    long long if_step;
+    long long if_n;
+    long long if_j;
+    int or_base;
+    int or_have;
+    int or_ring[8];
+    double *rows[8];
+    int fed[8];
+    int wcap;
+    int wbase;
+    int fed_max;
+    int ended;
+    int end_frames;
+    int ns_total;
+    int emitted;
+    int baked_peak;
+    int fail_rc;
+    int detail;
+    union {
+        struct {
+            double sL[16][128];
+            double sR[16][128];
+            double s9L[9][1024];
+            double s9R[9][1024];
+            double sM[16][128];
+            double sS[16][128];
+            double XL[2048];
+            double XR[2048];
+        } st;
+        struct {
+            double sp[6][16][128];
+            double x9[5][9][1024];
+            double xlfe[2048];
+            double xs[6][2048];
+        } mc;
+    } u;
+    uint8_t *b_full;
+    uint8_t *b_audio;
+    uint8_t *b_body;
+};
+
+static int
+step_fail(enc_step_ctx_t *c, int detail, int rc)
+{
+    c->detail = detail;
+    if (detail != ENC_STEP_ESHORT && !c->fail_rc)
+        c->fail_rc = rc;
+    return rc;
+}
+
+int
+enc_step_max_cbr(int rate_kbps)
+{
+    long long num, acc;
+    int best = 0;
+    if (rate_kbps <= 0 || rate_kbps > 1000000)
+        return -1;
+    num = (long long)rate_kbps * 16;
+    acc = ((-num) % 3 + 3) % 3;
+    for (int i = 0; i < 6; i++) {
+        int q;
+        acc += num;
+        q = (int)(acc / 3);
+        acc = acc % 3;
+        if (q > best)
+            best = q;
+    }
+    return best;
+}
+
+static int
+cbr_peek(const enc_step_ctx_t *c)
+{
+    return (int)((c->cbr_acc + c->cbr_num) / 3);
+}
+
+static void
+cbr_advance(enc_step_ctx_t *c)
+{
+    c->cbr_acc = (c->cbr_acc + c->cbr_num) % 3;
+}
+
+static void
+if_advance(enc_step_ctx_t *c)
+{
+    if (c->if_rule == 0) {
+        c->if_n++;
+        c->if_j = 1 + (c->if_n * 48000) / 2048;
+    } else if (c->if_j > LLONG_MAX - c->if_step) {
+        c->if_j = LLONG_MAX;
+    } else {
+        c->if_j += c->if_step;
+    }
+}
+
+/* Priming/5.1 rule: {0,1} + cadence + forced (positional, exact). */
+static int
+iframe_pred51(enc_step_ctx_t *c, int j)
+{
+    if (j == 0 || j == 1)
+        return 1;
+    while (c->if_j < j)
+        if_advance(c);
+    if (c->if_j == j)
+        return 1;
+    if (c->forced) {
+        for (int k = 0; k < c->nforced; k++)
+            if (c->forced[k] == j)
+                return 1;
+    }
+    return 0;
+}
+
+/* Joint rule over global indices (exact for explicit total and
+ * for base==0 open-ended; see enc_step.h). */
+static int
+iframe_pred_joint(enc_step_ctx_t *c, int j)
+{
+    long long g = (long long)c->iframe_base + j;
+    long long total = c->iframe_total < 0 ? LLONG_MAX
+                                          : c->iframe_total;
+    if (j == 0)
+        return 1;
+    while (c->if_j < g)
+        if_advance(c);
+    if (c->if_j == g && g < total)
+        return 1;
+    if (c->forced) {
+        for (int k = 0; k < c->nforced; k++)
+            if ((long long)c->forced[k] == g)
+                return 1;
+    }
+    return 0;
+}
+
+static int
+is01(int v)
+{
+    return v == 0 || v == 1;
+}
+
+int
+enc_step_open(enc_step_ctx_t **cp, const enc_step_cfg_t *cfg)
+{
+    enc_step_ctx_t *c;
+    long long step = 0;
+    int istep, nrows;
+    if (!cp || !cfg)
+        return -EINVAL;
+    if (cfg->nch != 2 && cfg->nch != 6)
+        return -EINVAL;
+    if (cfg->rate_kbps <= 0 || cfg->rate_kbps > 1000000)
+        return -EINVAL;
+    if (cfg->nch == 2 && (!cfg->layout ||
+                          strcmp(cfg->layout, "stereo")))
+        return -EINVAL;
+    if (!is01(cfg->ns2_tone) || !is01(cfg->shorts) ||
+        !is01(cfg->joint_shorts) || !is01(cfg->priming) ||
+        !is01(cfg->do_bake) || !is01(cfg->do_peak) ||
+        !is01(cfg->bake_two))
+        return -EINVAL;
+    if (cfg->nch == 6 && cfg->joint_shorts)
+        return -EINVAL;
+    if (cfg->nforced < 0 ||
+        (cfg->nforced > 0 && !cfg->forced))
+        return -EINVAL;
+    if (cfg->nlines < 0 || cfg->nlines > 7)
+        return -EINVAL;
+    for (int k = 0; k < cfg->nlines; k++)
+        if (cfg->lines[k] < 0 ||
+            cfg->lines[k] >= MDCT_NCOEFF)
+            return -EINVAL;
+    istep = parse_interval(cfg->interval, &step);
+    if (istep < 0)
+        return -EINVAL;
+    if (cfg->drc) {
+        /* Dry-run the real metadata writer over both iframe
+         * values: validates nmodes/mid/kind/eac3/gain/curve. */
+        uint8_t tmp[1024];
+        if (enc_core_write_metadata(cfg->nch == 2 ? "stereo"
+                                                  : "5.1",
+                                    0, cfg->drc, tmp,
+                                    sizeof tmp) < 0 ||
+            enc_core_write_metadata(cfg->nch == 2 ? "stereo"
+                                                  : "5.1",
+                                    1, cfg->drc, tmp,
+                                    sizeof tmp) < 0)
+            return -EINVAL;
+    }
+    c = calloc(1, sizeof *c);
+    if (!c)
+        return -ENOMEM;
+    c->detail = ENC_STEP_OK;
+    c->nch = cfg->nch;
+    c->rate_kbps = cfg->rate_kbps;
+    c->layout = cfg->layout;
+    c->interval = cfg->interval;
+    c->ns2_tone = cfg->ns2_tone;
+    c->shorts = cfg->shorts;
+    c->joint_shorts = cfg->joint_shorts;
+    c->priming = cfg->priming;
+    c->iframe_base = cfg->iframe_base;
+    c->iframe_total = cfg->iframe_total;
+    c->forced = cfg->forced;
+    c->nforced = cfg->nforced;
+    c->drc = cfg->drc;
+    c->dmx = cfg->dmx;
+    c->stamp = cfg->stamp;
+    c->flat_file = cfg->flat_file;
+    c->do_bake = cfg->do_bake;
+    c->do_peak = cfg->do_peak;
+    c->bake_two = cfg->bake_two;
+    memcpy(c->bake0, cfg->bake0, sizeof c->bake0);
+    memcpy(c->bake1, cfg->bake1, sizeof c->bake1);
+    c->nlines = cfg->nlines;
+    memcpy(c->lines, cfg->lines, sizeof c->lines);
+    if (cfg->window)
+        memcpy(c->win, cfg->window, sizeof c->win);
+    else
+        mdct_kbd_window(4096, 3.0, c->win);
+    c->cbr_num = (long long)cfg->rate_kbps * 16;
+    c->cbr_acc =
+        ((-c->cbr_num) % 3 + 3) % 3;
+    c->if_rule = istep;
+    c->if_step = step;
+    if (istep == 0) {
+        c->if_n = 1;
+        c->if_j = 1 + (1 * 48000) / 2048;
+    } else {
+        c->if_n = 0;
+        c->if_j = 1 + step;
+    }
+    nrows = cfg->nch +
+        (cfg->nch == 2 && cfg->joint_shorts ? 2 : 0);
+    c->wcap = 8192;
+    for (int r = 0; r < nrows; r++) {
+        c->rows[r] =
+            malloc((size_t)c->wcap * sizeof *c->rows[r]);
+        if (!c->rows[r]) {
+            enc_step_close(c);
+            return -ENOMEM;
+        }
+    }
+    *cp = c;
+    return 0;
+}
+
+void
+enc_step_close(enc_step_ctx_t *c)
+{
+    int nrows;
+    if (!c)
+        return;
+    nrows = c->nch +
+        (c->nch == 2 && c->joint_shorts ? 2 : 0);
+    for (int r = 0; r < nrows; r++)
+        free(c->rows[r]);
+    free(c->b_full);
+    free(c->b_audio);
+    free(c->b_body);
+    free(c);
+}
+
+int
+enc_step_emitted(const enc_step_ctx_t *c)
+{
+    return c ? c->emitted : 0;
+}
+
+int
+enc_step_detail(const enc_step_ctx_t *c)
+{
+    return c ? c->detail : ENC_STEP_OK;
+}
+
+static int
+step_coff(const enc_step_ctx_t *c)
+{
+    return (c->nch == 2 && !c->priming) ? 2 : 0;
+}
+
+/* Start sample of absolute orient index k (k>=2). */
+static int
+or_start(int k)
+{
+    return (k - 2) * ENC_CORE_FRAME_SAMPLES;
+}
+
+/* Ensure room for n more fed samples; slide to zero first. */
+static int
+win_grow(enc_step_ctx_t *c, int n)
+{
+    int nrows =
+        c->nch + (c->nch == 2 && c->joint_shorts ? 2 : 0);
+    if (n < 0)
+        return -1;
+    if (c->fed_max + n <= c->wbase + c->wcap)
+        return 0;
+    if (c->wbase > 0) {
+        for (int r = 0; r < nrows; r++) {
+            int keep = c->fed[r] - c->wbase;
+            if (keep > 0)
+                memmove(c->rows[r], c->rows[r] + c->wbase,
+                        (size_t)keep * sizeof *c->rows[r]);
+            c->fed[r] = keep > 0 ? keep : 0;
+        }
+        c->fed_max -= c->wbase;
+        if (c->fed_max < 0)
+            c->fed_max = 0;
+        c->wbase = 0;
+        if (c->fed_max + n <= c->wcap)
+            return 0;
+    }
+    {
+        int want = c->wcap > 0 ? c->wcap : 2048;
+        while (want < c->fed_max + n - c->wbase) {
+            if (want > INT_MAX / 2)
+                return -1;
+            want *= 2;
+        }
+        for (int r = 0; r < nrows; r++) {
+            double *nr = realloc(c->rows[r],
+                                 (size_t)want *
+                                     sizeof *nr);
+            if (!nr)
+                return -1;
+            c->rows[r] = nr;
+        }
+        c->wcap = want;
+    }
+    return 0;
+}
+
+/* Ingest one already-ordered double sample (post int-cast). */
+static int
+ingest_d(enc_step_ctx_t *c, int ch, double x)
+{
+    double v = x;
+    if (c->do_bake) {
+        int bi;
+        if (c->bake_two)
+            v = (x * c->bake0[ch]) * c->bake1[ch];
+        else
+            v = x * c->bake0[ch];
+        if (bake_round(v, &bi))
+            return -1;
+        /* abs() exactly as the core peak scans (see m1). */
+        if (c->do_peak && abs(bi) > c->baked_peak)
+            c->baked_peak = abs(bi);
+        v = (double)bi;
+    }
+    c->rows[ch][c->fed[ch] - c->wbase] = v;
+    return 0;
+}
+
+static int
+feed_common(enc_step_ctx_t *c, const double *const *df,
+            const int *const *di, const int *ns)
+{
+    int add = 0;
+    if (!c || !ns)
+        return -EINVAL;
+    if (c->ended || c->fail_rc)
+        return step_fail(c, ENC_STEP_EPROTO, -EINVAL);
+    if ((!df && !di) || (df && di))
+        return step_fail(c, ENC_STEP_EPROTO, -EINVAL);
+    for (int ch = 0; ch < c->nch; ch++) {
+        if (ns[ch] < 0)
+            return step_fail(c, ENC_STEP_EPROTO, -EINVAL);
+        if (ns[ch] > 0 && !(df ? df[ch] : (const void *)di[ch]))
+            return step_fail(c, ENC_STEP_EPROTO, -EINVAL);
+        if (ns[ch] > add)
+            add = ns[ch];
+    }
+    if (add == 0)
+        return 0;
+    if (win_grow(c, add))
+        return step_fail(c, ENC_STEP_ENOMEM, -ENOMEM);
+    for (int ch = 0; ch < c->nch; ch++) {
+        for (int k = 0; k < ns[ch]; k++) {
+            double x = df ? df[ch][k]
+                          : (double)di[ch][k];
+            if (ingest_d(c, ch, x))
+                return step_fail(c, ENC_STEP_EBAKE, -EIO);
+            c->fed[ch]++;
+        }
+    }
+    {
+        int mx = 0;
+        for (int ch = 0; ch < c->nch; ch++)
+            if (c->fed[ch] > mx)
+                mx = c->fed[ch];
+        /* M/S rows over the newly fed span (core pcmM/pcmS
+         * order: zero-fill past each row's end). */
+        if (c->nch == 2 && c->joint_shorts) {
+            int old = c->fed[2];
+            int nl = c->fed[0], nr = c->fed[1];
+            for (int g = old; g < mx; g++) {
+                double a = g < nl
+                    ? c->rows[0][g - c->wbase]
+                    : 0.0;
+                double b = g < nr
+                    ? c->rows[1][g - c->wbase]
+                    : 0.0;
+                c->rows[2][g - c->wbase] = (a + b) / 2.0;
+                c->rows[3][g - c->wbase] = (a - b) / 2.0;
+            }
+            c->fed[2] = c->fed[3] = mx;
+        }
+        c->fed_max = mx;
+    }
+    return 0;
+}
+
+int
+enc_step_feed(enc_step_ctx_t *c, const double *const *rows,
+              const int *ns)
+{
+    return feed_common(c, rows, NULL, ns);
+}
+
+int
+enc_step_feed_int(enc_step_ctx_t *c, const int *const *rows,
+                  const int *ns)
+{
+    return feed_common(c, NULL, rows, ns);
+}
+
+int
+enc_step_end(enc_step_ctx_t *c)
+{
+    if (!c)
+        return -EINVAL;
+    if (c->ended || c->fail_rc)
+        return step_fail(c, ENC_STEP_EPROTO, -EINVAL);
+    c->ended = 1;
+    c->ns_total = c->fed_max;
+    if (c->nch == 6 || c->priming)
+        c->end_frames =
+            enc_core_nframes_for_samples(c->ns_total);
+    else if (c->ns_total <= 0)
+        c->end_frames = 0;
+    else
+        c->end_frames =
+            (c->ns_total + ENC_CORE_FRAME_SAMPLES - 1) /
+            ENC_CORE_FRAME_SAMPLES;
+    if (c->do_peak && !(c->baked_peak < 32767))
+        return step_fail(c, ENC_STEP_EPEAK, -EIO);
+    return 0;
+}
+
+/* Data needed above a frame start: 4160 with the orient
+ * lookahead (shorts), else 3072 (MDCT span). */
+static int
+emit_ahead(const enc_step_ctx_t *c)
+{
+    return c->shorts ? 4160 : 3072;
+}
+
+int
+enc_step_ready(enc_step_ctx_t *c)
+{
+    int j, i, start;
+    if (!c)
+        return -EINVAL;
+    if (c->fail_rc)
+        return c->fail_rc;
+    j = c->emitted;
+    if (c->ended)
+        return j < c->end_frames ? 1 : 0;
+    i = j + step_coff(c);
+    if (i < 2)
+        return c->fed_max > 0 ? 1 : 0;
+    start = or_start(i);
+    return c->fed_max >= start + emit_ahead(c) ? 1 : 0;
+}
+
+int
+enc_step_ready_after(const enc_step_ctx_t *c, int n)
+{
+    int j, i, start;
+    if (!c || n < 0)
+        return 0;
+    if (c->fail_rc)
+        return 0;
+    j = c->emitted;
+    if (c->ended)
+        return j < c->end_frames ? 1 : 0;
+    i = j + step_coff(c);
+    if (i < 2)
+        return c->fed_max + n > 0 ? 1 : 0;
+    start = or_start(i);
+    return c->fed_max + n >= start + emit_ahead(c) ? 1
+                                                  : 0;
+}
+
+int
+enc_step_set_stamp(enc_step_ctx_t *c,
+                   const enc_core_stamp_t *stamp)
+{
+    if (!c)
+        return -EINVAL;
+    if (c->emitted != 0 || c->fail_rc)
+        return step_fail(c, ENC_STEP_EPROTO, -EINVAL);
+    c->stamp = stamp;
+    return 0;
+}
+
+int
+enc_step_next_size(enc_step_ctx_t *c)
+{
+    if (!c)
+        return -1;
+    if (c->fail_rc || (c->ended && c->emitted >= c->end_frames)) {
+        c->detail = ENC_STEP_EPROTO;
+        return -1;
+    }
+    return cbr_peek(c);
+}
+/* Orient ring: compute-once absolute indices, shared by the
+ * pre-scan twin and emission. Values match the whole-stream
+ * pre-scan exactly (mask total = fed-so-far pre-end, which
+ * provably reads identically wherever consulted). */
+static int
+or_compute(enc_step_ctx_t *c, int k)
+{
+    int start = or_start(k);
+    int total = c->ended ? c->ns_total : c->fed_max;
+    int o0 = 0, o1 = 0, rc;
+    if (c->nch == 2) {
+        const double *sp[2];
+        int wlen0 = c->fed[0] - c->wbase;
+        int wlen1 = c->fed[1] - c->wbase;
+        if (wlen0 < 0)
+            wlen0 = 0;
+        if (wlen1 < 0)
+            wlen1 = 0;
+        tile_specs_128(c->rows[0], wlen0, start - c->wbase,
+                       c->u.st.sL);
+        tile_specs_128(c->rows[1], wlen1, start - c->wbase,
+                       c->u.st.sR);
+        sp[0] = &c->u.st.sL[0][0];
+        sp[1] = &c->u.st.sR[0][0];
+        rc = tile_orient(sp, 2, start, total, &o0, &o1, 0);
+    } else {
+        const double *sl[6];
+        for (int ch = 0; ch < 6; ch++) {
+            int wlen = c->fed[ch] - c->wbase;
+            if (wlen < 0)
+                wlen = 0;
+            tile_specs_128(c->rows[ch], wlen,
+                           start - c->wbase, c->u.mc.sp[ch]);
+            sl[ch] = &c->u.mc.sp[ch][0][0];
+        }
+        rc = tile_orient(sl, 6, start, total, &o0, &o1, 1);
+    }
+    if (rc < 0)
+        return -1;
+    if (rc > 0)
+        return o0 == ENC_CORE_TL_1024
+            ? ENC_CORE_ORIENT_1024_FIRST
+            : ENC_CORE_ORIENT_128_FIRST;
+    return ENC_CORE_ORIENT_LONG;
+}
+
+static int
+or_need(enc_step_ctx_t *c, int i, int *out)
+{
+    if (!c->shorts || i < 2) {
+        *out = ENC_CORE_ORIENT_LONG;
+        return 0;
+    }
+    while (c->or_base + c->or_have <= i) {
+        int k = c->or_base + c->or_have;
+        int v;
+        if (!c->ended &&
+            c->fed_max < or_start(k) + 2112)
+            return -1;
+        v = or_compute(c, k);
+        if (v < 0)
+            return -1;
+        if (c->or_have == 8) {
+            c->or_base++;
+            c->or_have--;
+        }
+        c->or_ring[(c->or_base + c->or_have) % 8] = v;
+        c->or_have++;
+    }
+    *out = c->or_ring[i % 8];
+    return 0;
+}
+
+/* Drop window history before start_next-1024 (no future read
+ * reaches below it). */
+static void
+win_compact(enc_step_ctx_t *c, int start_next)
+{
+    int nrows =
+        c->nch + (c->nch == 2 && c->joint_shorts ? 2 : 0);
+    int want = start_next - 1024;
+    int shift;
+    if (want <= c->wbase)
+        return;
+    if (want > c->fed_max)
+        want = c->fed_max;
+    shift = want - c->wbase;
+    for (int r = 0; r < nrows; r++) {
+        int keep = c->fed[r] - want;
+        if (keep > 0)
+            memmove(c->rows[r], c->rows[r] + shift,
+                    (size_t)keep * sizeof *c->rows[r]);
+    }
+    c->wbase = want;
+}
+
+static int
+emit_bufs(enc_step_ctx_t *c)
+{
+    if (!c->b_full) {
+        c->b_full = malloc(65536);
+        c->b_audio = malloc(65536);
+        c->b_body = malloc(65536);
+        if (!c->b_full || !c->b_audio || !c->b_body)
+            return -1;
+    }
+    return 0;
+}
+
+/* Stereo frame step: moved encode_pcm_frames loop body. */
+static int
+st_emit(enc_step_ctx_t *c, int j, uint8_t *out, size_t outcap,
+        size_t *out_len, int *is_iframe)
+{
+    int coff = step_coff(c);
+    int i = j + coff;
+    int iframe = c->priming ? iframe_pred51(c, j)
+                            : iframe_pred_joint(c, j);
+    int size = cbr_peek(c);
+    int oi_prev = ENC_CORE_ORIENT_LONG;
+    int oi = ENC_CORE_ORIENT_LONG;
+    int oi_next = ENC_CORE_ORIENT_LONG;
+    uint8_t *raw = NULL;
+    int n_raw = -1, have_full = 0, have_audio = 0;
+    int n_audio = 0;
+    int wlen0 = c->fed[0] - c->wbase;
+    int wlen1 = c->fed[1] - c->wbase;
+    if (wlen0 < 0)
+        wlen0 = 0;
+    if (wlen1 < 0)
+        wlen1 = 0;
+    if (emit_bufs(c))
+        return step_fail(c, ENC_STEP_ENOMEM, -ENOMEM);
+    /* Fresh-zero each frame: the moved bodies replaced per-frame
+     * 64K mallocs (fresh zero pages in practice); writers may
+     * leave gaps that must read back as zero, not stale. */
+    memset(c->b_full, 0, 65536);
+    memset(c->b_audio, 0, 65536);
+    memset(c->b_body, 0, 65536);
+    if (or_need(c, i - 1, &oi_prev) || or_need(c, i, &oi))
+        return step_fail(c, ENC_STEP_EEMIT, -EIO);
+    if (c->ended && i + 1 >= c->end_frames + coff)
+        oi_next = ENC_CORE_ORIENT_LONG;
+    else if (or_need(c, i + 1, &oi_next))
+        return step_fail(c, ENC_STEP_EEMIT, -EIO);
+    if (i >= 2) {
+        int start = or_start(i);
+        int ts = start - c->wbase;
+        if (oi != ENC_CORE_ORIENT_LONG) {
+            const double *rL[9], *rR[9];
+            int pf, pl, nf, nl;
+            frame_edge_lens(oi_prev, &pf, &pl);
+            frame_edge_lens(oi_next, &nf, &nl);
+            tile_specs_128(c->rows[0], wlen0, ts,
+                           c->u.st.sL);
+            tile_specs_128(c->rows[1], wlen1, ts,
+                           c->u.st.sR);
+            if (c->joint_shorts) {
+                int wlenM = c->fed[2] - c->wbase;
+                int wlenS = c->fed[3] - c->wbase;
+                if (wlenM < 0)
+                    wlenM = 0;
+                if (wlenS < 0)
+                    wlenS = 0;
+                for (int a = 0; a < 16; a++) {
+                    for (int b = 0; b < 128; b++) {
+                        c->u.st.sM[a][b] =
+                            (c->u.st.sL[a][b] +
+                             c->u.st.sR[a][b]) /
+                            2.0;
+                        c->u.st.sS[a][b] =
+                            (c->u.st.sL[a][b] -
+                             c->u.st.sR[a][b]) /
+                            2.0;
+                    }
+                }
+                if (enc_core_mixed_specs_for_frame(
+                        c->rows[2], wlenM, ts, oi,
+                        &c->u.st.sM[0][0], pl, nf,
+                        c->u.st.s9L) ||
+                    enc_core_mixed_specs_for_frame(
+                        c->rows[3], wlenS, ts, oi,
+                        &c->u.st.sS[0][0], pl, nf,
+                        c->u.st.s9R))
+                    return step_fail(c, ENC_STEP_EEMIT,
+                                     -EIO);
+            } else {
+                if (enc_core_mixed_specs_for_frame(
+                        c->rows[0], wlen0, ts, oi,
+                        &c->u.st.sL[0][0], pl, nf,
+                        c->u.st.s9L) ||
+                    enc_core_mixed_specs_for_frame(
+                        c->rows[1], wlen1, ts, oi,
+                        &c->u.st.sR[0][0], pl, nf,
+                        c->u.st.s9R))
+                    return step_fail(c, ENC_STEP_EEMIT,
+                                     -EIO);
+            }
+            for (int g = 0; g < 9; g++) {
+                rL[g] = c->u.st.s9L[g];
+                rR[g] = c->u.st.s9R[g];
+            }
+            {
+                int n_full;
+                if (c->joint_shorts)
+                    n_full =
+                        enc_core_encode_joint_mixed_frame(
+                            j, rL, rR, oi, size,
+                            c->layout, iframe, c->stamp,
+                            c->drc, c->dmx, c->b_full,
+                            65536);
+                else
+                    n_full = enc_core_encode_mixed_frame(
+                        j, rL, rR, oi, size, c->layout,
+                        iframe, c->stamp, c->drc, c->dmx,
+                        c->b_full, 65536);
+                if (n_full >= 0) {
+                    raw = c->b_full;
+                    n_raw = n_full;
+                    have_full = 1;
+                }
+            }
+        } else {
+            double wspan[4096];
+            const double *ww = c->win;
+            int pf, pl, nf, nl, bridged;
+            int tl = 0, tr = 0;
+            frame_edge_lens(oi_prev, &pf, &pl);
+            frame_edge_lens(oi_next, &nf, &nl);
+            if (pl < 2048)
+                tl = pl;
+            if (nf < 2048)
+                tr = nf;
+            bridged = tl || tr;
+            if (bridged) {
+                mdct_bridged_window(2048, tl, tr, wspan);
+                ww = wspan;
+            }
+            mdct_forward_full(c->rows[0], wlen0, ts, ww,
+                              c->u.st.XL);
+            mdct_forward_full(c->rows[1], wlen1, ts, ww,
+                              c->u.st.XR);
+            if (c->nlines > 0 && !bridged &&
+                enc_core_tile_pure(c->u.st.XL,
+                                   c->u.st.XR, 2048,
+                                   c->lines,
+                                   c->nlines) > 0) {
+                enc_core_leg_t cL, cR;
+                if (enc_core_quantize_frame(
+                        c->rows[0], wlen0, ts, c->lines,
+                        c->nlines, c->win,
+                        ENC_CORE_DIG_GAIN, &cL) ||
+                    enc_core_quantize_frame(
+                        c->rows[1], wlen1, ts, c->lines,
+                        c->nlines, c->win,
+                        ENC_CORE_DIG_GAIN, &cR))
+                    return step_fail(c, ENC_STEP_EEMIT,
+                                     -EIO);
+                if (cL.n > 0 || cR.n > 0) {
+                    n_audio =
+                        enc_core_write_audio_spectral(
+                            cL.lines, cL.qs, cL.n, cL.ref,
+                            cR.lines, cR.qs, cR.n, cR.ref,
+                            c->b_audio, 65536);
+                    if (n_audio < 0)
+                        return step_fail(c, ENC_STEP_EEMIT,
+                                         -EIO);
+                    have_audio = 1;
+                }
+            } else {
+                int n_full;
+                n_full = enc_core_encode_fullband_frame(
+                    j, c->u.st.XL, c->u.st.XR, size,
+                    c->layout, iframe, 1, c->stamp, c->drc,
+                    c->dmx, !c->flat_file, c->b_full,
+                    65536);
+                if (n_full >= 0) {
+                    raw = c->b_full;
+                    n_raw = n_full;
+                    have_full = 1;
+                }
+            }
+        }
+    }
+    if (!have_full) {
+        if (!have_audio) {
+            int n_body;
+            if (c->stamp && j == 0) {
+                bytebuf_t s1 = { NULL, 0, 0 };
+                const uint8_t *subs[3];
+                int nlens[3];
+                if (!iframe) {
+                    bb_free(&s1);
+                    return step_fail(c, ENC_STEP_EEMIT,
+                                     -EIO);
+                }
+                if (priming_sub1_bb(&s1, c->drc, c->dmx)) {
+                    bb_free(&s1);
+                    return step_fail(c, ENC_STEP_EEMIT,
+                                     -EIO);
+                }
+                subs[0] = c->stamp->fr0;
+                nlens[0] = c->stamp->n_fr0;
+                subs[1] = s1.p;
+                nlens[1] = (int)s1.n;
+                subs[2] = c->stamp->s4;
+                nlens[2] = c->stamp->n_s4;
+                n_body = assemble_raw(j, 1, c->layout, 0,
+                                      subs, nlens, 3, size,
+                                      c->b_body, 65536);
+                bb_free(&s1);
+            } else {
+                n_body = enc_core_write_raw_frame(
+                    j, size, c->layout, iframe, c->drc,
+                    c->dmx, c->b_body, 65536);
+            }
+            if (n_body < 0)
+                return step_fail(c, ENC_STEP_EEMIT, -EIO);
+            raw = c->b_body;
+            n_raw = n_body;
+        } else {
+            int n_body;
+            n_body = enc_core_assemble_content_frame(
+                j, c->b_audio, n_audio, size, c->layout,
+                iframe, c->ns2_tone, c->stamp, c->drc,
+                c->dmx, c->b_body, 65536);
+            if (n_body < 0)
+                return step_fail(c, ENC_STEP_EEMIT, -EIO);
+            raw = c->b_body;
+            n_raw = n_body;
+        }
+    }
+    if (n_raw < 0 || n_raw > 65536)
+        return step_fail(c, ENC_STEP_EEMIT, -EIO);
+    *out_len = (size_t)n_raw;
+    if ((size_t)n_raw > outcap || !out)
+        return step_fail(c, ENC_STEP_ESHORT, -EINVAL);
+    memcpy(out, raw, (size_t)n_raw);
+    if (is_iframe)
+        *is_iframe = iframe;
+    cbr_advance(c);
+    c->emitted++;
+    win_compact(c, or_start(i + 1));
+    return 1;
+}
+/* 5.1 frame step: moved encode_pcm_mc_frames loop body. */
+static int
+mc_emit(enc_step_ctx_t *c, int j, uint8_t *out, size_t outcap,
+        size_t *out_len, int *is_iframe)
+{
+    int iframe = iframe_pred51(c, j);
+    int size = cbr_peek(c);
+    int oi_prev = ENC_CORE_ORIENT_LONG;
+    int oi = ENC_CORE_ORIENT_LONG;
+    int oi_next = ENC_CORE_ORIENT_LONG;
+    uint8_t *raw = NULL;
+    int n_raw = -1;
+    if (emit_bufs(c))
+        return step_fail(c, ENC_STEP_ENOMEM, -ENOMEM);
+    /* Fresh-zero each frame: the moved bodies replaced per-frame
+     * 64K mallocs (fresh zero pages in practice); writers may
+     * leave gaps that must read back as zero, not stale. */
+    memset(c->b_full, 0, 65536);
+    memset(c->b_audio, 0, 65536);
+    memset(c->b_body, 0, 65536);
+    if (or_need(c, j - 1, &oi_prev) || or_need(c, j, &oi))
+        return step_fail(c, ENC_STEP_EEMIT, -EIO);
+    if (c->ended && j + 1 >= c->end_frames)
+        oi_next = ENC_CORE_ORIENT_LONG;
+    else if (or_need(c, j + 1, &oi_next))
+        return step_fail(c, ENC_STEP_EEMIT, -EIO);
+    if (j >= 2) {
+        int start = or_start(j);
+        int ts = start - c->wbase;
+        if (oi != ENC_CORE_ORIENT_LONG) {
+            const double *rows[45];
+            int pf, pl, nf, nl, any = 0;
+            int chmap[5] = { 0, 1, 2, 4, 5 };
+            int wlen3 = c->fed[3] - c->wbase;
+            frame_edge_lens(oi_prev, &pf, &pl);
+            frame_edge_lens(oi_next, &nf, &nl);
+            if (wlen3 < 0)
+                wlen3 = 0;
+            for (int ch = 0; ch < 6; ch++) {
+                int wlen = c->fed[ch] - c->wbase;
+                if (wlen < 0)
+                    wlen = 0;
+                tile_specs_128(c->rows[ch], wlen, ts,
+                               c->u.mc.sp[ch]);
+            }
+            for (int k = 0; k < 5; k++) {
+                int wlen = c->fed[chmap[k]] - c->wbase;
+                if (wlen < 0)
+                    wlen = 0;
+                if (enc_core_mixed_specs_for_frame(
+                        c->rows[chmap[k]], wlen, ts, oi,
+                        &c->u.mc.sp[chmap[k]][0][0], pl,
+                        nf, c->u.mc.x9[k]))
+                    return step_fail(c, ENC_STEP_EEMIT,
+                                     -EIO);
+                for (int g = 0; g < 9; g++)
+                    rows[k * 9 + g] = c->u.mc.x9[k][g];
+            }
+            mdct_forward_full(c->rows[3], wlen3, ts, c->win,
+                              c->u.mc.xlfe);
+            for (int k = 0; k < 5 && !any; k++)
+                for (int g = 0; g < 9 && !any; g++)
+                    for (int v = 0; v < 1024; v++)
+                        if (fabs(c->u.mc.x9[k][g][v]) >
+                            0.0) {
+                            any = 1;
+                            break;
+                        }
+            for (int v = 0; v < 2048 && !any; v++)
+                if (fabs(c->u.mc.xlfe[v]) > 0.0)
+                    any = 1;
+            if (any) {
+                int n_body;
+                n_body = fit_51_mixed(j, rows, c->u.mc.xlfe,
+                                      oi, size, iframe,
+                                      c->stamp, c->drc,
+                                      c->dmx, c->b_body,
+                                      65536);
+                if (n_body >= 0) {
+                    raw = c->b_body;
+                    n_raw = n_body;
+                }
+            }
+        } else {
+            const double *rows[6];
+            int pf, pl, nf, nl, tl = 0, tr = 0;
+            int any = 0;
+            double wspan[4096];
+            const double *ww = c->win;
+            frame_edge_lens(oi_prev, &pf, &pl);
+            frame_edge_lens(oi_next, &nf, &nl);
+            if (pl < 2048)
+                tl = pl;
+            if (nf < 2048)
+                tr = nf;
+            if (tl || tr) {
+                mdct_bridged_window(2048, tl, tr, wspan);
+                ww = wspan;
+            }
+            for (int ch = 0; ch < 6; ch++) {
+                int wlen = c->fed[ch] - c->wbase;
+                if (wlen < 0)
+                    wlen = 0;
+                mdct_forward_full(c->rows[ch], wlen, ts,
+                                  ch == 3 ? c->win : ww,
+                                  c->u.mc.xs[ch]);
+                rows[ch] = c->u.mc.xs[ch];
+            }
+            for (int ch = 0; ch < 6 && !any; ch++)
+                for (int v = 0; v < 2048; v++)
+                    if (c->u.mc.xs[ch][v] != 0.0) {
+                        any = 1;
+                        break;
+                    }
+            if (any) {
+                int n_body;
+                n_body = fit_51(j, rows, size, iframe,
+                                c->stamp, c->drc, c->dmx,
+                                !c->flat_file, c->b_body,
+                                65536);
+                if (n_body >= 0) {
+                    raw = c->b_body;
+                    n_raw = n_body;
+                }
+            }
+        }
+    }
+    if (!raw) {
+        int n_body;
+        if (c->stamp && j == 0) {
+            bytebuf_t s1 = { NULL, 0, 0 };
+            const uint8_t *subs[3];
+            int nlens[3], n_aud;
+            if (!iframe) {
+                bb_free(&s1);
+                return step_fail(c, ENC_STEP_EEMIT, -EIO);
+            }
+            n_aud = enc_core_write_audio_data(
+                "5.1", 1, c->b_audio, 65536);
+            if (n_aud < 0 ||
+                sub_audio_bb(&s1, c->b_audio, n_aud,
+                             "5.1", 1, c->drc)) {
+                bb_free(&s1);
+                return step_fail(c, ENC_STEP_EEMIT, -EIO);
+            }
+            subs[0] = c->stamp->fr0;
+            nlens[0] = c->stamp->n_fr0;
+            subs[1] = s1.p;
+            nlens[1] = (int)s1.n;
+            subs[2] = c->stamp->s4;
+            nlens[2] = c->stamp->n_s4;
+            n_body = assemble_raw(j, 1, "5.1", 0, subs,
+                                  nlens, 3, size,
+                                  c->b_body, 65536);
+            bb_free(&s1);
+        } else {
+            n_body = enc_core_write_raw_frame(
+                j, size, "5.1", iframe, c->drc, c->dmx,
+                c->b_body, 65536);
+        }
+        if (n_body < 0)
+            return step_fail(c, ENC_STEP_EEMIT, -EIO);
+        raw = c->b_body;
+        n_raw = n_body;
+    }
+    if (n_raw < 0 || n_raw > 65536)
+        return step_fail(c, ENC_STEP_EEMIT, -EIO);
+    *out_len = (size_t)n_raw;
+    if ((size_t)n_raw > outcap || !out)
+        return step_fail(c, ENC_STEP_ESHORT, -EINVAL);
+    memcpy(out, raw, (size_t)n_raw);
+    if (is_iframe)
+        *is_iframe = iframe;
+    cbr_advance(c);
+    c->emitted++;
+    win_compact(c, or_start(j + 1));
+    return 1;
+}
+
+int
+enc_step_emit(enc_step_ctx_t *c, uint8_t *out, size_t outcap,
+              size_t *out_len, int *is_iframe)
+{
+    int j;
+    if (!c || !out_len)
+        return -EINVAL;
+    *out_len = 0;
+    if (c->fail_rc)
+        return c->fail_rc;
+    j = c->emitted;
+    if (c->ended && j >= c->end_frames)
+        return step_fail(c, ENC_STEP_EPROTO, -EINVAL);
+    if (!c->ended) {
+        int i = j + step_coff(c);
+        if (i >= 2 &&
+            c->fed_max < or_start(i) + emit_ahead(c))
+            return step_fail(c, ENC_STEP_EPROTO, -EINVAL);
+        if (i < 2 && c->fed_max <= 0)
+            return step_fail(c, ENC_STEP_EPROTO, -EINVAL);
+    }
+    if (c->nch == 2)
+        return st_emit(c, j, out, outcap, out_len,
+                       is_iframe);
+    return mc_emit(c, j, out, outcap, out_len, is_iframe);
 }
