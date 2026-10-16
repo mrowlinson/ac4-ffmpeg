@@ -525,6 +525,10 @@ t_open_neg2(void)
                   48, 0, 48, "9223372036854775807",
                   NULL, 0, set) < 0,
               "joint_iframes LLONG_MAX rejected");
+        CHECK(enc_core_joint_iframes(
+                  48, 0, 48, "9223372036854775806",
+                  NULL, 0, set) == 1,
+              "joint_iframes LLONG_MAX-1 marks {0}");
     }
     o.interval = NULL;
     o.has_bake = 1;
