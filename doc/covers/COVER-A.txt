@@ -1,36 +1,60 @@
-Subject: [PATCH 0/3] native AC-4 decoder for raw .ac4 streams
+Subject: [PATCH 0/2] native AC-4 decoder for raw .ac4 streams
 
 This series adds a native AC-4 audio decoder, wired to the raw .ac4
-demuxer. It sits on Series A0 (demux params + timestamps), which must
-land first: the decoder assumes stream copy exits 0 with seekable pts.
+demuxer already upstream. Base is master 3e6cd5e; the series applies
+and decodes standalone — no earlier series required for decode. The
+A0 carriage patch (codecpar + timestamps, posted separately) pairs
+with it for stream copy and seekable pts, but decode-to-PCM is proven
+on pristine master without it.
 
 Patches:
-  [PATCH 1/3] avcodec: add native AC-4 decoder core
-    Decoder engine: bit reader, entropy, IMDCT/MDCT, QMF, A-SPX,
-    ACPL, loudness, channel/render logic, static tables. No lavc API
-    surface yet; ported from the ff/dec-lib vendor tree.
-  [PATCH 2/3] avcodec: wire ff_ac4_decoder
-    AVCodec wrapper: init/decode/flush/close, extradata-less raw
-    input, gap-note handling, skip_samples/latency reporting,
-    private options. First patch exposing decoder behavior.
-  [PATCH 3/3] avcodec/ac4: fill A/V delay + drain (conditional)
-    Delay/drain handling if priming measurement (Q2) shows nonzero
-    latency; the 1-frame-delay finding suggests it is needed,
-    otherwise folded into 2/3 before post.
+  [PATCH 1/2] avcodec: add native AC-4 decoder core
+    Decoder engine: bit reader, entropy, IMDCT, QMF, A-SPX, ACPL,
+    loudness, channel/render logic, static tables (landing as
+    *_tab.c/h: *_tables.c/h would match libavcodec's generated-tables
+    CLEANFILES pattern and be deleted by `make clean`). No lavc API
+    surface yet; in-tree port of the dec-lib snapshot (FFmpeg LGPL
+    headers + CLI/shim strip, zero behavior edits). Builds inert
+    under the not-yet-defined CONFIG_AC4_DECODER guard.
+  [PATCH 2/2] avcodec: wire ff_ac4_decoder
+    AVCodec wrapper: init/decode/flush/close, re-framed raw input,
+    drain-per-feed to NEED_MORE, seek as close+reopen, process-wide
+    lib serialization, S16-only v1, EXPERIMENTAL (decode needs
+    -strict experimental). Truncated-tail rule: a lone unanchored
+    framing fails loud at EOF (no-sync diagnostic, zero output).
+    First patch exposing decoder behavior.
 
-Why: FFmpeg has no AC-4 decoder; raw carriage plus A0 params make a
-minimal reviewable unit before docs/FATE (Series B) and encoder
-(Series C) build on it.
+Why first: FFmpeg has no AC-4 decoder, and this series has zero
+sample dependencies, so it can post without waiting on the samples
+mail that gates the FATE-carrying patches (A0's folded M3 tests,
+Series B). Minimal reviewable unit before docs/FATE (Series B) and
+encoder (Series C) build on it.
 
 Testing:
-  ffmpeg -i clip.ac4 out.wav
-  framecrc/md5 vs reference PCM goldens (no energy asserts; no
-  silence round-trip); 1-frame-late/level behavior pinned, not
-  asserted (wrapper no-audio policy).
-  standalone --enable-decoder=ac4 build; ASan + trasher on decode
-  paths; patcheck clean; full fate green.
+  ./ffmpeg -strict experimental -i clip.ac4 -map 0:a out.wav
+  byte-exact vs the dec-lib oracle on stereo / 5.1 / 7.1 / IMS /
+  all-gap vectors (11/11 cmp-identical); negative controls loud and
+  terminating (mid-stream config change, garbage cap, no-bed,
+  truncated tail); standalone --enable-decoder=ac4 build; ASan/UBSan
+  clean on decode paths; patcheck clean-under-triage; full make
+  green; `make clean` preserves all committed sources.
 
-FATE: none in this series; decoder tests land in Series B (B2).
+FATE: none in this series; decoder tests land in Series B (B2),
+which posts only after the samples-request mail is confirmed and
+`make fate-rsync` shows ac4/clip-* (+24 h clock). No suite files
+needed for this series.
+
+N5 note (rate labels, pending re-pin): the wrapper passes lib rate
+labels straight through, INCLUDING the known fri 0-12 grid-rate
+mislabel — the lib reports/stamps the internal-grid rate (e.g. the
+gpac vector: 46034 Hz / spf 1536, 298 frames x 1536 x 6ch x 2 B =
+5492736 bytes) where ETSI TS 103 190 Table E.1/s5.11 wants base_fs x
+sf_mult plus resampled output counts. The fix is lib-owned and still
+pending (ff/dec-n5fix unlanded); current bytes stay pinned as the
+regression tripwire, and ALL fri 0-12 FATE goldens must be
+re-recorded when it lands. Expected wrapper impact then is zero code
+change (passthrough). This series pins no goldens, so nothing here
+goes stale.
 
 Provenance: this AC-4 decoder is an independent cleanroom
 implementation in C, written from the published ETSI specifications
