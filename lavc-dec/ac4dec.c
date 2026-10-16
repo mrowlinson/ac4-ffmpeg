@@ -30,7 +30,7 @@
  * - drain-per-feed: get_frame is called until AC4D_NEED_MORE after every
  *   accepted feed; ready frames wait in a wrapper FIFO, never in the lib.
  * - flush loops ac4d_flush until NEED_MORE (never flush-once); the lib
- *   emits full-spf tail frames only, total emitted == total fed.
+ *   emits actual-count tail frames (fi->spf each), total == total fed.
  * - seek is close + reopen: feed-after-flush is AC4D_ERR, there is no
  *   reset API, so .flush drops all state and re-opens the lib.
  * - all lib calls are serialized process-wide (the header overclaims
@@ -60,10 +60,11 @@
  * raw frame stream. When dec-lib carries priming, set delay + seed
  * skip_samples at the latch site.
  *
- * Rate labels come straight from the lib, including the known N5
- * mislabel (internal-grid sr/spf on fri 0-12 instead of base_fs x
- * sf_mult + s5.11 resampling). The wrapper passes them through and
- * tracks the dec-lib-owned rate fix; see lavc-dec/README.md.
+ * Rate labels come straight from the lib: post-N5 they are OUTPUT
+ * (post-s5.11-converter) values, sample_rate = base_fs x sf_mult on
+ * every fri row, and per-frame fi->spf varies on fractional rows
+ * (Table-70 pattern; get_info reports the latched max). The wrapper
+ * passes them through; see lavc-dec/README.md.
  */
 
 #include <stddef.h>
@@ -94,9 +95,9 @@
  * cap fails fast instead of spinning through the file. */
 #define AC4_MAX_CONSEC_BAD 16
 
-/* Largest plausible S16 lib frame (8ch x 2048 x 2B). Sizing is
- * re-checked against latched info after the first feed. */
-#define AC4_MAX_FRAME_BYTES (8 * 2048 * 2)
+/* Largest plausible S16 lib frame (8ch x AC4_SRC_OMAX 8192 x 2B).
+ * Sizing is re-checked against latched info after the first feed. */
+#define AC4_MAX_FRAME_BYTES (8 * 8192 * 2)
 
 typedef struct AC4QueuedFrame {
     uint8_t *pcm;          /* owned interleaved S16, len bytes */
@@ -406,16 +407,14 @@ static int ac4_drain_flush(AC4DecodeContext *s, AVCodecContext *avctx)
     if (!framelen)
         framelen = 1024;
     for (;;) {
-        /* Flush carries no fi (driftcheck 10): shape comes from the
-         * latch, verified at emit time. */
+        /* Flush fills fi with the drained frame's actual count (N5
+         * 4-arg form; NULL-ok, but the emit checks want it). */
         ac4d_info fi;
         int grc;
 
         memset(&fi, 0, sizeof(fi));
         ff_mutex_lock(&ac4d_mutex);
-        grc = ac4d_flush(s->lib, s->pcm_buf, framelen);
-        if (grc == AC4D_OK || grc == AC4D_GAP)
-            ac4d_get_info(s->lib, &fi);
+        grc = ac4d_flush(s->lib, s->pcm_buf, framelen, &fi);
         ff_mutex_unlock(&ac4d_mutex);
         if (grc == AC4D_NEED_MORE)
             return 0;
@@ -472,12 +471,31 @@ static int ac4_latch(AC4DecodeContext *s, AVCodecContext *avctx,
     av_channel_layout_uninit(&layout);
     if (ret < 0)
         return ret;
-    s->stream_set = 1;
-    s->latched_spf = fi->spf;
+    /* N5: per-frame fi->spf varies on fractional rows (Table-70
+     * pattern), so the latched bound is the get_info max, not this
+     * frame's actual count. */
+    {
+        ac4d_info li;
+        int lrc;
+
+        ff_mutex_lock(&ac4d_mutex);
+        lrc = ac4d_get_info(s->lib, &li);
+        ff_mutex_unlock(&ac4d_mutex);
+        if (lrc != AC4D_OK)
+            return ac4_lib_fatal(s, avctx, lrc, "get_info");
+        if (li.spf <= 0 || li.spf < fi->spf) {
+            av_log(avctx, AV_LOG_ERROR,
+                   "lib latched max spf %d disagrees with frame spf %d\n",
+                   li.spf, fi->spf);
+            return AVERROR(EINVAL);
+        }
+        s->stream_set = 1;
+        s->latched_spf = li.spf;
+    }
     s->latched_ch = fi->channels;
     av_log(avctx, AV_LOG_INFO,
-           "stream: %d Hz, %d channels, %d samples/frame (bed_cm %d)%s\n",
-           fi->sample_rate, fi->channels, fi->spf, fi->bed_cm,
+           "stream: %d Hz, %d channels, %d samples/frame max (bed_cm %d)%s\n",
+           fi->sample_rate, fi->channels, s->latched_spf, fi->bed_cm,
            is_gap ? " [params from stub-gap class]" : "");
     return 0;
 }
@@ -505,24 +523,26 @@ static int ac4_emit(AC4DecodeContext *s, AVCodecContext *avctx,
             ac4_drop_head(s);
             return ret;
         }
-    } else if (f->info.spf != s->latched_spf ||
+    } else if (f->info.spf <= 0 || f->info.spf > s->latched_spf ||
                f->info.channels != s->latched_ch) {
-        /* The lib latches spf/channels once; a shift mid-stream is a
-         * lib invariant break (CONFIG_CHANGE guards it). */
+        /* N5: per-frame spf roams at/below the latched max on
+         * fractional rows (Table-70 pattern); channels still latch
+         * once, and anything above the max is a lib invariant break
+         * (CONFIG_CHANGE guards it). */
         av_log(avctx, AV_LOG_ERROR,
                "lib frame shape changed mid-stream\n");
         ac4_drop_head(s);
         return AVERROR(EINVAL);
     }
-    if (f->len != (size_t)s->latched_ch * (size_t)s->latched_spf * 2) {
+    if (f->len != (size_t)f->info.channels * (size_t)f->info.spf * 2) {
         av_log(avctx, AV_LOG_ERROR,
-               "lib frame byte count %zu disagrees with latched shape\n",
+               "lib frame byte count %zu disagrees with frame shape\n",
                f->len);
         ac4_drop_head(s);
         return AVERROR(EINVAL);
     }
     if (!avctx->frame_size)
-        avctx->frame_size = f->info.spf;
+        avctx->frame_size = s->latched_spf;
 
     frame->nb_samples = f->info.spf;
     ret = ff_get_buffer(avctx, frame, 0);
