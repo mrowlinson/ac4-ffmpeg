@@ -35,10 +35,13 @@
  * core per Dolby ODK carriage rule, spec/part2-skip-e4.md).
  *
  * Payload is STUB silence (zeros): emitted frames x spf(samples) from
- * the internal grid (spec/mdct-sizes.md S4); sr label = round(spf*fps)
- * (H-SR2 HISTORICAL-Oct-2-oracle basis, drop e4-3; A-84:
- * emission stands on HEADER-TRUTH), fri 13 = nominal fs;
- * ig-gate drops leading
+ * the internal grid (spec/mdct-sizes.md S4); sr label = base_fs x
+ * sf_mult on ALL fri rows (N5 fix: the round(spf*fps) grid label
+ * H-SR2 was the pre-resampler internal quantity, never the output
+ * rate; A-84 emission still stands on HEADER-TRUTH). Every emitted
+ * frame passes the s5.11 converter (internal spf -> Table-70 output
+ * counts locked to sequence_counter; ac4_src.h); fri 13 + sf=1 is a
+ * 1:1 copy. ig-gate drops leading
  * pre-I frames (first ig=1 on). Real substream decode = later waves
  * (#31/#32) behind this same surface. Streams with no channel-coded
  * group in any frame (p34 class): exit 0, frames=N parsed, EMPTY PCM,
@@ -54,6 +57,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "ac4_src.h"
 #include "acpl.h"
 #include "aspx_tab.h"
 #include "entropy.h"
@@ -291,6 +295,9 @@ typedef struct ac4d_ctx {
 #define AC4D_SPN (6 * 2048)
 #define AC4D_RAWN (5 * 2048 + 1024)
 #define AC4D_APFN 4
+/* s5.11 per-frame output counts: emit lags feed by a few frames; the
+ * ring carries nout per fed ordinal (tripwired, never guessed). */
+#define AC4D_SRCN 16
     ac4d_opts ao;
     int ao_open;
     int h_fmt;           /* format latched from first feed */
@@ -302,6 +309,17 @@ typedef struct ac4d_ctx {
     int h_imm_mode;      /* 714 latched mode (-1 = n/a yet) */
     int h_rate;          /* latched fri row */
     int h_sr;            /* output sample-rate label */
+    int h_fs;            /* latched base fs bit (constancy) */
+    int h_sf;            /* latched sf_mult 1/2/4 (constancy) */
+    int h_ospf;          /* latched max output count/frame (info.spf) */
+    long h_src_num;      /* exact output samples/frame = num/den */
+    long h_src_den;
+    long h_src_per;      /* Table-70 pattern period (>= 1) */
+    long h_src_prev;     /* previous reduced phase residue */
+    struct {
+        long ord;        /* fed ordinal (tripwire tag) */
+        int nout;        /* s5.11 output count for ord */
+    } h_src_ring[AC4D_SRCN];
     long h_fed;          /* frames fed */
     long h_emit;         /* next emit ordinal */
     long h_ready;        /* frames ready to emit (data-driven) */
@@ -371,7 +389,10 @@ typedef struct ac4d_ctx {
                                    * gain applies at emit for exact DN
                                    * re-latch) */
 #define AC4D_PPN (5 * 2048)
-    short em_s16[8][2048];       /* emit scratch frame */
+    short em_s16[8][2048];       /* emit scratch frame (internal grid) */
+    short em_out[8][AC4_SRC_OMAX]; /* s5.11 output frame (base-fs PCM) */
+    short src_prev[8];           /* previous internal frame tail sample */
+    int src_have;                /* src_prev valid */
     double pp_ring[8][AC4D_PPN]; /* pre-gain postpassed frames (nch6/8
                                    * emit base; gain at emit) */
     double mx_tmp[12][2048];     /* mode-0 mix gather scratch */
@@ -887,6 +908,8 @@ typedef struct {
               * passed as audio b_iframe to e3_audmeta_read). */
     int n_ajoc, n_obj; /* skipped object-class substreams */
     int n_hsf; /* groups with b_hsf_ext set (D46 skip census) */
+    int sf_mult; /* bed-group sample-rate multiplier 1/2/4 (Table E.4;
+                  * first group of sel pres when no bed; N5 fix) */
 } toc_t;
 
 static unsigned br_substream_index(br_t *b) {
@@ -966,11 +989,16 @@ static unsigned br_channel_mode(br_t *b) {
     return v;
 }
 
-static void br_sf_br_tail(br_t *b, int fs) {
+/* Returns the substream sample-rate multiplier 1/2/4 (Table E.4:
+ * b_sf_multiplier set -> sf_multiplier bit clear = x2, set = x4).
+ * Bit positions unchanged (N5 fix records what was discarded). */
+static int br_sf_br_tail(br_t *b, int fs) {
+    int sf = 1;
     if (fs == 1 && br_u(b, 1))
-        (void)br_u(b, 1); /* sf_multiplier */
+        sf = br_u(b, 1) ? 4 : 2; /* sf_multiplier */
     if (br_u(b, 1))
         (void)br_u(b, 3); /* bitrate_indicator flat-3 (d2 OPEN-7) */
+    return sf;
 }
 
 static void br_bed_dyn_obj_assign(br_t *b, unsigned n_sig) {
@@ -1132,7 +1160,8 @@ static int br_pres_v1(br_t *b, int rate, int *gis, int *ngi, int *frf,
  * frf0 = pres0 factor for ndot repeats. -1 reject. */
 static int br_group(br_t *b, int fs, int frf0, int *ch0, int *si0,
                     unsigned *cm0, int *najoc, int *nobj, int *bif0,
-                    unsigned *nlf0, int *nhsf) {
+                    unsigned *nlf0, int *nhsf, int *sf0) {
+    *sf0 = 1;
     *bif0 = 0;
     *nlf0 = 0;
     int present = (int)br_u(b, 1);
@@ -1163,7 +1192,11 @@ static int br_group(br_t *b, int fs, int frf0, int *ch0, int *si0,
                 (void)br_u(b, 1);
                 (void)br_u(b, 2); /* presence matrix */
             }
-            br_sf_br_tail(b, fs);
+            {
+                int sf = br_sf_br_tail(b, fs);
+                if (s == 0)
+                    *sf0 = sf;
+            }
             if (cm >= 122 && cm <= 125)
                 (void)br_u(b, 1); /* add_ch_base */
             /* Table 9 b_iframe x frame_rate_factor (was misread as
@@ -1212,7 +1245,11 @@ static int br_group(br_t *b, int fs, int frf0, int *ch0, int *si0,
                 if (numx == 16)
                     numx += br_var(b, 3);
                 br_bed_dyn_obj_assign(b, numx);
-                br_sf_br_tail(b, fs);
+                {
+                    int sf = br_sf_br_tail(b, fs);
+                    if (s == 0)
+                        *sf0 = sf;
+                }
                 for (int i = 0; i < frf0; i++)
                     (void)br_u(b, 1);
                 if (present)
@@ -1243,7 +1280,11 @@ static int br_group(br_t *b, int fs, int frf0, int *ch0, int *si0,
                             (void)br_u(b, (int)(8 * rb));
                     }
                 }
-                br_sf_br_tail(b, fs);
+                {
+                    int sf = br_sf_br_tail(b, fs);
+                    if (s == 0)
+                        *sf0 = sf;
+                }
                 for (int i = 0; i < frf0; i++)
                     (void)br_u(b, 1);
                 if (present)
@@ -1363,6 +1404,7 @@ static int toc_parse_bv2(const uint8_t *raw, size_t rawlen, toc_t *t,
     unsigned g_cm0[E4_MAXGRP];
     int g_bif0[E4_MAXGRP];
     unsigned g_nlf[E4_MAXGRP];
+    int g_sf[E4_MAXGRP];
     unsigned nsub_audio = 0;
     for (int j = 0; j <= maxg; j++) {
         g_ch[j] = 0;
@@ -1370,9 +1412,10 @@ static int toc_parse_bv2(const uint8_t *raw, size_t rawlen, toc_t *t,
         g_cm0[j] = 0;
         g_bif0[j] = 0;
         g_nlf[j] = 0;
+        g_sf[j] = 1;
         if (br_group(&b, fs, frfsel, &g_ch[j], &g_si0[j], &g_cm0[j],
                      &t->n_ajoc, &t->n_obj, &g_bif0[j], &g_nlf[j],
-                     &t->n_hsf) != 0)
+                     &t->n_hsf, &g_sf[j]) != 0)
             return -1;
         nsub_audio += g_nlf[j];
     }
@@ -1404,7 +1447,7 @@ static int toc_parse_bv2(const uint8_t *raw, size_t rawlen, toc_t *t,
     if (tocB + pbase + sum > rawlen)
         return -1; /* bounds fail: never overrun */
     /* bed select: pres<sel> first ch-coded group, first chan sub */
-    int bed_si = -1, bed_ch = 0, bed_cm = 0, bed_bif = 0;
+    int bed_si = -1, bed_ch = 0, bed_cm = 0, bed_bif = 0, bed_g = -1;
     for (int k = 0; k < ngis[sel]; k++) {
         int g = gis[sel][k];
         if (g < 0 || g > maxg)
@@ -1413,9 +1456,17 @@ static int toc_parse_bv2(const uint8_t *raw, size_t rawlen, toc_t *t,
             bed_si = g_si0[g];
             bed_cm = (int)g_cm0[g];
             bed_bif = g_bif0[g];
+            bed_g = g;
             break;
         }
     }
+    /* N5: the rate multiplier rides with the bed group's substream
+     * info; no-bed streams fall back to sel's first group. */
+    t->sf_mult = 1;
+    if (bed_g >= 0)
+        t->sf_mult = g_sf[bed_g];
+    else if (ngis[sel] > 0 && gis[sel][0] >= 0 && gis[sel][0] <= maxg)
+        t->sf_mult = g_sf[gis[sel][0]];
     t->bed_obj = 0;
     if (bed_si < 0 && sel >= 0 && sel < E4_MAXPRES && ngis[sel] > 0) {
         int g0 = gis[sel][0];
@@ -1492,10 +1543,10 @@ static int toc_parse_bv2(const uint8_t *raw, size_t rawlen, toc_t *t,
 /* Internal-grid spf per fri (spec/mdct-sizes.md S4). */
 static const int e4_spf[14] = {1920, 1920, 2048, 1536, 1536, 960, 960,
                                1024, 768, 768, 512, 384, 384, 2048};
-/* Oracle wav-sr label = round(spf*fps) (drop e4-3); fri13 = nominal fs. */
-static const int e4_sr[14] = {46034, 46080, 51200, 46034, 46080, 46034,
-                              46080, 51200, 46034, 46080, 51200, 46034,
-                              46080, 0};
+/* N5: the e4_sr grid label (round(spf*fps), drop e4-3) is deleted;
+ * it was the pre-resampler internal quantity, never the output rate.
+ * Output rate = base_fs x sf_mult (latch + CLI srbuf); output counts
+ * per s5.11 Table 70 (ac4_src.h). */
 
 typedef struct {
     const uint8_t *p;
@@ -5153,7 +5204,7 @@ static int ac4d_cmp_emit(long e, short (*dst)[2048]);
 static int ac4d_pp_imm_emit(long e, double (*dst)[2048]);
 static int ac4d_pp_5x_emit(long e, double (*dst)[2048], int *gap);
 static int ac4d_latch(const toc_t *toc, const char **note);
-static int ac4d_emit_one(int *is_gap);
+static int ac4d_emit_one(int nout, int *is_gap);
 static int ac4d_pump(void);
 static int ac4d_gather(long f, short (*dst)[2048]);
 static int ac4d_length_check(const char **note);
@@ -5381,6 +5432,8 @@ int ac4d_open(ac4d_ctx **cp, const ac4d_opts *o) {
     e3_imm_elig = 1;
     for (q = 0; q < 8; q++)
         c->fr_fno[q] = -1;
+    for (q = 0; q < AC4D_SRCN; q++)
+        c->h_src_ring[q].ord = -1;
     acpl_imm_init(&c->pp_imm);
     acpl_5x_init(&c->pp_5x);
     for (ch = 0; ch < 8; ch++) {
@@ -5452,7 +5505,7 @@ int ac4d_get_info(const ac4d_ctx *c, ac4d_info *i) {
                                                     : c->h_nch)
                             : wch;
     i->bits = c->ao.bits;
-    i->spf = c->h_spf;
+    i->spf = c->h_ospf;
     i->bed_cm = c->h_bed_cm;
     i->ch_layout_mask = ac4d_layout_mask(i->channels);
     i->real = !c->h_stub;
@@ -5493,6 +5546,8 @@ static int ac4d_latch(const toc_t *toc, const char **note) {
     }
     c->h_spf = e4_spf[toc->rate];
     c->h_rate = toc->rate;
+    c->h_fs = toc->fs;
+    c->h_sf = toc->sf_mult >= 1 ? toc->sf_mult : 1;
     c->h_nch = nch;
     c->h_bed_cm = toc->bed_cm;
     c->h_pres_ver = toc->pres_ver0;
@@ -5500,15 +5555,22 @@ static int ac4d_latch(const toc_t *toc, const char **note) {
     c->h_stub = stub;
     if (stub)
         c->h_gap = snote;
-    /* Sample-rate label (batch main rule incl --sr override). */
+    /* Output rate = base_fs x sf_mult on EVERY fri row (N5 fix; the
+     * e4_sr grid was the pre-resampler internal quantity, s5.11).
+     * --sr override still wins for the label only (counts stay
+     * stream-determined). */
     if (c->ao.sr_override > 0) {
         out_sr = c->ao.sr_override;
-    } else if (toc->rate == 13) {
-        out_sr = toc->fs == 0 ? 44100 : 48000;
     } else {
-        out_sr = e4_sr[toc->rate];
+        out_sr = (toc->fs == 0 ? 44100L : 48000L) * (long)c->h_sf;
     }
     c->h_sr = (int)out_sr;
+    /* s5.11 converter params (exact output samples/frame + Table-70
+     * period); latched spf = max per-frame output count. */
+    ac4_src_params(toc->rate, toc->fs, c->h_sf, &c->h_src_num,
+                   &c->h_src_den, &c->h_src_per);
+    c->h_ospf = (int)ac4_src_ceil(c->h_src_num, c->h_src_den);
+    c->h_src_prev = 0;
     /* Channel override (batch want_real clash rule: mismatch = stub). */
     if (!stub && c->ao.ch_override > 0) {
         int ok = (c->ao.ch_override == nch);
@@ -5547,6 +5609,29 @@ static int ac4d_latch(const toc_t *toc, const char **note) {
     return AC4D_OK;
 }
 
+/* Consume one fed ordinal: latch this frame's sequence_counter phase
+ * and s5.11 output count into the ring, then advance h_fed. Every
+ * h_fed++ in ac4d_feed routes through here (stub, real, gap-sticky)
+ * so emit ordinals always have a count. */
+static void ac4d_ord_push(ac4d_ctx *c, unsigned seq) {
+    long e = c->h_fed;
+    long eff = ac4_src_eff(c->h_src_per, c->h_src_prev, seq, e == 0);
+    c->h_src_prev = eff;
+    c->h_src_ring[e % AC4D_SRCN].ord = e;
+    c->h_src_ring[e % AC4D_SRCN].nout =
+        (int)ac4_src_nout(c->h_src_num, c->h_src_den, eff);
+    c->h_fed = e + 1;
+}
+
+/* Output count for an emit ordinal. -1 = ring slot overwritten
+ * (emit lag past AC4D_SRCN frames: fail loud, never guess). */
+static int ac4d_ord_nout(ac4d_ctx *cx, long e, int *nout) {
+    if (cx->h_src_ring[e % AC4D_SRCN].ord != e)
+        return -1;
+    *nout = cx->h_src_ring[e % AC4D_SRCN].nout;
+    return 0;
+}
+
 int ac4d_feed(ac4d_ctx *c, const uint8_t *pkt, size_t len) {
     size_t hl = 0, rl = 0;
     int has_crc = 0;
@@ -5582,9 +5667,12 @@ int ac4d_feed(ac4d_ctx *c, const uint8_t *pkt, size_t len) {
         }
         ac4d_dn_latch_single(&r1, &toc);
     } else {
-        /* Config constancy (batch: geometry constancy rejects). */
+        /* Config constancy (batch: geometry constancy rejects). fs/sf
+         * join the check: the s5.11 output counts are latched from
+         * them, so a mid-stream shift must fail loud, never drift. */
         if (toc.bed_cm != c->h_bed_cm || toc.rate != c->h_rate ||
-            toc.pres_ver0 != c->h_pres_ver) {
+            toc.pres_ver0 != c->h_pres_ver || toc.fs != c->h_fs ||
+            toc.sf_mult != c->h_sf) {
             c->h_hard_err = AC4D_CONFIG_CHANGE;
             c->h_hard_note = "config-change";
             return AC4D_CONFIG_CHANGE;
@@ -5611,13 +5699,13 @@ int ac4d_feed(ac4d_ctx *c, const uint8_t *pkt, size_t len) {
     }
     if (c->h_stub || c->h_gap_sticky) {
         /* Silence path: consume the ordinal, emit zeros at emit. */
-        c->h_fed++;
+        ac4d_ord_push(c, toc.seq);
         c->h_ready = c->h_fed;
         return AC4D_OK;
     }
     rc = ac4d_step(pay, rl, &toc, &note);
     if (rc == 0) {
-        c->h_fed++;
+        ac4d_ord_push(c, toc.seq);
         return AC4D_OK;
     }
     /* Step failed: tolerant class + whitelisted note = sticky gap
@@ -5629,7 +5717,7 @@ int ac4d_feed(ac4d_ctx *c, const uint8_t *pkt, size_t len) {
             c->h_gap = note;
             c->h_gap_sticky = 1;
             c->h_gap_start = c->h_fed;
-            c->h_fed++;
+            ac4d_ord_push(c, toc.seq);
             return AC4D_OK;
         }
         if (strcmp(note, "config-change") == 0)
@@ -7530,8 +7618,56 @@ static int ac4d_pump(void) {
     return 0;
 }
 
-/* Emit ordinal h_emit into em_s16; *is_gap set for silence frames. */
-static int ac4d_emit_one(int *is_gap) {
+/* s5.11 converter: internal frame em_s16[nch][s_in] -> base-fs output
+ * em_out[nch][n_out]. Per-frame linear-interpolation map
+ * (out[j] = in[(j+.5)*s_in/n_out - .5]); the frame-start sample
+ * reaches one sample into the previous internal frame (carried tail;
+ * clamped on the first frame), the frame end clamps (mapping never
+ * runs past s_in - .5). Counts are spec-exact (Table 70 via the
+ * caller); the linear kernel is a placeholder pending the part-1
+ * 6.2.15 SRC design -- output VALUES for fri 0-12 are not
+ * DRP-bit-exact. The 1:1 case (fri 13 + sf=1) copies bit-exactly. */
+static void ac4d_src_frame(ac4d_ctx *cx, int nch, int s_in, int n_out) {
+    int c, j;
+    if (n_out == s_in) {
+        for (c = 0; c < nch; c++) {
+            for (j = 0; j < s_in; j++)
+                cx->em_out[c][j] = cx->em_s16[c][j];
+            cx->src_prev[c] = cx->em_s16[c][s_in - 1];
+        }
+        cx->src_have = 1;
+        return;
+    }
+    {
+        double step = (double)s_in / (double)n_out;
+        for (c = 0; c < nch; c++) {
+            for (j = 0; j < n_out; j++) {
+                double pos = ((double)j + 0.5) * step - 0.5;
+                long i0 = (long)floor(pos);
+                double frac = pos - (double)i0;
+                double s0, s1;
+                long i1 = i0 + 1;
+                if (i0 < 0)
+                    s0 = cx->src_have ? (double)cx->src_prev[c]
+                                      : (double)cx->em_s16[c][0];
+                else
+                    s0 = (double)cx->em_s16[c][i0];
+                if (i1 >= s_in)
+                    s1 = (double)cx->em_s16[c][s_in - 1];
+                else
+                    s1 = (double)cx->em_s16[c][i1];
+                cx->em_out[c][j] =
+                    (short)lrint(s0 + (s1 - s0) * frac);
+            }
+            cx->src_prev[c] = cx->em_s16[c][s_in - 1];
+        }
+        cx->src_have = 1;
+    }
+}
+
+/* Emit ordinal h_emit into em_out (via the s5.11 converter);
+ * *is_gap set for silence frames. */
+static int ac4d_emit_one(int nout, int *is_gap) {
     ac4d_ctx *cx = _ac4d_self;
     long e = cx->h_emit;
     int nch = cx->h_nch, spf = cx->h_spf;
@@ -7539,9 +7675,12 @@ static int ac4d_emit_one(int *is_gap) {
     int c, j;
     *is_gap = 0;
     if (cx->h_stub || (cx->h_gap_sticky && e >= cx->h_gap_start)) {
-        for (c = 0; c < nch; c++)
-            for (j = 0; j < spf; j++)
-                cx->em_s16[c][j] = 0;
+        for (c = 0; c < nch; c++) {
+            for (j = 0; j < nout; j++)
+                cx->em_out[c][j] = 0;
+            cx->src_prev[c] = 0;
+        }
+        cx->src_have = 1;
         *is_gap = 1;
         cx->h_emit++;
         return 0;
@@ -7582,6 +7721,8 @@ static int ac4d_emit_one(int *is_gap) {
                     (short)lrint((double)cx->em_s16[c][j] * r);
         }
     }
+    /* N5: internal grid frame -> base-fs output frame. */
+    ac4d_src_frame(cx, nch, spf, nout);
     cx->h_emit++;
     return 0;
 }
@@ -7594,12 +7735,20 @@ static int ac4d_emit_consume(void *pcm, size_t cap, ac4d_info *fi) {
     ac4d_info ii;
     size_t need, bps;
     int is_gap = 0;
+    int nout = 0;
     uint8_t *out;
     int c, j;
     if (ac4d_get_info(cx, &ii) != AC4D_OK)
         return AC4D_ERR;
+    if (ac4d_ord_nout(cx, cx->h_emit, &nout) != 0) {
+        cx->h_hard_err = AC4D_ERR;
+        cx->h_hard_note = "ring-overrun";
+        return AC4D_ERR;
+    }
     bps = ii.bits == 24 ? 3 : ii.bits == 32 ? 4 : 2;
-    need = (size_t)ii.channels * (size_t)ii.spf * bps;
+    need = (size_t)ii.channels * (size_t)nout * bps;
+    ii.spf = nout; /* per-frame actual output count (varies on
+                    * fractional rows; latched max stays in get_info) */
     if (fi)
         *fi = ii;
     if (pcm == NULL)
@@ -7609,15 +7758,15 @@ static int ac4d_emit_consume(void *pcm, size_t cap, ac4d_info *fi) {
             : AC4D_OK;
     if (cap < need)
         return AC4D_ERR;
-    if (ac4d_emit_one(&is_gap) != 0) {
+    if (ac4d_emit_one(nout, &is_gap) != 0) {
         cx->h_hard_err = AC4D_ERR;
         cx->h_hard_note = "ring-overrun";
         return AC4D_ERR;
     }
     out = pcm;
-    for (j = 0; j < ii.spf; j++) {
+    for (j = 0; j < nout; j++) {
         for (c = 0; c < ii.channels; c++) {
-            short v = c < cx->h_nch ? cx->em_s16[c][j] : 0;
+            short v = c < cx->h_nch ? cx->em_out[c][j] : 0;
             uint8_t le[4];
             int nw = wav_s16_to_bytes(v, e_wav_bps, le);
             memcpy(out, le, (size_t)nw);
@@ -7640,7 +7789,7 @@ int ac4d_get_frame(ac4d_ctx *c, void *pcm, size_t cap, ac4d_info *fi) {
     return ac4d_emit_consume(pcm, cap, fi);
 }
 
-int ac4d_flush(ac4d_ctx *c, void *pcm, size_t cap) {
+int ac4d_flush(ac4d_ctx *c, void *pcm, size_t cap, ac4d_info *fi) {
     const char *note = "ok";
     if (!c || !c->ao_open)
         return AC4D_ERR;
@@ -7672,7 +7821,7 @@ int ac4d_flush(ac4d_ctx *c, void *pcm, size_t cap) {
         c->h_flushed = 1;
         return AC4D_NEED_MORE;
     }
-    return ac4d_emit_consume(pcm, cap, NULL);
+    return ac4d_emit_consume(pcm, cap, fi);
 }
 
 
