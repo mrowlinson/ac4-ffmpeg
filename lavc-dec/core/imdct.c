@@ -1,5 +1,5 @@
 /*
- * imdct.c — clean AC-4 IMDCT + KBD window + overlap-add core.
+ * imdct.c -- clean AC-4 IMDCT + KBD window + overlap-add core.
  * Copyright (c) 2026 Michael Rowlinson
  *
  * This file is part of FFmpeg.
@@ -19,7 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/* imdct.c — clean AC-4 IMDCT + KBD window + overlap-add core.
+/* imdct.c -- clean AC-4 IMDCT + KBD window + overlap-add core.
  * Tile-centered lattice; see imdct.h + spec/imdct-clean-e2.md S2.
  * Naive O(N^2) transforms (correctness first; FFT fast path later).
  */
@@ -302,7 +302,7 @@ int imdct_push(imdct_state *st, const double *X, int n, int pn, int nn,
     imdct_imdct(X, y, n);
     imdct_bridge(w, n, pn, nn, alpha, palpha, nalpha);
     /* AC4DEC_EDGEA (duet26 Track-I; s52: REVERTED to probe-gated,
-     * default OFF — the land-ea01 default-ON regressed the banked
+     * default OFF -- the land-ea01 default-ON regressed the banked
      * bit-exact DONE-gate (514 mains + 51 mains pins, duet15B);
      * first-push re-taper perturbs frames 0-1 on beds. The IMS
      * cold-start heal (IMS-f0ts00 239->87) stays available

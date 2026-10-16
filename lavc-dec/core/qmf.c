@@ -1,5 +1,5 @@
 /*
- * qmf.c — complex QMF analysis/synthesis C port (duet3-dec-writerB).
+ * qmf.c -- complex QMF analysis/synthesis C port (duet3-dec-writerB).
  * Copyright (c) 2026 Michael Rowlinson
  *
  * This file is part of FFmpeg.
@@ -19,7 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/* qmf.c — complex QMF analysis/synthesis C port (duet3-dec-writerB).
+/* qmf.c -- complex QMF analysis/synthesis C port (duet3-dec-writerB).
  * Own code from tools/qmf_bed.py structure (P1 pseudocodes 65/66):
  * 64 subbands, 640-tap QWIN prototype, 640-sample analysis memory,
  * 1280-sample synthesis memory. f64 throughout.

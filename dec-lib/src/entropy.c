@@ -1202,4 +1202,3 @@ void ac4e_sap_apply(const asf_info_t *info, const ac4e_sap_t *sap,
         win += nw;
     }
 }
-           

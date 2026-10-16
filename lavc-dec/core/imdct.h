@@ -1,5 +1,5 @@
 /*
- * imdct.h — clean AC-4 IMDCT + KBD window + overlap-add core.
+ * imdct.h -- clean AC-4 IMDCT + KBD window + overlap-add core.
  * Copyright (c) 2026 Michael Rowlinson
  *
  * This file is part of FFmpeg.
@@ -19,7 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/* imdct.h — clean AC-4 IMDCT + KBD window + overlap-add core.
+/* imdct.h -- clean AC-4 IMDCT + KBD window + overlap-add core.
  *
  * Lane e2, wave5. C11, zero deps. Math from public DSP textbook
  * formulas (tmp/wave05/WEB-e2.md) + clean specs spec/mdct-sizes.md

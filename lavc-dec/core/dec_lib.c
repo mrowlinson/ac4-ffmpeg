@@ -21,7 +21,7 @@
 
 /* In-tree port of the dec-lib streaming core: CLI/shim code stripped at
  * vendor time (see lavc-dec/README.md Q1); DSP below is dec-lib verbatim. */
-/* ac4dec — CLI shell per tests/CLI.md. C11, zero deps.
+/* ac4dec -- CLI shell per tests/CLI.md. C11, zero deps.
  *
  * Wave e4 (Part-2 structural skip): decode wired to container demux
  * (TS with prefix-strip + PAT/PMT/ES pick, MP4 moof/moov sample tables,
@@ -126,7 +126,7 @@ typedef struct {
     int de_gate;
     int has_de_cfg;
     unsigned de_method, de_maxgain, de_chanconfig;
-    unsigned de_skip_bits; /* T78-prep: post-cfg → tools-end bits (de_data region size) */
+    unsigned de_skip_bits; /* T78-prep: post-cfg -> tools-end bits (de_data region size) */
     unsigned de_region_bits; /* P2: de_data region bits (cfg-independent) */
     int de_keep; /* P2: -1 n/a, I-frame 0 (implied), non-I 1st region bit */
     int de_par_ok; /* P2 walk: 1 ok, -1 fail, 0 skipped */
@@ -282,7 +282,7 @@ typedef struct ac4d_ctx {
     /* H1 ring sizes (absolute-indexed, fixed): skeleton/spill hold 4
      * frames of 2048; compand raw holds 3 frames + flush margin. */
 /* Push-fed ring sizing (sk/tf/spill): worst-case occupancy is
- * skew + (4+need)*spf — steady 4-frame emit lag (OLA-debt stall +
+ * skew + (4+need)*spf -- steady 4-frame emit lag (OLA-debt stall +
  * h_need lookahead) plus bursty OLA pushes (telescoping window
  * sizes: up to 3*spf in one frame on long->short changes; 5632
  * observed). spf_max=2048, need=1: 10240 + skew (0 on corpus;
@@ -554,7 +554,7 @@ static void ac4d_state_init(void) {
 }
 
 /* H1 absolute-indexed ring helpers (fixed-size; readers must stay within
- * one ring length behind the write head — enforced by checks at emit). */
+ * one ring length behind the write head -- enforced by checks at emit). */
 static void ac4d_rput_d(double *ring, long ringn, long w, const double *src,
                         int k) {
     long o = w % ringn;
@@ -626,7 +626,7 @@ static int e9_debug(void) {
  * default 0; A-82 Q1 mirror). P1 DRIVE LIVE: bg-duck + hard-cap-9 +
  * chanconfig routing (post-trim pre-emit gain pass). P2 (T78 de_data
  * activity + boost/cut-if-active + fade-in primer) pending. user=0 /
- * user<0 / no-cfg → pass skipped (PCM-identity by construction).
+ * user<0 / no-cfg -> pass skipped (PCM-identity by construction).
  * DEDEC diagnostic line under AC4DEC_DEBUG. */
 /* ctx-member */
 /* ctx-member */
@@ -654,7 +654,7 @@ static double drc_outref_eff(void) {
 /* (wav spool deleted: shim spools itself; lib emits raw frames) */
 /* E3 writer-defined (no DRP ref per A-64/A4): s16 sample -> output
  * width. 24-bit = LE s16 + zero-pad byte (sign-preserving; full
- * 24-bit resolution would need float-stage plumbing — tracked). 32f
+ * 24-bit resolution would need float-stage plumbing -- tracked). 32f
  * = s16/32768 LE float. Shared by --wav spool + raw path (single
  * semantics). Returns bytes written (2/3/4). */
 static int wav_s16_to_bytes(short v, int bps, uint8_t out[4]) {
@@ -874,7 +874,7 @@ typedef struct {
     size_t sizes[E4_MAXNS];
     int npres, pres_ver0;
     int b_pres_ndot; /* TOC b_pres_ndot (fresh-parse trigger; NOT an
-                      * I-gate — A-80: displayed-config = derived rule) */
+                      * I-gate -- A-80: displayed-config = derived rule) */
     int bed_si; /* audio substream index, -1 = none */
     int bed_obj; /* !b_channel_coded of bed group (CH5X obj; no-bed:
                   * first selected group) */
@@ -1167,7 +1167,7 @@ static int br_group(br_t *b, int fs, int frf0, int *ch0, int *si0,
             if (cm >= 122 && cm <= 125)
                 (void)br_u(b, 1); /* add_ch_base */
             /* Table 9 b_iframe x frame_rate_factor (was misread as
-             * ndot and dropped: duet3-dec-writer fix — the ELEMENT's
+             * ndot and dropped: duet3-dec-writer fix -- the ELEMENT's
              * I-flag lives here, not in TOC b_iframe_global. First
              * subframe's bit governs our single-element decode. */
             int bif = 0;
@@ -1261,7 +1261,7 @@ static int br_group(br_t *b, int fs, int frf0, int *ch0, int *si0,
 }
 
 /* D47 iframe-flush: splice-aware sequence-counter step classifier
- * (spec/iframe-flush-scte35-flex9.md §3). Counter runs 1..1020,
+ * (spec/iframe-flush-scte35-flex9.md Sec. 3). Counter runs 1..1020,
  * wraps 1020->1; 0 is the splicer-marked splice frame (valid, NOT
  * a jump); a frame after 0 resumes any counter. Anything else off
  * the +1 chain is an unmarked jump (source change). */
@@ -1519,7 +1519,7 @@ typedef struct {
  * trim = 10^((ref-dn)/20), ref -31 (DRP truth default); dn =
  * -dialnorm_bits/4 from substream-0 byte 0 low 7 bits (3/3 vectors
  * match DRP info: 96/96/72). /32768: chain is S16-scale, d2s16
- * needs unit (normative stage home OPEN — ask-back to memo; output
+ * needs unit (normative stage home OPEN -- ask-back to memo; output
  * placement is functionally exact). No-s0 fallback: unity. */
 /* ctx-member */
 /* ctx-member */
@@ -1678,7 +1678,7 @@ static double e3_m4gain(double fb) {
  * AC4DEC_SHFN=<maxn> caps eligible block size (default 256; 128 =
  * short-train only, transition 256s untouched). Chains AFTER M4
  * (operates on post-M4 spectra). Default OFF: zero behavior change.
- * Diagnostic only — fit, never land as default. */
+ * Diagnostic only -- fit, never land as default. */
 /* ctx-member */
 /* ctx-member */
 /* ctx-member */
@@ -2681,10 +2681,10 @@ static void e3_cmp_reset(void) {
     e3_5x_m2 = -1;
 }
 
-/* D47 §3 joint-rule fix (RULE-113-S3 + RULE-110-S3 DUAL-FORMED):
+/* D47 Sec. 3 joint-rule fix (RULE-113-S3 + RULE-110-S3 DUAL-FORMED):
  * splice-side slot preserve. The companding post-pass v2 gates
  * every frame f from recorded slot f, and e3_cmp_begin() assigns
- * one slot per kept frame — so slot index MUST stay the kept-frame
+ * one slot per kept frame -- so slot index MUST stay the kept-frame
  * ordinal across a splice. e3_cmp_reset() here used to restart n
  * at 0, letting B-side frames overwrite A-side recorded slots and
  * retroactively re-process frames 0..22 with post-splice companding
@@ -2893,11 +2893,11 @@ static int e3_decode_5x(ac4_ebr_t *b, int spf, unsigned seq, int ig,
         /* ASPX_ACPL_2 MINIMAL (Table 25 + 5.3.4.3.2/Table 181 + Pseu 117):
          * parse everything (endpos-clean), render L/R/C live via the
          * Table-181 map, Ls/Rs SILENT (QMF A-CPL synthesis not wired;
-         * honest partial — scored, parked as acpl-qmf-unimpl gap). */
+         * honest partial -- scored, parked as acpl-qmf-unimpl gap). */
         is_aspx = 1; /* s52: codec-3 rides the ASPX bit-path (bank
                          @e8cb1a5): shared post-LFE companding(3) +
                          ASPX tails. Dropped in the d036544 LFE-share
-                         reshape → SFINFO read 3 bits early
+                         reshape -> SFINFO read 3 bits early
                          (sfinfo-fail-5x, 51 DONE-path red). */
         if (ig) {
             /* Table-25 I-frame order: aspx_config then acpl_config_1ch(FULL)
@@ -3018,7 +3018,7 @@ static int e3_decode_5x(ac4_ebr_t *b, int spf, unsigned seq, int ig,
     if (!is_acpl3) {
         m2 = ebr_u(b, 1); /* 2ch_mode: pair->speaker map
                              * (SIMPLE/ASPX only; no m2 on ACPL
-                             * paths — AB-14 literal, QB-21). */
+                             * paths -- AB-14 literal, QB-21). */
         if (b->err) {
             *note = "5x-trunc";
             return -1;
@@ -3028,7 +3028,7 @@ static int e3_decode_5x(ac4_ebr_t *b, int spf, unsigned seq, int ig,
         /* three_channel_data (Table 27, AB-14): ONE sf_info shared
          * L/R/C + matsel 4b + 2x chparam + 3x sf_data. Slots
          * [0,1,2] = L,R,C ASSUMED (QB-21); coupling apply TBD
-         * (topology QB-21) — parse only for alignment. */
+         * (topology QB-21) -- parse only for alignment. */
         r = asf_info_parse(b, spf, &info[0]);
         if (r != AC4E_OK) {
             *note = "sfinfo-fail-5x3";
@@ -3638,8 +3638,8 @@ static int e3_decode_714(ac4_ebr_t *b, int spf, unsigned seq, int ig,
         }
         /* Table 20 (spectral, per-tile): H'' = a'0*D' + H' etc., with
          * a' = mat-a - 1 (sap_gain; numerically forced: a'0 = 1.00 on
-         * 768k ⟺ Ls fit 2.8284; QB-2 addendum pending memo confirm).
-         * u = 0 ⟹ step-4 identity (D' = D). Geometry: D/E/F/G infos
+         * 768k <=> Ls fit 2.8284; QB-2 addendum pending memo confirm).
+         * u = 0 => step-4 identity (D' = D). Geometry: D/E/F/G infos
          * (ch[4..7]); H-K bands align (same windows: verified below). */
         static const int t20d[4] = {4, 5, 6, 7};
         for (int q = 0; q < 4; q++) {
@@ -3849,7 +3849,7 @@ static int e3_decode_714(ac4_ebr_t *b, int spf, unsigned seq, int ig,
                 for (int l = 0; l < info[q].win_len[w]; l++)
                     ch[q].co[w][l] *= 2.0 * 1.4142135623730951;
         /* Backs (z6/z8) zeroed at OUTPUT COPY (caller, mode 3): F/G
-         * spectra stay live here — the pending ACPL port consumes
+         * spectra stay live here -- the pending ACPL port consumes
          * their post-IMDCT time signals as module inputs. */
     }
     return (int)mode;
@@ -4171,7 +4171,7 @@ static int drc_select_mode(const drc_cfg_t *c, double ref) {
 /* ctx-member */
 /* ctx-member */
 
-/* E8 verb f0 drc-config latch (first-frame state; mpa20-absent ⟹ 0).
+/* E8 verb f0 drc-config latch (first-frame state; mpa20-absent => 0).
  * (Sibling plain-int latches live with the compand globals above.) */
 /* ctx-member */
 /* ctx-member */
@@ -4331,7 +4331,7 @@ static void e3_ext_read(br_t *b, int cm, info_audmeta_t *o) {
 /* ctx-member */
 /* ctx-member */
 /* ctx-member */
-/* P2 drive activity bridge (metadata-time → emit-time, same frame). */
+/* P2 drive activity bridge (metadata-time -> emit-time, same frame). */
 /* ctx-member */
 /* ctx-member */
 /* ctx-member */
@@ -4426,7 +4426,7 @@ static void e3_audmeta_read(const uint8_t *sub, size_t slen, int cm,
                             int b_iframe, info_audmeta_t *o) {
     memset(o, 0, sizeof *o);
     o->de_keep = -1;
-    /* Drive bridge safe defaults (parse-fail → inactive, routing
+    /* Drive bridge safe defaults (parse-fail -> inactive, routing
      * holds carried cfg); overwritten at normal end. */
     e_de_cur_active = 0;
     e_de_cur_mabs = 0;
@@ -5078,13 +5078,13 @@ static void drc_parse_cfg(const raw_t *r, const toc_t *t) {
     }
 }
 
-/* D10 P1 duck curve (A-82 Q2 bed, KDAF-bg = G4-all): 3→−0.75,
- * 6→−3.5, 9→−6.2 dB; piecewise-linear between (provisional —
+/* D10 P1 duck curve (A-82 Q2 bed, KDAF-bg = G4-all): 3->-0.75,
+ * 6->-3.5, 9->-6.2 dB; piecewise-linear between (provisional --
  * beds pin only 3/6/9 + origin); HARD CAP at 9 (A-82 Q1:
- * de12≡de9 byte-identical = Gmax). */
+ * de12==de9 byte-identical = Gmax). */
 /* D10 P2 laws (A-85 EXACT pins; piecewise-lin between; caller caps
  * a at 9 = R3 both-signs cap). duck: bg-ch (sd=0.00). boost/cut: P2
- * compromise single laws (content-split residuals → P3). */
+ * compromise single laws (content-split residuals -> P3). */
 /* (deleted: belonged to removed DRC-apply/DE-drive legs) */
 
 /* (deleted: belonged to removed DRC-apply/DE-drive legs) */
@@ -5102,7 +5102,7 @@ static void drc_parse_cfg(const raw_t *r, const toc_t *t) {
  * duck/unity-if-inactive, per-frame cc from activity map). */
 /* (deleted: belonged to removed DE-drive leg) */
 
-/* D47: drop de_data walk context (prior-frame decode state, §4.1).
+/* D47: drop de_data walk context (prior-frame decode state, Sec. 4.1).
  * Called per-stream at decode head and per-splice mid-stream. */
 static void e_dewalk_reset(void) {
     e_dewalk_have = 0;
@@ -5218,7 +5218,7 @@ static void ac4d_dn_relatch(const raw_t *r, const toc_t *t) {
 }
 
 /* D47 splice flush, bounded (batch rescanned raws/ts; here the current
- * frame only; sample pipeline kept per §4.3). */
+ * frame only; sample pipeline kept per Sec. 4.3). */
 static void ac4d_splice_flush_single(const raw_t *r, const toc_t *t) {
     e_dewalk_reset();
     e_ax_have_cfg = 0;
@@ -5228,7 +5228,7 @@ static void ac4d_splice_flush_single(const raw_t *r, const toc_t *t) {
         e_ax_have_prev[q] = 0;
         e_ax_prev_stop[q] = 0;
     }
-    e3_cmp_splice(); /* §3 joint rule: preserve A-side recorded slots */
+    e3_cmp_splice(); /* Sec. 3 joint rule: preserve A-side recorded slots */
     e_cmp_f0latched = 0;
     e_cmp_f0nch = e_cmp_f0sync = e_cmp_f0mask = e_cmp_f0avg = 0;
     e_5x_f0latched = 0;
@@ -5665,7 +5665,7 @@ static int ac4d_step(const uint8_t *pkt, size_t pkt_len, const toc_t *toc,
         if (cx->h_dshave) {
             int dsk = e_splice_step(cx->h_dsprev, toc->seq);
             if (dsk == SPL_MARKED || dsk == SPL_JUMP) {
-                ac4d_splice_flush_single(&r1, toc); /* §4.1/4.4-4.6 */
+                ac4d_splice_flush_single(&r1, toc); /* Sec. 4.1/4.4-4.6 */
                 if (e9_debug())
                     fprintf(stderr, "SPLF i=%zu seq=%u kind=%s\n", i,
                             toc->seq,
@@ -5743,7 +5743,7 @@ static int ac4d_step(const uint8_t *pkt, size_t pkt_len, const toc_t *toc,
              * eff = H-DE predicted gain (PROVISIONAL: min(user,Gmax)?
              * iff DI&&gate&&user!=0; A-82 decides truth). dsk =
              * post-cfg skip bits (de_data region size; Q4 variance
-             * observable). Diagnostic text only — PCM-neutral. */
+             * observable). Diagnostic text only -- PCM-neutral. */
             if (e9_debug()) {
                 int de_gmax = am.has_de_cfg ?
                     (int)(am.de_maxgain + 1) * 3 : -1;
@@ -5760,7 +5760,7 @@ static int ac4d_step(const uint8_t *pkt, size_t pkt_len, const toc_t *toc,
                         de_di, am.de_gate, am.has_de_cfg,
                         de_eff, am.de_skip_bits);
             }
-            /* P2 T78 activity probe (diagnostic text only —
+            /* P2 T78 activity probe (diagnostic text only --
              * PCM-neutral). nch via Table 171 (own cfg, else
              * carried e_decfg). keep: 0 I-implied, wire bit
              * non-I, -1 no region. */
@@ -7132,7 +7132,7 @@ static void ac4d_cmp_analyze(long f) {
                                      * heals gap-steps (f13 1.49 / f36
                                      * 1.5); cold-fill would crush, so
                                      * cold gaps stay passthrough (f48
-                                     * 0.11 keep → cliff safe). A-46. */
+                                     * 0.11 keep -> cliff safe). A-46. */
                                     double fmv = chon ? m : mavg;
                                     if (fmv >= 1.0) {
                                         for (int sb = 0; sb < sb1; sb++)
@@ -7144,8 +7144,8 @@ static void ac4d_cmp_analyze(long f) {
                                         Q[c * slots + ts][sb] *= held[c];
                                 }
                                 /* AC4DEC_IMSEQ=g00..g15:g10..g15 (duet26
-                                 * IMS-f0 A-49): 16-band × 2ch EQ (1.5kHz
-                                 * bands ⟺ 4 QMF SBs) at f==0, ts<8
+                                 * IMS-f0 A-49): 16-band x 2ch EQ (1.5kHz
+                                 * bands <=> 4 QMF SBs) at f==0, ts<8
                                  * (t=0-511). Chained AFTER m (all 64
                                  * SBs). Default unset/malformed = off. */
                                 if (f == 0 && ts < 8 && c < 2) {
@@ -7331,7 +7331,7 @@ static int ac4d_cmp_emit(long e, short (*dst)[2048]) {
 
 /* Stage skeleton frame f into dst as PRE-GAIN floats (plain FIFO
  * partition, or mode-0 track mix which batch ran once over full
- * streams — the mix is per-sample stateless so per-frame is
+ * streams -- the mix is per-sample stateless so per-frame is
  * identical). Gain applies at consume so a DN re-latch on the first
  * P-frame stays bit-exact. */
 static int ac4d_gather_f(long f, double (*dst)[2048]) {
@@ -7677,7 +7677,7 @@ int ac4d_flush(ac4d_ctx *c, void *pcm, size_t cap) {
 
 
 /* E8 --print-info TAG dump (A-78 Q3: order FMT VER DN DRC DRCSEL CH5X
- * CMP CRC LOUD; TAG k=v on stdout; HYBRID mirror — DRP values quoted
+ * CMP CRC LOUD; TAG k=v on stdout; HYBRID mirror -- DRP values quoted
  * verbatim where ours computes the same quantity, writer-defined keys
  * documented in tests/CLI.md). Values with spaces/commas are
  * double-quoted (grep-able units). */

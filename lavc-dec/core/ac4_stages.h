@@ -1,5 +1,5 @@
 /*
- * ac4_stages.h — decode-stage interfaces (e3 integrator owned).
+ * ac4_stages.h -- decode-stage interfaces (e3 integrator owned).
  * Copyright (c) 2026 Michael Rowlinson
  *
  * This file is part of FFmpeg.
@@ -19,7 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/* ac4_stages.h — decode-stage interfaces (e3 integrator owned).
+/* ac4_stages.h -- decode-stage interfaces (e3 integrator owned).
  *
  * Wave05 stage-1 split: e0 = Huffman tables, e1 = entropy/section
  * decode, e2 = IMDCT+OLA. Each stage lands its own .c + header on its

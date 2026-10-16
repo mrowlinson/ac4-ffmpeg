@@ -1,5 +1,5 @@
 /*
- * entropy.c — ASF spectral-frontend decode (see entropy.h).
+ * entropy.c -- ASF spectral-frontend decode (see entropy.h).
  * Copyright (c) 2026 Michael Rowlinson
  *
  * This file is part of FFmpeg.
@@ -19,7 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/* entropy.c — ASF spectral-frontend decode (see entropy.h).
+/* entropy.c -- ASF spectral-frontend decode (see entropy.h).
  * Own implementation from the pinned tables; no ETSI prose copied.
  */
 #include "entropy.h"
@@ -190,7 +190,7 @@ int asf_info_parse(ac4_ebr_t *b, int frame_len_base, asf_info_t *info) {
     int diff = (base >= 1536 && !is_long && t0 != t1);
     /* max_sfb widths are per-index (4.3.6.2.1 Table 106: "depends on
      * the transform length"; believer f15 proves it: t=3/0 needs
-     * 6b/4b — shared-6b reads ms=49/59 with cap 14 and misaligns).
+     * 6b/4b -- shared-6b reads ms=49/59 with cap 14 and misaligns).
      * Same-index frames behave exactly as before. */
     int l0 = base, l1 = base;
     if (!is_long) {
@@ -750,7 +750,7 @@ int asf_chan_decode(ac4_ebr_t *b, const asf_info_t *info, int frame_len_base,
                 scaled[g][k] = gv * rec;
             }
             /* A-73 Q3: per-row coefficient energy (post-dequant,
-             * pre-IMDCT; pre-SAP — SAP scales M/S-band energy
+             * pre-IMDCT; pre-SAP -- SAP scales M/S-band energy
              * uniformly per band, fraction-robust to first order). */
             if (getenv("AC4DEC_DEBUG") && g == 0) {
                 double se = 0.0;
@@ -836,7 +836,7 @@ int asf_chan_decode(ac4_ebr_t *b, const asf_info_t *info, int frame_len_base,
         const int *so = sfb_offsets48(wlen);
         int ms = grp_maxsfb(info, g);
         /* AC4DEC_UNGORD=1 (duet45 Q-59 discriminant): within-band flat
-         * order variant — line-major (t = (l-so[s])*nw + w) instead of
+         * order variant -- line-major (t = (l-so[s])*nw + w) instead of
          * window-major (t = w*bw + (l-so[s])). Default unset = shipped
          * order (byte-identical). Diagnostic only. */
         int uo = 0;
@@ -989,7 +989,7 @@ int asf_chan_decode(ac4_ebr_t *b, const asf_info_t *info, int frame_len_base,
             }
         }
     }
-    { /* OPDUMP section OP per channel-decode (pipe3 clean-back §2
+    { /* OPDUMP section OP per channel-decode (pipe3 clean-back Sec. 2
          * D-correct OP leg; env-gated, same precedent as QDUMP).
          * Record v2: int32 oseq, ngr, per-group (int32 ms + ms
          * int32 band_book + ms int32 band_peak + ms doubles gainv),
@@ -1223,4 +1223,3 @@ void ac4e_sap_apply(const asf_info_t *info, const ac4e_sap_t *sap,
         win += nw;
     }
 }
-           
