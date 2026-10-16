@@ -301,6 +301,13 @@ fate-ac4-gap-trunc: REF = no-sync
 # (crc 0x23081287 == base f0) + short trailing pkt (148 B, F=0x3
 # corrupt flag), exit 0. Sibling: trunc-tail-midframe (t11) gives
 # pkt2 101 B F=0x3 with pkts 0-1 crc-matching base (case 20).
+# IMPLEMENTED (ff/dec-b2f2, decoder-wrapper): wrapper exits 69
+# (INVALIDDATA lone-unanchored framing; zero output so fftools'
+# error-rate aborts) with stderr `no-sync: lone frame followed by
+# N skipped packet(s), input truncated`. No-output assert: output
+# is 0 bytes (the muxer still creates the file); assert empty, not
+# missing. t11 (2 chained + runt tail) stays exit 0 with the valid
+# prefix, matching the shim; lone-valid at clean EOF stays exit 0.
 
 # --- deferred fate slots (comment-only, D4) ---
 # fate-ac4-delay-1536: DEFERRED — needs a 1536-spf impulse ref (does

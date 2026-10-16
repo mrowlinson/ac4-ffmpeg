@@ -39,7 +39,13 @@
  * - error table: BAD_PACKET skips loud with a consecutive cap (a bad
  *   pres_sel fails every feed identically, and with no parser there is
  *   no resync); BITSTREAM/CONFIG_CHANGE/ERR are fatal and sticky;
- *   UNSUPPORTED at init maps DRC/DE fail-open.
+ *   UNSUPPORTED at init maps DRC/DE fail-open. Truncation mirrors the
+ *   shim's sync-chain rule: a lone clean framing (one unflagged
+ *   packet) followed by skipped packets is unanchored sync, so the
+ *   lone prefix is discarded and EOF fails loud (INVALIDDATA,
+ *   no-sync diagnostic, zero output); two chained framings (or a
+ *   lone framing at clean EOF) decode normally. First-frame emit
+ *   waits for the shape decision (second clean framing or EOF).
  * - stream params latch from the first emitted frame's info only;
  *   channels == 0 (no-bed/exotic class) fails loud.
  *
@@ -78,6 +84,7 @@
 #include "libavcodec/codec_internal.h"
 #include "libavcodec/decode.h"
 #include "libavcodec/internal.h"
+#include "libavcodec/packet.h"
 
 #include "ac4d.h"
 
@@ -130,6 +137,11 @@ typedef struct AC4DecodeContext {
     int flush_done;
     int fatal;             /* latched AVERROR, sticks (0 = none) */
     int bad_streak;
+    int clean_framings;  /* size-valid unflagged packets (demuxer sync
+                          * framings; the shim's chain-count mirror) */
+    int trail_skips;     /* skipped packets since the last clean framing
+                          * (any skip path; unanchored-tail witness) */
+    int emit_ok;         /* shape decided-good: held prefix may emit */
     long pkt_idx;
     long fed_count;
     long gap_frames;
@@ -549,7 +561,18 @@ static int ac4_feed_packet(AC4DecodeContext *s, AVCodecContext *avctx)
         av_log(avctx, AV_LOG_WARNING,
                "skipping packet #%ld: bad size %d\n",
                s->pkt_idx, s->pkt->size);
+        s->trail_skips++;
         return 1;
+    }
+    if (!(s->pkt->flags & AV_PKT_FLAG_CORRUPT)) {
+        /* Clean demuxer framing (sync-valid by construction): counts
+         * toward the shim chain mirror even if the lib later rejects
+         * its content, and anchors the tail witness. The second
+         * chaining releases the held prefix. */
+        s->clean_framings++;
+        s->trail_skips = 0;
+        if (s->clean_framings >= 2)
+            s->emit_ok = 1;
     }
     hlen = s->pkt->size < 0xFFFF ? 4 : 7;
     need = hlen + (size_t)s->pkt->size;
@@ -581,6 +604,7 @@ static int ac4_feed_packet(AC4DecodeContext *s, AVCodecContext *avctx)
         note = ac4d_gap_note(s->lib);
         ff_mutex_unlock(&ac4d_mutex);
         s->bad_streak++;
+        s->trail_skips++;
         av_log(avctx, AV_LOG_WARNING,
                "skipping bad packet #%ld (%d bytes): %s\n",
                s->pkt_idx, s->pkt->size,
@@ -632,8 +656,13 @@ static int ac4_decode_frame(AVCodecContext *avctx, AVFrame *frame)
     int ret;
 
     for (;;) {
-        if (s->qh < s->qn) {
-            /* Emit queued audio before surfacing a latched fatal. */
+        if (s->qh < s->qn && (s->emit_ok || s->fatal)) {
+            /* Emit queued audio before surfacing a latched fatal. The
+             * first prefix waits for the shape decision (emit_ok): a
+             * lone unanchored framing is discarded at EOF, never
+             * emitted. A latched fatal releases the hold (prefix
+             * audio precedes the error, splice-style). Held frames
+             * fall through to pull more input or EOF below. */
             ret = ac4_emit(s, avctx, frame);
             if (ret == AVERROR(EINVAL))
                 s->fatal = ret;
@@ -673,8 +702,25 @@ static int ac4_decode_frame(AVCodecContext *avctx, AVFrame *frame)
                 s->flush_done = 1;
                 continue;
             }
+            if (s->clean_framings == 1 && s->trail_skips > 0) {
+                /* Lone unanchored framing (F2 gap-trunc): the shim's
+                 * chain rule rejects a single sync frame that is not
+                 * EOF-flushed, so the lone prefix is sync-unproven.
+                 * Discard it (never emit) and fail loud: zero output
+                 * plus one fatal trips fftools' error-rate abort. */
+                av_log(avctx, AV_LOG_ERROR,
+                       "no-sync: lone frame followed by %d skipped "
+                       "packet(s), input truncated\n",
+                       s->trail_skips);
+                ac4_queue_reset(s);
+                s->fatal = AVERROR_INVALIDDATA;
+                s->flush_done = 1;
+                continue;
+            }
             ret = ac4_drain_flush(s, avctx);
             s->flush_done = 1;
+            /* EOF with a decided-good shape: release the held prefix. */
+            s->emit_ok = 1;
             if (ret < 0)
                 s->fatal = ret;
             continue;
@@ -735,6 +781,9 @@ static void ac4_decode_flush(AVCodecContext *avctx)
     s->flush_done = 0;
     s->fatal = 0;
     s->bad_streak = 0;
+    s->clean_framings = 0;
+    s->trail_skips = 0;
+    s->emit_ok = 0;
     s->stream_set = 0;
     s->last_pts = AV_NOPTS_VALUE;
     s->last_gap[0] = '\0';
