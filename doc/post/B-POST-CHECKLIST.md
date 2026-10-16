@@ -56,7 +56,7 @@ Send procedure (clock end): `doc/post/B-OWNER-SEND-STEPS.md`.
 ## Gates run this stage (all green)
 
 - [x] `git am` clean on pristine `3e6cd5e` -- rc=0, commits
-  `02bc75b` (1/2, 3 files) + `af19c5e` (2/2, 12 files), tree
+  `02bc75b` (1/2, 3 files) + `af19c5e` (2/2, 11 files), tree
   clean, zero whitespace warnings, am tree byte-identical to the
   staging tree (5/5 files cmp SAME + 9/9 refs SAME).
 - [x] Subjects 1:1 cover<->mbox -- `doc: AC-4 decoder docs` and
