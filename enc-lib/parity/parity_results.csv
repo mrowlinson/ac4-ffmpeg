@@ -39,10 +39,8 @@ tag,result,detail,measure
 037_st_frac_2049.f32,PASS,frames=4/4 bytes=1366/1366,measure m=-18.37637375271456 f=0.00023545994080638458 tf=0.5 peak=5279 dpeak=0 hasd=0
 038_st_frac_24000.f32,PASS,frames=14/14 bytes=4779/4779,measure m=-18.398015292478849 f=0.00077287886448379852 tf=1 peak=5283 dpeak=0 hasd=0
 039_st_fullscale_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-0.57692896192349585 f=0.00033614207262025702 tf=1 peak=32439 dpeak=0 hasd=0
-040_st_noise_2049.s16,BOTH-FAIL,"o=1 h=2 error: flush rc=-5
-",
-041_st_noise_2049.wav,BOTH-FAIL,"o=1 h=2 error: flush rc=-5
-",
+040_st_noise_2049.s16,LIB-AHEAD,o=1 h=0 frames=4,measure m=-9.1840892592411354 f=0.53732557612273146 tf=0.5 peak=9830 dpeak=0 hasd=0
+041_st_noise_2049.wav,LIB-AHEAD,o=1 h=0 frames=4,measure m=-9.1840892592411354 f=0.53732557612273146 tf=0.5 peak=9830 dpeak=0 hasd=0
 042_st_noise_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-9.1656478531387826 f=0.55818606464099918 tf=1 peak=9830 dpeak=0 hasd=0
 043_st_noise_240000.wav,PASS,frames=120/120 bytes=40960/40960,measure m=-9.0801325654905529 f=0.5627049281071016 tf=0.99152542372881358 peak=9830 dpeak=0 hasd=0
 044_st_ramp_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-8.890932277407769 f=0.0072751365328465592 tf=1 peak=16383 dpeak=0 hasd=0

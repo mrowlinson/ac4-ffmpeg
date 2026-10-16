@@ -168,10 +168,21 @@ int enc_core_content16_f(double m, double peak, double f,
                          double target_db);
 int enc_core_tail16(int sparse, double tf);
 /* mid23 NULL = default shape (I12_MID / tail callers pass their
- * own). Returns bytes (<= 12) or -1. */
+ * own). Returns bytes: 6 (P), 12 (dense I), 11 (sparse I),
+ * or -1. The sparse-iframe 11 is legitimate (enc.py sparse
+ * branch: stamp+pid+I12_MID+0300+I11_TAIL) — callers must
+ * accept it (S1). */
 int enc_core_compose_sub0(int iframe, int sparse, int stamp,
                           int content16, const uint8_t *mid23, int pid,
                           uint8_t *out);
+/* Loud diagnostic for silent -1 paths (S1): after a core
+ * encode entry returns -1, this names the refusing site when
+ * the refusal carried a message (currently the loudness-stamp
+ * composition checks). Cleared on entry of every encode
+ * driver, so a non-empty string always belongs to the most
+ * recent call. Never NULL. Single global: core is
+ * single-threaded (H7). */
+const char *enc_core_last_error(void);
 int enc_core_compose_sub0_51(int stamp, int content16,
                              const uint8_t *mid23 /*NULL=I12_MID*/,
                              int pid, const int *dmx /*NULL or 5 ints*/,
