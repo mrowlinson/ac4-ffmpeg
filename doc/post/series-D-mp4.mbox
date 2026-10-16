@@ -1,0 +1,3686 @@
+From 083c67621c61273c364009668c2c9e9ad76e3bfa Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 04:06:39 -0400
+Subject: [PATCH 1/6] avcodec: add ff_ac4_parser
+
+Streaming splitter for the Annex G sync stream plus a TOC prober.
+
+AC41 frames accept on CRC-16 (MSB-first poly 0x8005 over length
+bytes, raw frame and stored word, zero remainder). AC40 frames
+accept on a chaining anchor (next head parses exactly at the frame
+end) or, at EOF, on an exact end plus a valid TOC head. Every
+accept also passes a TOC-head gate that rejects the reserved rate
+rows 14/15; any reject advances exactly one byte. Sequence-counter
+stride is never a criterion. Heads claiming past AC4_MAX_SCAN
+(128 KiB) classify as not-a-head before buffering or CRC, bounding
+adversarial resync cost.
+
+The TOC probe reports key_frame from b_iframe_global and, when the
+bed walk completes, the native-grid (sample_rate, duration) pair,
+channels (IMS presented counts for cm120/121 with pres_ver 2) and
+a running bit_rate average. Failures leave params untouched while
+the frame still emits.
+
+COMPLETE_FRAMES mode passes bare raw frames through untouched and
+only probes the TOC; it never scans for sync.
+
+Registration in parsers.c and the Makefile, ac4_demuxer_select in
+configure (generic containers select no codec parsers; minimal
+mov/mpegts builds enable --enable-parser=ac4 explicitly). No
+Changelog hunk: maintainer-curated at release.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ configure               |   1 +
+ libavcodec/Makefile     |   1 +
+ libavcodec/ac4_parser.c | 826 ++++++++++++++++++++++++++++++++++++++++
+ libavcodec/parsers.c    |   1 +
+ 4 files changed, 829 insertions(+)
+ create mode 100644 libavcodec/ac4_parser.c
+
+diff --git a/configure b/configure
+index cb6b247..5e17825 100755
+--- a/configure
++++ b/configure
+@@ -3888,6 +3888,7 @@ videotoolbox_encoder_deps="videotoolbox VTCompressionSessionPrepareToEncodeFrame
+ 
+ # demuxers / muxers
+ ac3_demuxer_select="ac3_parser"
++ac4_demuxer_select="ac4_parser"
+ act_demuxer_select="riffdec"
+ adts_muxer_select="mpeg4audio"
+ aiff_muxer_select="iso_media"
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index 247e829..a3c4c01 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -1285,6 +1285,7 @@ OBJS-$(CONFIG_AAC_LATM_PARSER)         += latm_parser.o
+ OBJS-$(CONFIG_AAC_PARSER)              += aac_parser.o aac_ac3_parser.o
+ OBJS-$(CONFIG_AC3_PARSER)              += aac_ac3_parser.o ac3tab.o \
+                                           ac3_channel_layout_tab.o
++OBJS-$(CONFIG_AC4_PARSER)              += ac4_parser.o
+ OBJS-$(CONFIG_ADX_PARSER)              += adx_parser.o
+ OBJS-$(CONFIG_AHX_PARSER)              += ahx_parser.o
+ OBJS-$(CONFIG_AMR_PARSER)              += amr_parser.o
+diff --git a/libavcodec/ac4_parser.c b/libavcodec/ac4_parser.c
+new file mode 100644
+index 0000000..12d8b33
+--- /dev/null
++++ b/libavcodec/ac4_parser.c
+@@ -0,0 +1,826 @@
++/*
++ * AC-4 parser
++ * Copyright (c) 2026 Michael Rowlinson
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file
++ * AC-4 frame splitter and TOC prober.
++ *
++ * Streaming mode splits the Annex G sync stream (AC40 bare / AC41
++ * checksummed markers). AC41 frames accept on CRC-16; AC40 frames
++ * accept on a chaining anchor (the next head parses exactly at the
++ * frame end) or, at EOF, on an exact end plus a valid TOC head.
++ * Every accept also passes a TOC-head gate (reserved rate rows 14/15
++ * rejected). Any reject advances exactly one byte.
++ *
++ * COMPLETE_FRAMES mode passes bare raw frames through (MP4 samples,
++ * raw-demux packets) and only probes the TOC. It never scans.
++ *
++ * Split and param fill are decoupled: the frame emits once framing
++ * verifies, while avctx/params update atomically and only when the
++ * bed walk completes. Any TOC failure leaves params untouched.
++ */
++
++#include <string.h>
++
++#include "libavutil/channel_layout.h"
++#include "libavutil/common.h"
++#include "libavutil/error.h"
++#include "libavutil/intreadwrite.h"
++#include "libavutil/log.h"
++#include "libavutil/mem.h"
++
++#include "get_bits.h"
++#include "parser.h"
++#include "parser_internal.h"
++
++#define AC4_SYNC_BARE 0xAC40
++#define AC4_SYNC_CRC  0xAC41
++
++/* Largest representable sync frame: 7-byte header + 2^24-1 raw + CRC. */
++#define AC4_MAX_TOTAL 16777224
++
++/* Largest plausible sync frame. The corpus max is 4286 B and the 16-bit
++ * length field tops out at 65540 B total, so a claim past 128 KiB would
++ * need ~24 Mbps of audio in one 43 ms frame: absurd. Heads claiming more
++ * reject before buffering or CRC, bounding per-position resync work. */
++#define AC4_MAX_SCAN (128 * 1024)
++
++typedef struct AC4ParseContext {
++    ParseContext pc;
++    int tent_logged;        /* tentative-layout notice already shown */
++    int64_t frame_number;   /* param fills, for the bit_rate average */
++} AC4ParseContext;
++
++/* Native-grid sample counts and grid rates per frame_rate_index. */
++static const uint16_t ac4_spf[14] = {
++    1920, 1920, 2048, 1536, 1536, 960, 960, 1024,
++     768,  768,  512,  384,  384, 2048
++};
++static const uint16_t ac4_grid_rate[13] = {
++    46034, 46080, 51200, 46034, 46080, 46034, 46080, 51200,
++    46034, 46080, 51200, 46034, 46080
++};
++
++/* CRC-16, MSB-first, poly 0x8005, init 0. The span covers the length
++ * field, the raw frame and the stored word; accept on zero remainder.
++ * AV_CRC_16_ANSI is reflected, so it cannot be used here. */
++static int ac4_crc_ok(const uint8_t *p, int len)
++{
++    unsigned int crc = 0;
++
++    for (int i = 0; i < len; i++) {
++        crc ^= (unsigned int) p[i] << 8;
++        for (int k = 0; k < 8; k++)
++            crc = (crc & 0x8000) ? ((crc << 1) ^ 0x8005) : (crc << 1);
++        crc &= 0xFFFF;
++    }
++    return !crc;
++}
++
++/* Fail-fast bit reader: every primitive checks the budget first, so a
++ * truncated or hostile TOC ends the walk instead of over-reading. */
++typedef struct AC4Bits {
++    GetBitContext gb;
++    int ok;
++} AC4Bits;
++
++static int ac4_bits_read(AC4Bits *r, int n)
++{
++    if (!r->ok || n < 1 || n > 24 || get_bits_left(&r->gb) < n) {
++        r->ok = 0;
++        return 0;
++    }
++    return get_bits(&r->gb, n);
++}
++
++static void ac4_bits_skip(AC4Bits *r, int n)
++{
++    if (!r->ok || n < 0 || get_bits_left(&r->gb) < n) {
++        r->ok = 0;
++        return;
++    }
++    skip_bits_long(&r->gb, n);
++}
++
++/* variable_bits(n): n-bit groups plus a more bit; each continuation
++ * maps value to (value + 1) << n before adding the next group. */
++static int ac4_varbits(AC4Bits *r, int n)
++{
++    int v = 0;
++
++    for (int i = 0; i < 8 && r->ok; i++) {
++        int more;
++
++        v += ac4_bits_read(r, n);
++        if (!r->ok)
++            return 0;
++        if (v > 0xFFFFFF) {
++            r->ok = 0;
++            return 0;
++        }
++        more = ac4_bits_read(r, 1);
++        if (!r->ok)
++            return 0;
++        if (!more)
++            return v;
++        v = (v + 1) << n;
++    }
++    r->ok = 0;
++    return 0;
++}
++
++/* presentation_version: count of leading one bits. */
++static int ac4_unary(AC4Bits *r)
++{
++    int v = 0;
++
++    for (;;) {
++        int b = ac4_bits_read(r, 1);
++
++        if (!r->ok)
++            return 0;
++        if (!b)
++            return v;
++        if (++v > 16) {
++            r->ok = 0;
++            return 0;
++        }
++    }
++}
++
++static void ac4_skip_substream_index(AC4Bits *r)
++{
++    if (ac4_bits_read(r, 2) == 3)
++        ac4_varbits(r, 2);
++}
++
++static void ac4_skip_emdf(AC4Bits *r)
++{
++    int lp, ls, skip = 0;
++
++    if (ac4_bits_read(r, 2) == 3)
++        ac4_varbits(r, 2);
++    if (ac4_bits_read(r, 3) == 7)
++        ac4_varbits(r, 3);
++    if (ac4_bits_read(r, 1))
++        ac4_skip_substream_index(r);
++    lp = ac4_bits_read(r, 2);
++    ls = ac4_bits_read(r, 2);
++    if (lp > 0)
++        skip += 1 << (2 * (lp - 1));
++    if (ls > 0)
++        skip += 1 << (2 * (ls - 1));
++    ac4_bits_skip(r, 8 * skip);
++}
++
++/* frame_rate_multiply_info: bit shape depends on the rate row. */
++static int ac4_frame_rate_factor(AC4Bits *r, int rate)
++{
++    int bm, mb;
++
++    if (rate == 2 || rate == 3 || rate == 4) {
++        bm = ac4_bits_read(r, 1);
++        mb = bm ? ac4_bits_read(r, 1) : 0;
++        return (bm && mb) ? 4 : bm ? 2 : 1;
++    }
++    if (rate <= 1 || (rate >= 7 && rate <= 9)) {
++        bm = ac4_bits_read(r, 1);
++        return bm ? 2 : 1;
++    }
++    return 1;
++}
++
++static void ac4_skip_fractions(AC4Bits *r, int rate, int factor)
++{
++    if (rate >= 5 && rate <= 9 && factor == 1) {
++        ac4_bits_read(r, 1);
++    } else if (rate >= 10 && rate <= 12) {
++        if (ac4_bits_read(r, 1))
++            ac4_bits_read(r, 1);
++    }
++}
++
++/* channel_mode prefix walk 1/2/4/7/8/9 bits with the all-ones escape.
++ * The 7-bit values 126/127 continue into 8 bits, 254/255 into 9; only
++ * 511 escapes into varbits. Value 510 is terminal but unmapped. */
++static int ac4_channel_mode(AC4Bits *r)
++{
++    int v = ac4_bits_read(r, 1);
++
++    if (!v)
++        return 0;
++    v = (v << 1) | ac4_bits_read(r, 1);
++    if (v == 2)
++        return 2;
++    v = (v << 2) | ac4_bits_read(r, 2);
++    if (v >= 12 && v <= 14)
++        return v;
++    v = (v << 3) | ac4_bits_read(r, 3);
++    if (v < 126 || v > 127)
++        return v;
++    v = (v << 1) | ac4_bits_read(r, 1);
++    if (v < 254 || v > 255)
++        return v;
++    v = (v << 1) | ac4_bits_read(r, 1);
++    if (v != 511)
++        return v;
++    return v + ac4_varbits(r, 2);
++}
++
++typedef struct AC4HeadInfo {
++    int bv;      /* bitstream_version */
++    int fs;      /* fs_index */
++    int rate;    /* frame_rate_index */
++    int ig;      /* b_iframe_global */
++    int n_pres;  /* presentation count */
++} AC4HeadInfo;
++
++/* TOC head through the program-id block. Failure rejects the frame in
++ * streaming mode (split gate); the caller emits nothing on failure. */
++static int ac4_parse_head(AC4Bits *r, AC4HeadInfo *h)
++{
++    int bv = ac4_bits_read(r, 2);
++
++    if (bv == 3)
++        bv += ac4_varbits(r, 2);
++    if (!r->ok || bv > 2)
++        goto fail;
++    ac4_bits_read(r, 10);                 /* sequence_counter: ignored */
++    if (ac4_bits_read(r, 1)) {
++        if (ac4_bits_read(r, 3) > 0)
++            ac4_bits_read(r, 2);          /* br_code/reserved */
++    }
++    h->fs   = ac4_bits_read(r, 1);
++    h->rate = ac4_bits_read(r, 4);
++    if (!r->ok || h->rate >= 14)
++        goto fail;
++    h->ig = ac4_bits_read(r, 1);
++    if (ac4_bits_read(r, 1)) {
++        h->n_pres = 1;
++    } else if (ac4_bits_read(r, 1)) {
++        h->n_pres = ac4_varbits(r, 2) + 2;
++    } else {
++        h->n_pres = 0;
++    }
++    if (ac4_bits_read(r, 1)) {
++        if (ac4_bits_read(r, 5) == 31)
++            ac4_varbits(r, 3);
++    }
++    if (bv == 2 && ac4_bits_read(r, 1)) {
++        ac4_bits_read(r, 16);
++        if (ac4_bits_read(r, 1))
++            ac4_bits_skip(r, 128);
++    }
++    if (!r->ok)
++        goto fail;
++    h->bv = bv;
++    return 0;
++fail:
++    r->ok = 0;
++    return -1;
++}
++
++/* One v1 presentation record. Records version/group for presentation 0
++ * and skips the rest. Multi-group records bail: resolving them needs
++ * skip walks with no wire validation. */
++static int ac4_walk_pres_v1(AC4Bits *r, const AC4HeadInfo *h,
++                            int *pver_out, int *gi_out)
++{
++    int factor, gi, add_emdf, n;
++
++    if (!ac4_bits_read(r, 1) || !r->ok)
++        return -1;
++    *pver_out = ac4_unary(r);
++    ac4_bits_read(r, 3);                    /* md_compat */
++    if (ac4_bits_read(r, 1))
++        ac4_varbits(r, 2);
++    factor = ac4_frame_rate_factor(r, h->rate);
++    ac4_skip_fractions(r, h->rate, factor);
++    ac4_skip_emdf(r);
++    if (ac4_bits_read(r, 1))
++        ac4_bits_read(r, 1);
++    gi = ac4_bits_read(r, 3);
++    if (gi == 7)
++        gi += ac4_varbits(r, 2);
++    *gi_out = gi;
++    ac4_bits_read(r, 1);                    /* b_pre_virtualized */
++    add_emdf = ac4_bits_read(r, 1);
++    ac4_bits_read(r, 1);                    /* b_alternative */
++    ac4_bits_read(r, 1);                    /* b_pres_ndot */
++    ac4_skip_substream_index(r);
++    if (add_emdf) {
++        n = ac4_bits_read(r, 2);
++        if (!n)
++            n = ac4_varbits(r, 2) + 4;
++        for (int k = 0; k < n && r->ok; k++)
++            ac4_skip_emdf(r);
++    }
++    return r->ok ? 0 : -1;
++}
++
++/* Bitstream version 2: presentation 0 selects group 0, whose first
++ * channel-coded element carries the bed mode. A group without a bed
++ * (AJOC/object only) stops the walk with params untouched. */
++static int ac4_walk_bed_v2(AC4Bits *r, const AC4HeadInfo *h,
++                           int *cm_out, int *sf_out, int *pver_out)
++{
++    int pver = 0, gi = 0, dummy_p, dummy_g;
++
++    if (h->n_pres < 1)
++        return -1;
++    for (int i = 0; i < h->n_pres && r->ok; i++) {
++        if (!i) {
++            if (ac4_walk_pres_v1(r, h, &pver, &gi) < 0)
++                return -1;
++        } else if (ac4_walk_pres_v1(r, h, &dummy_p, &dummy_g) < 0) {
++            return -1;
++        }
++    }
++    if (!r->ok || gi)
++        return -1;
++    ac4_bits_read(r, 1);                    /* b_substreams_present */
++    ac4_bits_read(r, 1);                    /* b_hsf_ext */
++    if (!ac4_bits_read(r, 1)) {
++        if (ac4_bits_read(r, 2) == 3)
++            ac4_varbits(r, 2);
++    }
++    if (!r->ok)
++        return -1;
++    if (!ac4_bits_read(r, 1))
++        return -1;                          /* no bed in this group */
++    *cm_out = ac4_channel_mode(r);
++    if (!r->ok)
++        return -1;
++    if (*cm_out == 252 || *cm_out == 253 ||
++        *cm_out == 508 || *cm_out == 509)
++        ac4_bits_skip(r, 4);                /* immersive presence bits */
++    *sf_out = 1;
++    if (h->fs && ac4_bits_read(r, 1))
++        *sf_out = ac4_bits_read(r, 1) ? 4 : 2;
++    if (!r->ok)
++        return -1;
++    *pver_out = pver;
++    return 0;
++}
++
++/* Bitstream versions 0/1: presentation 0 carries an inline channel
++ * element, and nothing params need follows it, so later presentations
++ * need no walk. Zero wire vectors: spec positions, bail-safe. */
++static int ac4_walk_bed_p1(AC4Bits *r, const AC4HeadInfo *h,
++                           int *cm_out, int *sf_out, int *pver_out)
++{
++    int single, config = 0;
++
++    if (h->n_pres < 1)
++        return -1;
++    single = ac4_bits_read(r, 1);
++    if (!r->ok)
++        return -1;
++    if (!single) {
++        config = ac4_bits_read(r, 3);
++        if (config == 7)
++            config += ac4_varbits(r, 2);
++        if (!r->ok || config >= 6)
++            return -1;
++    }
++    *pver_out = ac4_unary(r);
++    ac4_bits_read(r, 3);                    /* md_compat */
++    if (ac4_bits_read(r, 1))
++        ac4_varbits(r, 2);
++    ac4_frame_rate_factor(r, h->rate);
++    ac4_skip_emdf(r);
++    if (!single)
++        ac4_bits_read(r, 1);                /* b_hsf_ext */
++    if (!r->ok)
++        return -1;
++    *cm_out = ac4_channel_mode(r);
++    *sf_out = 1;
++    if (h->fs && ac4_bits_read(r, 1))
++        *sf_out = ac4_bits_read(r, 1) ? 4 : 2;
++    return r->ok ? 0 : -1;
++}
++
++/* channel_mode value to bed channel count; -1 carries no count. */
++static int ac4_channel_count(int cm, int pres_ver, int *tentative)
++{
++    *tentative = 0;
++    if (pres_ver == 2 && (cm == 120 || cm == 121))
++        return cm == 120 ? 6 : 2;
++    switch (cm) {
++    case   0: return 1;
++    case   2: return 2;
++    case  12: return 3;
++    case  13: return 5;
++    case  14: return 6;
++    case 120:
++    case 122:
++    case 124: return 7;
++    case 121:
++    case 123:
++    case 125: return 8;
++    case 252: return 11;
++    case 253: return 12;
++    case 508: return 13;
++    case 509: return 14;
++    }
++    if (cm >= 511) {
++        *tentative = 1;
++        return 24;
++    }
++    return -1;
++}
++
++typedef struct AC4TOC {
++    int head_ok;    /* head parsed and gated */
++    int bed_ok;     /* bed walk completed */
++    int ig;
++    int rate;
++    int fs;
++    int channels;
++    int sf_mult;
++    int tentative;
++} AC4TOC;
++
++static void ac4_parse_toc(const uint8_t *raw, int raw_len, AC4TOC *toc)
++{
++    AC4Bits r;
++    AC4HeadInfo h;
++    int cm, sf, pver, nch, tentative = 0;
++
++    memset(toc, 0, sizeof(*toc));
++    toc->sf_mult = 1;
++    if (raw_len <= 0)
++        return;
++    if (init_get_bits8(&r.gb, raw, raw_len) < 0)
++        return;
++    r.ok = 1;
++    if (ac4_parse_head(&r, &h) < 0)
++        return;
++    toc->head_ok = 1;
++    toc->ig      = h.ig;
++    toc->rate    = h.rate;
++    toc->fs      = h.fs;
++    if (h.bv <= 1) {
++        if (ac4_walk_bed_p1(&r, &h, &cm, &sf, &pver) < 0)
++            return;
++    } else if (ac4_walk_bed_v2(&r, &h, &cm, &sf, &pver) < 0) {
++        return;
++    }
++    nch = ac4_channel_count(cm, pver, &tentative);
++    if (nch <= 0)
++        return;
++    toc->bed_ok    = 1;
++    toc->channels  = nch;
++    toc->sf_mult   = sf;
++    toc->tentative = tentative;
++}
++
++typedef struct AC4Candidate {
++    int total;  /* full sync-frame span */
++    int hlen;   /* header bytes: 4, or 7 with the extended length */
++    int crc;    /* 1 for the checksummed marker */
++} AC4Candidate;
++
++/* Classify the head at p: 1 = complete head, 0 = not a head (resync),
++ * -1 = split head, more data needed. The span is hlen + rawlen plus
++ * the stored word for checksummed frames. Absurd claims past AC4_MAX_SCAN
++ * count as not-a-head, so they resync without buffering or CRC. */
++static int ac4_head_at(const uint8_t *p, int avail, AC4Candidate *c)
++{
++    unsigned int marker, rawlen;
++
++    if (avail < 2)
++        return -1;
++    marker = AV_RB16(p);
++    if (marker != AC4_SYNC_BARE && marker != AC4_SYNC_CRC)
++        return 0;
++    if (avail < 4)
++        return -1;
++    c->crc  = (marker == AC4_SYNC_CRC);
++    c->hlen = 4;
++    rawlen  = AV_RB16(p + 2);
++    if (rawlen == 0xFFFF) {
++        if (avail < 7)
++            return -1;
++        c->hlen = 7;
++        rawlen  = AV_RB24(p + 4);
++    }
++    c->total = (int) ((unsigned int) c->hlen + rawlen + (c->crc ? 2u : 0u));
++    if (c->total > AC4_MAX_TOTAL)
++        return 0;
++    if (c->total > AC4_MAX_SCAN)
++        return 0;
++    return 1;
++}
++
++/* Append exactly n input bytes to the carried window. Only bytes
++ * inside the current candidate frame (plus a bounded AC40 anchor
++ * probe past its end) ever enter the window, so emission via
++ * ff_combine_frame always spans exactly the carried bytes. */
++static int ac4_append(AC4ParseContext *s, const uint8_t **in, int *in_len,
++                      int n, int *consumed)
++{
++    ParseContext *pc = &s->pc;
++    uint8_t *nb = av_fast_realloc(pc->buffer, &pc->buffer_size,
++                                  (size_t) pc->index + n +
++                                  AV_INPUT_BUFFER_PADDING_SIZE);
++
++    if (!nb) {
++        pc->index = 0;
++        return AVERROR(ENOMEM);
++    }
++    pc->buffer = nb;
++    memcpy(pc->buffer + pc->index, *in, n);
++    memset(pc->buffer + pc->index + n, 0, AV_INPUT_BUFFER_PADDING_SIZE);
++    pc->index += n;
++    *in       += n;
++    *in_len   -= n;
++    *consumed += n;
++    return 0;
++}
++
++/* Drop the first n window bytes (rejected head bytes, resync noise). */
++static void ac4_drop(AC4ParseContext *s, int n)
++{
++    ParseContext *pc = &s->pc;
++
++    if (n > pc->index)
++        n = pc->index;
++    pc->index -= n;
++    if (pc->index > 0)
++        memmove(pc->buffer, pc->buffer + n, pc->index);
++}
++
++typedef enum AC4Verdict {
++    AC4_ACCEPT,
++    AC4_REJECT,
++    AC4_NEED_MORE,   /* AC40 anchor split past the available bytes */
++} AC4Verdict;
++
++/* Judge one complete candidate frame: the TOC-head gate first, then
++ * the CRC for checksummed frames or the chaining anchor for bare
++ * ones. `after`/`after_len` are the bytes past the frame end. */
++static AC4Verdict ac4_validate(const uint8_t *frame, const AC4Candidate *c,
++                               const uint8_t *after, int after_len,
++                               int eof, AC4TOC *toc)
++{
++    const uint8_t *raw = frame + c->hlen;
++    int raw_len = c->total - c->hlen - (c->crc ? 2 : 0);
++
++    ac4_parse_toc(raw, raw_len, toc);
++    if (!toc->head_ok)
++        return AC4_REJECT;
++    if (c->crc)
++        return ac4_crc_ok(frame + 2, c->total - 2) ? AC4_ACCEPT : AC4_REJECT;
++    {
++        AC4Candidate a;
++        int ar = ac4_head_at(after, after_len, &a);
++
++        if (ar > 0)
++            return AC4_ACCEPT;
++        if (ar == 0)
++            return AC4_REJECT;
++        if (!eof)
++            return AC4_NEED_MORE;
++        return after_len == 0 ? AC4_ACCEPT : AC4_REJECT;
++    }
++}
++
++static void ac4_fill_params(AC4ParseContext *s, AVCodecParserContext *s1,
++                            AVCodecContext *avctx, const AC4TOC *toc,
++                            int emitted_bytes)
++{
++    int grid = (toc->rate == 13)
++        ? (toc->fs ? 48000 : 44100)
++        : ac4_grid_rate[toc->rate];
++    int sample_rate = grid * toc->sf_mult;
++    int duration    = ac4_spf[toc->rate] * toc->sf_mult;
++    int64_t bit_rate;
++
++    s1->key_frame = toc->ig;
++    if (!toc->bed_ok)
++        return;
++    s1->duration       = duration;
++    avctx->sample_rate = sample_rate;
++    av_channel_layout_uninit(&avctx->ch_layout);
++    switch (toc->channels) {
++    case 1:
++        av_channel_layout_from_mask(&avctx->ch_layout, AV_CH_LAYOUT_MONO);
++        break;
++    case 2:
++        av_channel_layout_from_mask(&avctx->ch_layout, AV_CH_LAYOUT_STEREO);
++        break;
++    case 6:
++        av_channel_layout_from_mask(&avctx->ch_layout, AV_CH_LAYOUT_5POINT1);
++        break;
++    case 8:
++        av_channel_layout_from_mask(&avctx->ch_layout, AV_CH_LAYOUT_7POINT1);
++        break;
++    default:
++        avctx->ch_layout.order       = AV_CHANNEL_ORDER_UNSPEC;
++        avctx->ch_layout.nb_channels = toc->channels;
++        break;
++    }
++    if (toc->tentative && !s->tent_logged) {
++        s->tent_logged = 1;
++        av_log(avctx, AV_LOG_DEBUG,
++               "ac4: tentative 24-channel layout for row-15 mode\n");
++    }
++    bit_rate = (int64_t) emitted_bytes * 8 * sample_rate / duration;
++    s->frame_number++;
++    avctx->bit_rate += (bit_rate - avctx->bit_rate) / s->frame_number;
++}
++
++static int ac4_parse(AVCodecParserContext *s1, AVCodecContext *avctx,
++                     const uint8_t **poutbuf, int *poutbuf_size,
++                     const uint8_t *buf, int buf_size)
++{
++    AC4ParseContext *s = s1->priv_data;
++    ParseContext *pc = &s->pc;
++    const uint8_t *in = buf;
++    int in_len = buf_size;
++    int consumed = 0;
++    int eof = (buf_size == 0);
++
++    *poutbuf      = NULL;
++    *poutbuf_size = 0;
++    s1->key_frame = -1;
++
++    if (s1->flags & PARSER_FLAG_COMPLETE_FRAMES) {
++        if (buf_size > 0) {
++            AC4TOC toc;
++
++            ac4_parse_toc(buf, buf_size, &toc);
++            if (toc.head_ok)
++                ac4_fill_params(s, s1, avctx, &toc, buf_size);
++            *poutbuf      = buf;
++            *poutbuf_size = buf_size;
++        }
++        return buf_size;
++    }
++
++    /* Streaming is scan-then-combine. Noise is skipped in the input
++     * without buffering, and only candidate-frame bytes (plus a
++     * bounded AC40 anchor probe past the frame end) enter the carried
++     * window, so every emit spans exactly the frame and the return
++     * value is the frame-end offset. Every iteration consumes input,
++     * shrinks the window, emits, or returns, so the loop terminates;
++     * every return on input consumes at least one byte. */
++    if (pc->overread) {
++        /* Restore the anchor-probe tail kept back by the previous
++         * emit. Deferred to this call because the emitted packet
++         * aliases the window. */
++        for (; pc->overread > 0; pc->overread--)
++            pc->buffer[pc->index++] = pc->buffer[pc->overread_index++];
++    }
++    for (;;) {
++        AC4Candidate c;
++        AC4TOC toc;
++        AC4Verdict v;
++        int hr, ret;
++
++        /* The carried window starts at a head, or is empty. */
++        while (pc->index > 0) {
++            hr = ac4_head_at(pc->buffer, pc->index, &c);
++            if (hr > 0)
++                break;
++            if (hr == 0) {
++                ac4_drop(s, 1);
++                continue;
++            }
++            if (eof || in_len == 0) {
++                if (eof)
++                    ac4_drop(s, 1);
++                else
++                    return consumed;
++            } else if (ac4_append(s, &in, &in_len,
++                                  FFMIN(7 - pc->index, in_len),
++                                  &consumed) < 0) {
++                return buf_size;
++            }
++        }
++
++        if (!pc->index) {
++            const uint8_t *m;
++
++            if (!in_len)
++                return consumed;
++            /* Skip noise in the input; it never enters the window. */
++            m = memchr(in, 0xAC, in_len);
++            if (!m)
++                return consumed + in_len;
++            consumed += m - in;
++            in_len   -= m - in;
++            in        = m;
++            hr = ac4_head_at(in, in_len, &c);
++            if (hr == 0) {
++                consumed++;
++                in++;
++                in_len--;
++                continue;
++            }
++            if (hr < 0 || in_len < c.total) {
++                /* Split head or partial frame: every remaining byte
++                 * lies inside the candidate span, so buffer it all. */
++                if (ac4_append(s, &in, &in_len, in_len, &consumed) < 0)
++                    return buf_size;
++                return consumed;
++            }
++            v = ac4_validate(in, &c, in + c.total, in_len - c.total,
++                             eof, &toc);
++            if (v == AC4_REJECT) {
++                consumed++;
++                in++;
++                in_len--;
++                continue;
++            }
++            if (v == AC4_NEED_MORE) {
++                /* The frame is complete but the anchor runs past the
++                 * input end; carry the frame and probe the anchor
++                 * from the next input. */
++                if (ac4_append(s, &in, &in_len, c.total, &consumed) < 0)
++                    return buf_size;
++                continue;
++            }
++            ret = ff_combine_frame(pc, c.total, &in, &in_len);
++            if (ret < 0)
++                return buf_size;
++            ac4_fill_params(s, s1, avctx, &toc, c.total);
++            *poutbuf      = in;
++            *poutbuf_size = in_len;
++            return consumed + c.total;
++        }
++
++        hr = ac4_head_at(pc->buffer, pc->index, &c);
++        if (pc->index < c.total) {
++            int need;
++
++            if (eof) {
++                /* A head that never completes still resyncs: later
++                 * bytes may hold the next frame. */
++                ac4_drop(s, 1);
++                continue;
++            }
++            if (!in_len)
++                return consumed;
++            need = c.total - pc->index;
++            if (ac4_append(s, &in, &in_len, FFMIN(need, in_len),
++                           &consumed) < 0)
++                return buf_size;
++            if (pc->index < c.total)
++                return consumed;
++        }
++        v = ac4_validate(pc->buffer, &c, pc->buffer + c.total,
++                         pc->index - c.total, eof, &toc);
++        if (v == AC4_REJECT) {
++            ac4_drop(s, 1);
++            continue;
++        }
++        if (v == AC4_NEED_MORE) {
++            int probe = pc->index - c.total;
++
++            if (!in_len)
++                return consumed;
++            /* Top up the anchor probe, at most to a classifiable
++             * head past the frame end. */
++            if (ac4_append(s, &in, &in_len, FFMIN(7 - probe, in_len),
++                           &consumed) < 0)
++                return buf_size;
++            continue;
++        }
++        /* A negative next keeps the probe tail past the frame end in
++         * the overread area; it is restored on the next call. */
++        ret = ff_combine_frame(pc, c.total - pc->index, &in, &in_len);
++        if (ret < 0)
++            return buf_size;
++        ac4_fill_params(s, s1, avctx, &toc, c.total);
++        *poutbuf      = in;
++        *poutbuf_size = in_len;
++        return consumed;
++    }
++}
++
++const FFCodecParser ff_ac4_parser = {
++    PARSER_CODEC_LIST(AV_CODEC_ID_AC4),
++    .priv_data_size = sizeof(AC4ParseContext),
++    .parse          = ac4_parse,
++    .close          = ff_parse_close,
++};
+diff --git a/libavcodec/parsers.c b/libavcodec/parsers.c
+index 263b606..d205bb6 100644
+--- a/libavcodec/parsers.c
++++ b/libavcodec/parsers.c
+@@ -24,6 +24,7 @@
+ extern const FFCodecParser ff_aac_parser;
+ extern const FFCodecParser ff_aac_latm_parser;
+ extern const FFCodecParser ff_ac3_parser;
++extern const FFCodecParser ff_ac4_parser;
+ extern const FFCodecParser ff_adx_parser;
+ extern const FFCodecParser ff_ahx_parser;
+ extern const FFCodecParser ff_amr_parser;
+-- 
+2.56.0
+
+From c01ad3ff9bfd6f372ff6e871901887ed17dfd6c4 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 04:07:01 -0400
+Subject: [PATCH 2/6] avformat/mov: add AC-4 dac4 box support
+
+Add mov_read_dac4, modeled on mov_read_dec3: preserve the complete
+AC4SpecificBox payload (ETSI TS 103 190-2, E.5) as opaque DSI
+extradata. v1 keeps stsd channels/rate; no DSI-derived layout.
+Wire the dac4 parse-table entry and AVSTREAM_PARSE_HEADERS for
+AC-4: MP4 samples are bare raw_ac4_frames with no sync word
+(E.3), one frame per sample, so the parser runs in COMPLETE_FRAMES
+mode and fills real params from the TOC. No isom_tags change
+(ac-4 mapping already exists).
+
+Box hygiene: dac4 on a non-AC-4 entry is skipped (DEBUG note),
+repeats warn and keep the first box, and sizes outside the
+generic sanity floor fail the open with AVERROR_INVALIDDATA.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ libavformat/mov.c | 47 +++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/libavformat/mov.c b/libavformat/mov.c
+index f7c1292..9f1accb 100644
+--- a/libavformat/mov.c
++++ b/libavformat/mov.c
+@@ -1174,6 +1174,48 @@ static int mov_read_dec3(MOVContext *c, AVIOContext *pb, MOVAtom atom)
+     return 0;
+ }
+ 
++static int mov_read_dac4(MOVContext *c, AVIOContext *pb, MOVAtom atom)
++{
++    AVStream *st;
++    int ret;
++
++    if (c->fc->nb_streams < 1)
++        return 0;
++    st = c->fc->streams[c->fc->nb_streams - 1];
++
++    /* dac4 only belongs to an ac-4 sample entry; codec_id is already set
++     * from the entry tag before child atoms parse, so anything else is a
++     * misplaced box. mov_read_default skips the unconsumed payload. */
++    if (st->codecpar->codec_id != AV_CODEC_ID_AC4) {
++        av_log(c->fc, AV_LOG_DEBUG, "skipping misplaced dac4\n");
++        return 0;
++    }
++
++    if (st->codecpar->extradata) {
++        av_log(c->fc, AV_LOG_WARNING, "ignoring repeated dac4\n");
++        return 0;
++    }
++
++    /* Preserve the complete AC4SpecificBox payload (ETSI TS 103 190-2, E.5)
++     * as opaque DSI extradata. Channel layout and sample rate stay at the
++     * stsd values here; the AC-4 parser (HEADERS mode) derives the real
++     * params from the TOC once need_parsing runs. */
++    /* Generic sanity floor, not the E.5 minimum: a valid DSI is necessarily
++     * larger (fixed header alone is 3 bytes plus at least one presentation
++     * record). The cap keeps the int64_t->int narrowing into
++     * ff_get_extradata safe. */
++    if (atom.size < 5 || (uint64_t)atom.size > (1 << 30)) {
++        av_log(c->fc, AV_LOG_WARNING,
++               "rejecting dac4 with invalid size %"PRId64"\n", atom.size);
++        return AVERROR_INVALIDDATA;
++    }
++    ret = ff_get_extradata(c->fc, st->codecpar, pb, atom.size);
++    if (ret < 0)
++        return ret;
++
++    return 0;
++}
++
+ /* Maps the DTS `StreamConstruction` field (ETSI TS 102 114 Table E-2) to the
+  * coarse FFmpeg DTS profile enum. Extension-substream XLL maps to HD_MA;
+  * extension-substream XXCH, X96, or XBR maps to HD_HRA; core-substream XCH or
+@@ -3313,6 +3355,10 @@ static int mov_finalize_stsd_codec(MOVContext *c, AVIOContext *pb,
+     case AV_CODEC_ID_AV1:
+         /* field_order detection of H264 requires parsing */
+     case AV_CODEC_ID_H264:
++    case AV_CODEC_ID_AC4:
++        /* MP4 AC-4 samples are bare raw_ac4_frames (ETSI TS 103 190-2,
++         * E.3), one frame per sample with no sync word, so the parser
++         * consumes complete frames (HEADERS), never a FULL sync-scan. */
+         sti->need_parsing = AVSTREAM_PARSE_HEADERS;
+         break;
+     default:
+@@ -10359,6 +10405,7 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
+ { MKTAG('e','s','d','s'), mov_read_esds },
+ { MKTAG('d','a','c','3'), mov_read_dac3 }, /* AC-3 info */
+ { MKTAG('d','e','c','3'), mov_read_dec3 }, /* EAC-3 info */
++{ MKTAG('d','a','c','4'), mov_read_dac4 }, /* AC-4 info */
+ { MKTAG('d','d','t','s'), mov_read_ddts }, /* DTS audio descriptor */
+ { MKTAG('w','i','d','e'), mov_read_wide }, /* place holder */
+ { MKTAG('w','f','e','x'), mov_read_wfex },
+-- 
+2.56.0
+
+From 499892d8a49546aa60ac39d059f8aebd67bcf5a4 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 04:07:16 -0400
+Subject: [PATCH 3/6] avformat/movenc: add AC-4 ac-4/dac4 muxing support
+
+MP4/MOV muxer writes the ac-4 sample entry with a dac4 box carrying
+the encoder DSI extradata verbatim (ETSI TS 103 190-2 Annex E), and
+emits one bare raw frame per MP4 sample (Annex E strip rule).
+
+- codec_mp4_tags: AC-4 -> ac-4 (MOV mode already resolves via movaudio tags).
+- mov_write_dac4_tag: size+8 + fourcc + DSI bytes; clean EINVAL when
+  extradata is missing, never an empty box.
+- stsd arms in mov_write_wave_tag (MOV) and mov_write_audio_tag (MP4);
+  MOV mode forces sample-entry v2 like EAC3, MP4 keeps v0.
+- Packet path: stateless per-packet strip of the Annex G syncframe
+  wrapper (sync + size [+ ext] + CRC iff AC41) when the packet carries
+  it; bare packets (raw demuxer / native encoder) pass through. A
+  sync-like prefix whose declared length mismatches the packet is a
+  bare-frame coincidence and is not stripped. No buffering, no
+  delay_moov, no mux-queue/drain/priv hooks.
+
+No Changelog hunk: contributor patches leave the maintainer-curated
+Changelog alone (same as the parser commit).
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ libavformat/movenc.c | 97 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 97 insertions(+)
+
+diff --git a/libavformat/movenc.c b/libavformat/movenc.c
+index 2c349ef..a8a5972 100644
+--- a/libavformat/movenc.c
++++ b/libavformat/movenc.c
+@@ -698,6 +698,79 @@ static int mov_write_eac3_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *tra
+     return size;
+ }
+ 
++/* Locate the bare raw frame within an AC-4 packet: strip the syncframe
++ * wrapper (sync_word + frame_size [+ ext] + CRC iff AC41, ETSI
++ * TS 103 190-2 Annex G) when the packet carries it. Returns the raw
++ * offset and sets *rawlen to the raw length. Bare raw frames (raw
++ * demuxer / native encoder output) return 0 with *rawlen = size.
++ * A sync-like prefix whose declared length does not match the packet
++ * is a bare frame coincidence, not a wrapper: same passthrough.
++ * The strip lives here rather than in a BSF: handle_eac3 already parses
++ * packets in this muxer, framed packets are a real in-tree producer path
++ * (parser streaming mode emits full syncframes), and the gate is an
++ * exact length match with passthrough default, so bare input is untouched.
++ * No CRC verification: the wire CRC is MSB-first poly 0x8005 while the
++ * in-tree raw muxer writes reflected ANSI LE, so verifying would reject
++ * FFmpeg's own output (the raw demuxer likewise skips CRC). Assumes at
++ * most one syncframe per packet; a multi-frame packet fails the gate and
++ * is written verbatim. */
++static int mov_ac4_raw_offset(const uint8_t *data, int size, int *rawlen_out)
++{
++    unsigned rawlen;
++    int head, crc;
++
++    *rawlen_out = size;
++    if (size < 4 || data[0] != 0xAC || (data[1] != 0x40 && data[1] != 0x41))
++        return 0;
++    crc = data[1] == 0x41 ? 2 : 0;
++    rawlen = AV_RB16(data + 2);
++    head = 4;
++    if (rawlen == 0xFFFF) {
++        if (size < 7)
++            return 0;
++        rawlen = AV_RB24(data + 4);
++        head = 7;
++    }
++    /* rawlen 0 is never a valid frame (4-byte AC 40 00 00 coincidence). */
++    if (rawlen == 0 || (uint64_t)head + rawlen + crc != (uint64_t)size)
++        return 0;
++    *rawlen_out = rawlen;
++    return head;
++}
++
++static int mov_write_dac4_tag(AVFormatContext *s, AVIOContext *pb,
++                              MOVTrack *track)
++{
++    int size = track->extradata_size[track->last_stsd_index];
++    const uint8_t *dsi = track->extradata[track->last_stsd_index];
++
++    if (!dsi || size <= 0) {
++        av_log(s, AV_LOG_ERROR,
++               "Cannot write dac4 atom without AC-4 decoder specific info "
++               "(extradata). Provide DSI extradata for the AC-4 stream.\n");
++        return AVERROR(EINVAL);
++    }
++
++    /* Fail fast on wire-crossed extradata; deeper DSI validation stays
++     * demux/decoder-side (demux rejects payloads < 5 bytes). */
++    if (size < 5) {
++        av_log(s, AV_LOG_ERROR,
++               "Invalid AC-4 DSI extradata (size %d < 5).\n", size);
++        return AVERROR(EINVAL);
++    }
++    if ((dsi[0] >> 5) != 1) {
++        av_log(s, AV_LOG_ERROR,
++               "Invalid AC-4 DSI extradata (ac4_dsi_version != 1).\n");
++        return AVERROR(EINVAL);
++    }
++
++    avio_wb32(pb, size + 8);
++    ffio_wfourcc(pb, "dac4");
++    avio_write(pb, dsi, size);
++
++    return size + 8;
++}
++
+ /**
+  * This function writes extradata "as is".
+  * Extradata must be formatted like a valid atom (with size and tag).
+@@ -1156,6 +1229,10 @@ static int mov_write_wave_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *tra
+         mov_write_ac3_tag(s, pb, track);
+     } else if (track->par->codec_id == AV_CODEC_ID_EAC3) {
+         mov_write_eac3_tag(s, pb, track);
++    } else if (track->par->codec_id == AV_CODEC_ID_AC4) {
++        int ret = mov_write_dac4_tag(s, pb, track);
++        if (ret < 0)
++            return ret;
+     } else if (track->par->codec_id == AV_CODEC_ID_ALAC ||
+                track->par->codec_id == AV_CODEC_ID_QDM2) {
+         mov_write_extradata_tag(pb, track);
+@@ -1457,6 +1534,7 @@ static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
+     if (track->mode == MODE_MOV) {
+         if (track->par->sample_rate > UINT16_MAX || !track->par->ch_layout.nb_channels ||
+             track->par->codec_id == AV_CODEC_ID_EAC3 ||
++            track->par->codec_id == AV_CODEC_ID_AC4 ||
+             track->par->ch_layout.nb_channels > 2) {
+             if (mov_get_lpcm_flags(track->par->codec_id))
+                 tag = AV_RL32("lpcm");
+@@ -1560,6 +1638,7 @@ static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
+         (track->par->codec_id == AV_CODEC_ID_AAC           ||
+          track->par->codec_id == AV_CODEC_ID_AC3           ||
+          track->par->codec_id == AV_CODEC_ID_EAC3          ||
++         track->par->codec_id == AV_CODEC_ID_AC4           ||
+          track->par->codec_id == AV_CODEC_ID_AMR_NB        ||
+          track->par->codec_id == AV_CODEC_ID_ALAC          ||
+          track->par->codec_id == AV_CODEC_ID_ADPCM_MS      ||
+@@ -1580,6 +1659,8 @@ static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
+         ret = mov_write_ac3_tag(s, pb, track);
+     else if (track->par->codec_id == AV_CODEC_ID_EAC3)
+         ret = mov_write_eac3_tag(s, pb, track);
++    else if (track->par->codec_id == AV_CODEC_ID_AC4)
++        ret = mov_write_dac4_tag(s, pb, track);
+     else if (track->par->codec_id == AV_CODEC_ID_ALAC)
+         ret = mov_write_extradata_tag(pb, track);
+     else if (track->par->codec_id == AV_CODEC_ID_WMAPRO)
+@@ -6349,6 +6430,9 @@ static int mov_write_ftyp_tag(AVIOContext *pb, AVFormatContext *s)
+             has_h264 = 1;
+         if (st->codecpar->codec_id == AV_CODEC_ID_AV1)
+             has_av1 = 1;
++        /* AC-4 omitted on purpose: wild AC-4 files brand mp42/isom with
++         * no dby1 and play fine, so no dby1 brand is written for AC-4
++         * output. */
+         if (st->codecpar->codec_id == AV_CODEC_ID_AC3 ||
+             st->codecpar->codec_id == AV_CODEC_ID_EAC3 ||
+             st->codecpar->codec_id == AV_CODEC_ID_TRUEHD ||
+@@ -7315,6 +7399,18 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
+         else if (!size)
+             goto end;
+         avio_write(pb, pkt->data, size);
++    } else if (par->codec_id == AV_CODEC_ID_AC4) {
++        /* MP4 samples are bare raw frames: strip the syncframe wrapper
++         * when the packet carries it, else write the packet as-is. */
++        int rawlen;
++        if (trk->cenc.aes_ctr) {
++            av_log(s, AV_LOG_ERROR,
++                   "Encrypted AC-4 output not yet supported.\n");
++            return AVERROR_PATCHWELCOME;
++        }
++        offset = mov_ac4_raw_offset(pkt->data, pkt->size, &rawlen);
++        size = rawlen;
++        avio_write(pb, pkt->data + offset, size);
+     } else if (par->codec_id == AV_CODEC_ID_EIA_608) {
+         size = 8;
+ 
+@@ -9436,6 +9532,7 @@ static const AVCodecTag codec_mp4_tags[] = {
+     { AV_CODEC_ID_MP2,             MKTAG('m', 'p', '4', 'a') },
+     { AV_CODEC_ID_AC3,             MKTAG('a', 'c', '-', '3') },
+     { AV_CODEC_ID_EAC3,            MKTAG('e', 'c', '-', '3') },
++    { AV_CODEC_ID_AC4,             MKTAG('a', 'c', '-', '4') },
+     { AV_CODEC_ID_DTS,             MKTAG('m', 'p', '4', 'a') },
+     { AV_CODEC_ID_TRUEHD,          MKTAG('m', 'l', 'p', 'a') },
+     { AV_CODEC_ID_FLAC,            MKTAG('f', 'L', 'a', 'C') },
+-- 
+2.56.0
+
+From dd69611fb625a73d1c32152b597bedc0c81099d4 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 04:07:26 -0400
+Subject: [PATCH 4/6] fate: add self-contained ac4 parser tests
+
+Upstream won't take a testless parser. New api-ac4-parser-test builds
+its vectors in code (a minimal version-2 stereo TOC plus payload
+fill, CRCs solved per frame), so the suite needs no uploaded samples:
+split/resync counts over noise, lookalike, CRC-corrupt, truncated,
+ext-len, rate-gated, fs-flipped, ig-cleared, AC40-chain and
+sequence-jump shapes, single-frame-at-EOF emits, the bounded
+false-lock recovery, bed-bail and hostile-p1 param-untouched cases,
+and COMPLETE_FRAMES passthrough, each in whole, 13-byte and 1-byte
+feed modes, asserting byte-exact slices, sizes, keyframes, params and
+the frame-end-offset return contract. Plus five synth sub-variants:
+noise-suffix, mixed40-41, false-embed, ext-split5, rate14-f0.
+Wired as fate-ac4-parser behind CONFIG_AC4_PARSER.
+
+Rebased onto Series C: appends to the C-created tests/fate/ac4.mak
+(and extends the fate-ac4 aggregate) instead of creating it.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ tests/api/Makefile              |   1 +
+ tests/api/api-ac4-parser-test.c | 871 ++++++++++++++++++++++++++++++++
+ tests/fate/ac4.mak              |  13 +-
+ 3 files changed, 884 insertions(+), 1 deletion(-)
+ create mode 100644 tests/api/api-ac4-parser-test.c
+
+diff --git a/tests/api/Makefile b/tests/api/Makefile
+index e51dc6c..751c84e 100644
+--- a/tests/api/Makefile
++++ b/tests/api/Makefile
+@@ -10,6 +10,7 @@ APITESTPROGS-$(call DEMDEC, H263, H263) += api-band
+ APITESTPROGS-$(HAVE_THREADS) += api-threadmessage
+ APITESTPROGS-$(CONFIG_AVCODEC) += api-enc-info
+ APITESTPROGS-$(call ALLYES, H261_ENCODER H261_PARSER) += api-enc-parser
++APITESTPROGS-$(CONFIG_AC4_PARSER) += api-ac4-parser
+ APITESTPROGS += $(APITESTPROGS-yes)
+ 
+ APITESTOBJS  := $(APITESTOBJS:%=$(APITESTSDIR)%) $(APITESTPROGS:%=$(APITESTSDIR)/%-test.o)
+diff --git a/tests/api/api-ac4-parser-test.c b/tests/api/api-ac4-parser-test.c
+new file mode 100644
+index 0000000..9d636ea
+--- /dev/null
++++ b/tests/api/api-ac4-parser-test.c
+@@ -0,0 +1,871 @@
++/*
++ * AC-4 parser test.
++ * Copyright (c) 2026 Michael Rowlinson
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file
++ * Self-contained tests for ff_ac4_parser. All vectors are synthesized
++ * in code (a minimal bitstream-version-2 stereo TOC plus payload
++ * fill), so the test needs no fate-suite samples: split/resync
++ * counts, byte-exact slices, per-frame sizes, keyframes and params,
++ * the frame-end-offset return contract, and COMPLETE_FRAMES
++ * passthrough, each in whole, 13-byte and 1-byte feed modes.
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdint.h>
++
++#include "libavcodec/avcodec.h"
++#include "libavutil/channel_layout.h"
++#include "libavutil/mem.h"
++
++#define PAD AV_INPUT_BUFFER_PADDING_SIZE
++
++static int failures = 0;
++#define CHECK(cond, ...) do { \
++    if (!(cond)) { \
++        printf("FAIL: " __VA_ARGS__); printf("\n"); failures++; \
++    } \
++} while (0)
++
++/* Deterministic noise without stray sync bytes. */
++static uint32_t lcg_state;
++static void noise(uint8_t *d, int n, uint32_t seed)
++{
++    lcg_state = seed;
++    for (int i = 0; i < n; i++) {
++        int b;
++        lcg_state = lcg_state * 1103515245u + 12345u;
++        b = (lcg_state >> 16) & 0xFF;
++        d[i] = (b == 0xAC) ? 0xAD : b;
++    }
++}
++
++/* CRC-16, MSB-first, poly 0x8005, init 0 (test-local copy of the
++ * sync-layer rule: accept on zero remainder over the span). */
++static unsigned int crc16_update(unsigned int crc, const uint8_t *p, int len)
++{
++    for (int i = 0; i < len; i++) {
++        crc ^= (unsigned int) p[i] << 8;
++        for (int k = 0; k < 8; k++)
++            crc = (crc & 0x8000) ? ((crc << 1) ^ 0x8005) : (crc << 1);
++        crc &= 0xFFFF;
++    }
++    return crc;
++}
++
++/* Stored word making (span plus word) check to zero. The map from the
++ * 16 stored bits to the final remainder is bijective, so the search
++ * always terminates. */
++static unsigned int crc16_fix(const uint8_t *span, int len)
++{
++    unsigned int r = crc16_update(0, span, len);
++
++    for (int v = 0; v < 65536; v++) {
++        uint8_t tail[2] = { v >> 8, v & 0xFF };
++        if (crc16_update(r, tail, 2) == 0)
++            return v;
++    }
++    return 0;
++}
++
++typedef struct BitW {
++    uint8_t *d;
++    int bit;
++} BitW;
++
++static void put_bits(BitW *w, int n, unsigned int v)
++{
++    for (int i = n - 1; i >= 0; i--) {
++        if ((v >> i) & 1)
++            w->d[w->bit / 8] |= 1 << (7 - w->bit % 8);
++        w->bit++;
++    }
++}
++
++/* Minimal version-2 stereo TOC: presentation 0, group 0, one
++ * channel-coded bed element, channel_mode 2. All other fields take
++ * their zero/absent shape. */
++static int build_toc(uint8_t *raw, int bv, int seq, int fs, int rate,
++                     int ig, int n_pres)
++{
++    BitW w = { raw, 0 };
++
++    put_bits(&w, 2, bv);
++    put_bits(&w, 10, seq);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, fs);
++    put_bits(&w, 4, rate);
++    put_bits(&w, 1, ig);
++    if (n_pres) {
++        put_bits(&w, 1, 1);
++    } else {
++        put_bits(&w, 1, 0);
++        put_bits(&w, 1, 0);
++    }
++    put_bits(&w, 1, 0);
++    if (bv == 2)
++        put_bits(&w, 1, 0);
++    if (!n_pres)
++        return (w.bit + 7) / 8;
++    /* One v1 presentation record, group index 0. */
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 0);       /* presentation_version 0 */
++    put_bits(&w, 3, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 2, 0);       /* emdf substream/version/shape: absent */
++    put_bits(&w, 3, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 2, 0);
++    put_bits(&w, 2, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 3, 0);       /* group index */
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 2, 0);
++    /* Group 0 head: bed present, channel_mode 2 (stereo). */
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 0);
++    if (fs)
++        put_bits(&w, 1, 0);
++    return (w.bit + 7) / 8;
++}
++
++#define RAW_LEN 64
++#define F41_LEN (4 + RAW_LEN + 2)
++#define F40_LEN (4 + RAW_LEN)
++
++/* One synthetic AC41 frame. Mutations by parameter; the CRC always
++ * covers the stored bytes unless corrupt_crc asks to keep a stale one. */
++static int build_f41(uint8_t *d, int bv, int seq, int fs, int rate, int ig,
++                     int n_pres, uint32_t fill_seed, int corrupt_at)
++{
++    uint8_t raw[RAW_LEN];
++    int head_bytes;
++
++    memset(raw, 0, sizeof(raw));
++    head_bytes = build_toc(raw, bv, seq, fs, rate, ig, n_pres);
++    noise(raw + head_bytes, RAW_LEN - head_bytes, fill_seed);
++    d[0] = 0xAC;
++    d[1] = 0x41;
++    d[2] = RAW_LEN >> 8;
++    d[3] = RAW_LEN & 0xFF;
++    memcpy(d + 4, raw, RAW_LEN);
++    {
++        /* CRC over the length bytes plus raw, stored big-endian. */
++        unsigned int crc = crc16_fix(d + 2, 2 + RAW_LEN);
++        d[4 + RAW_LEN]     = crc >> 8;
++        d[4 + RAW_LEN + 1] = crc & 0xFF;
++    }
++    if (corrupt_at >= 0)
++        d[4 + corrupt_at] ^= 0xFF;
++    else if (corrupt_at == -2)
++        d[4 + RAW_LEN] ^= 0x01;
++    return F41_LEN;
++}
++
++typedef struct {
++    uint8_t *bytes;
++    int nbytes, cap;
++    int nsizes;
++    int sizes[8];
++    int kf[8];
++    int sr[8], dur[8], ch[8];
++    uint64_t mask[8];
++    int first_len;   /* first parse return in whole mode */
++    int consumed;
++} Got;
++
++static void run_stream(const uint8_t *data, int size, int chunk, Got *g)
++{
++    AVCodecParserContext *pc;
++    AVCodecContext *avctx;
++    int off = 0, iters = 0, first = 1;
++    int cap_iters = size * 4 + 100;
++
++    memset(g, 0, sizeof(*g));
++    g->first_len = -1;
++    avctx = avcodec_alloc_context3(NULL);
++    avctx->codec_id = AV_CODEC_ID_AC4;
++    pc = av_parser_init(AV_CODEC_ID_AC4);
++    for (;;) {
++        uint8_t *out = NULL;
++        int out_size = 0, n, len;
++
++        if (off < size)
++            n = chunk > 0 ? (chunk < size - off ? chunk : size - off)
++                          : size - off;
++        else
++            n = 0;
++        len = av_parser_parse2(pc, avctx, &out, &out_size,
++                               data + off, n, AV_NOPTS_VALUE,
++                               AV_NOPTS_VALUE, off);
++        if (first && chunk == 0) {
++            g->first_len = len;
++            first = 0;
++        }
++        if (len < 0 || len > n) {
++            printf("  parser returned %d for %d input bytes\n", len, n);
++            failures++;
++            break;
++        }
++        off += len;
++        if (out_size > 0) {
++            int i = g->nsizes;
++            if (g->nbytes + out_size > g->cap) {
++                g->cap = (g->nbytes + out_size) * 2 + 64;
++                g->bytes = realloc(g->bytes, g->cap);
++            }
++            memcpy(g->bytes + g->nbytes, out, out_size);
++            g->nbytes += out_size;
++            if (i < 8) {
++                g->sizes[i] = out_size;
++                g->kf[i]    = pc->key_frame;
++                g->sr[i]    = avctx->sample_rate;
++                g->dur[i]   = (int) pc->duration;
++                g->ch[i]    = avctx->ch_layout.nb_channels;
++                g->mask[i]  = avctx->ch_layout.order ==
++                              AV_CHANNEL_ORDER_NATIVE
++                              ? avctx->ch_layout.u.mask : 0;
++            }
++            g->nsizes++;
++        }
++        if (n == 0 && out_size == 0)
++            break;
++        if (++iters > cap_iters) {
++            printf("  TOO MANY ITERS (no progress)\n");
++            failures++;
++            break;
++        }
++    }
++    g->consumed = off;
++    av_parser_close(pc);
++    avcodec_free_context(&avctx);
++}
++
++typedef struct {
++    const char *name;
++    int nframes;
++    int sizes[4];
++    int kf[4];
++    int sr[4];       /* -1 = skip (bed bail keeps params untouched) */
++    int firstend;    /* expected first parse return in whole mode */
++} Expect;
++
++static void check_vec(const char *tag, const uint8_t *data, int size,
++                      const Expect *e, int chunk,
++                      const int (*slices)[2], int nslices)
++{
++    Got g;
++    int exp_bytes = 0;
++
++    run_stream(data, size, chunk, &g);
++    for (int i = 0; i < nslices; i++)
++        exp_bytes += slices[i][1] - slices[i][0];
++    CHECK(g.consumed == size, "%s c%d: consumed %d != %d",
++          tag, chunk, g.consumed, size);
++    CHECK(g.nsizes == e->nframes, "%s c%d: frames %d != %d",
++          tag, chunk, g.nsizes, e->nframes);
++    CHECK(g.nbytes == exp_bytes, "%s c%d: bytes %d != %d",
++          tag, chunk, g.nbytes, exp_bytes);
++    if (chunk == 0 && e->firstend >= 0)
++        CHECK(g.first_len == e->firstend, "%s: first return %d != %d",
++              tag, g.first_len, e->firstend);
++    for (int i = 0; i < e->nframes && i < g.nsizes; i++)
++        CHECK(g.sizes[i] == e->sizes[i], "%s c%d: f%d size %d != %d",
++              tag, chunk, i, g.sizes[i], e->sizes[i]);
++    {
++        int p = 0;
++        for (int i = 0; i < nslices; i++) {
++            int a = slices[i][0], b = slices[i][1];
++            if (p + (b - a) <= g.nbytes && b <= size)
++                CHECK(memcmp(g.bytes + p, data + a, b - a) == 0,
++                      "%s c%d: slice [%d,%d) mismatch", tag, chunk, a, b);
++            p += b - a;
++        }
++    }
++    for (int i = 0; i < e->nframes && i < g.nsizes; i++) {
++        CHECK(g.kf[i] == e->kf[i], "%s c%d: f%d kf %d != %d",
++              tag, chunk, i, g.kf[i], e->kf[i]);
++        if (e->sr[i] < 0)
++            continue;
++        CHECK(g.sr[i] == e->sr[i], "%s c%d: f%d sr %d != %d",
++              tag, chunk, i, g.sr[i], e->sr[i]);
++        CHECK(g.dur[i] == 2048, "%s c%d: f%d dur %d != 2048",
++              tag, chunk, i, g.dur[i]);
++        CHECK(g.ch[i] == 2, "%s c%d: f%d ch %d != 2",
++              tag, chunk, i, g.ch[i]);
++        CHECK(g.mask[i] == (uint64_t) AV_CH_LAYOUT_STEREO,
++              "%s c%d: f%d not stereo", tag, chunk, i);
++    }
++    free(g.bytes);
++}
++
++static void run_case(const char *tag, uint8_t *data, int size,
++                     const Expect *e, const int (*slices)[2], int nslices)
++{
++    static const int chunks[] = { 0, 13, 1 };
++    for (unsigned i = 0; i < sizeof(chunks) / sizeof(chunks[0]); i++)
++        check_vec(tag, data, size, e, chunks[i], slices, nslices);
++}
++
++static void run_complete(const uint8_t *data, int size, const char *tag,
++                         int exp_kf, int exp_sr)
++{
++    AVCodecParserContext *pc;
++    AVCodecContext *avctx;
++    uint8_t *out = NULL;
++    int out_size = 0, len;
++
++    avctx = avcodec_alloc_context3(NULL);
++    avctx->codec_id = AV_CODEC_ID_AC4;
++    pc = av_parser_init(AV_CODEC_ID_AC4);
++    pc->flags |= PARSER_FLAG_COMPLETE_FRAMES;
++    len = av_parser_parse2(pc, avctx, &out, &out_size, data, size,
++                           AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
++    CHECK(len == size, "%s: consumed %d != %d", tag, len, size);
++    CHECK(out_size == size, "%s: passthrough %d != %d", tag, out_size, size);
++    if (out_size == size && size > 0)
++        CHECK(memcmp(out, data, size) == 0, "%s: bytes mutated", tag);
++    CHECK(pc->key_frame == exp_kf, "%s: kf %d != %d",
++          tag, pc->key_frame, exp_kf);
++    if (exp_sr > 0) {
++        CHECK(avctx->sample_rate == exp_sr, "%s: sr %d != %d",
++              tag, avctx->sample_rate, exp_sr);
++        CHECK(pc->duration == 2048, "%s: dur %d != 2048", tag,
++              (int) pc->duration);
++        CHECK(avctx->ch_layout.nb_channels == 2, "%s: ch %d != 2",
++              tag, avctx->ch_layout.nb_channels);
++    } else if (size > 0) {
++        CHECK(avctx->sample_rate == 0, "%s: sr touched %d", tag,
++              avctx->sample_rate);
++    }
++    av_parser_close(pc);
++    avcodec_free_context(&avctx);
++}
++
++/* Standard stereo frame: bv2, rate 13 (48 kHz grid), iframe. */
++static int std_frame(uint8_t *d, int seq, uint32_t seed)
++{
++    return build_f41(d, 2, seq, 1, 13, 1, 1, seed, -1);
++}
++
++int main(void)
++{
++    static uint8_t data[4096 + PAD];
++    uint8_t *pad = data + 4096;
++
++    memset(pad, 0, PAD);
++
++    /* Three-frame chain, the base of most vectors. */
++    {
++        static const Expect e =
++            { "chain3", 3, { 70, 70, 70 }, { 1, 1, 1 },
++              { 48000, 48000, 48000 }, 70 };
++        static const int slices[][2] = { { 0, 210 } };
++        int p = 0;
++        p += std_frame(data + p, 0, 101);
++        p += std_frame(data + p, 1, 102);
++        p += std_frame(data + p, 2, 103);
++        run_case("chain3", data, p, &e, slices, 1);
++    }
++
++    /* Noise around and between frames still yields the chain. */
++    {
++        static const Expect e =
++            { "noise", 3, { 70, 70, 70 }, { 1, 1, 1 },
++              { 48000, 48000, 48000 }, 64 + 70 };
++        static const int slices[][2] = { { 64, 134 }, { 171, 311 } };
++        int p = 0;
++        noise(data + p, 64, 11);
++        p += 64;
++        p += std_frame(data + p, 0, 101);
++        noise(data + p, 37, 22);
++        p += 37;
++        p += std_frame(data + p, 1, 102);
++        p += std_frame(data + p, 2, 103);
++        run_case("noise", data, p, &e, slices, 2);
++    }
++
++    /* Trailing noise after the last emit drops (t03 shape). */
++    {
++        static const Expect e =
++            { "noise-suffix", 3, { 70, 70, 70 }, { 1, 1, 1 },
++              { 48000, 48000, 48000 }, 70 };
++        static const int slices[][2] = { { 0, 210 } };
++        int p = 0;
++        p += std_frame(data + p, 0, 101);
++        p += std_frame(data + p, 1, 102);
++        p += std_frame(data + p, 2, 103);
++        noise(data + p, 100, 33);
++        p += 100;
++        run_case("noise-suffix", data, p, &e, slices, 1);
++    }
++
++    /* Byte patterns that look sync-adjacent never match the marker. */
++    {
++        static const Expect e =
++            { "lookalike", 3, { 70, 70, 70 }, { 1, 1, 1 },
++              { 48000, 48000, 48000 }, 274 };
++        static const int slices[][2] = { { 64, 274 } };
++        int p = 0;
++        for (int i = 0; i < 16; i++) {
++            data[p++] = 0x40;
++            data[p++] = 0xAC;
++            data[p++] = 0x41;
++            data[p++] = 0xAC;
++        }
++        p += std_frame(data + p, 0, 101);
++        p += std_frame(data + p, 1, 102);
++        p += std_frame(data + p, 2, 103);
++        run_case("lookalike", data, p, &e, slices, 1);
++    }
++
++    /* Corrupt payload with the original CRC: the frame drops. */
++    {
++        static const Expect e =
++            { "crc-mid", 2, { 70, 70 }, { 1, 1 },
++              { 48000, 48000 }, 70 };
++        static const int slices[][2] = { { 0, 70 }, { 140, 210 } };
++        int p = 0;
++        p += std_frame(data + p, 0, 101);
++        p += build_f41(data + p, 2, 1, 1, 13, 1, 1, 102, 10);
++        p += std_frame(data + p, 2, 103);
++        run_case("crc-mid", data, p, &e, slices, 2);
++    }
++
++    /* All CRCs bad: nothing, clean EOF, no hang. */
++    {
++        static const Expect e = { "crc-all", 0, { 0 }, { 0 }, { 0 }, 210 };
++        int p = 0;
++        p += build_f41(data + p, 2, 0, 1, 13, 1, 1, 101, 50);
++        p += build_f41(data + p, 2, 1, 1, 13, 1, 1, 102, 50);
++        p += build_f41(data + p, 2, 2, 1, 13, 1, 1, 103, 50);
++        run_case("crc-all", data, p, &e, NULL, 0);
++    }
++
++    /* A corrupt stored word drops only its own frame. */
++    {
++        static const Expect e =
++            { "crc-field", 2, { 70, 70 }, { 1, 1 },
++              { 48000, 48000 }, 140 };
++        static const int slices[][2] = { { 70, 210 } };
++        int p = 0;
++        p += build_f41(data + p, 2, 0, 1, 13, 1, 1, 101, -2);
++        p += std_frame(data + p, 1, 102);
++        p += std_frame(data + p, 2, 103);
++        run_case("crc-field", data, p, &e, slices, 1);
++    }
++
++    /* Truncations: complete frames emit, stubs vanish. */
++    {
++        static const Expect e =
++            { "trunc-tail", 2, { 70, 70 }, { 1, 1 },
++              { 48000, 48000 }, 70 };
++        static const int slices[][2] = { { 0, 140 } };
++        int p = 0;
++        p += std_frame(data + p, 0, 101);
++        p += std_frame(data + p, 1, 102);
++        p += std_frame(data + p, 2, 103);
++        run_case("trunc-tail", data, 170, &e, slices, 1);
++    }
++    {
++        static const Expect e =
++            { "trunc-head", 2, { 70, 70 }, { 1, 1 },
++              { 48000, 48000 }, 70 };
++        static const int slices[][2] = { { 0, 140 } };
++        int p = 0;
++        p += std_frame(data + p, 0, 101);
++        p += std_frame(data + p, 1, 102);
++        p += std_frame(data + p, 2, 103);
++        run_case("trunc-head", data, 143, &e, slices, 1);
++    }
++    {
++        static const Expect e = { "stub", 0, { 0 }, { 0 }, { 0 }, 40 };
++        int p = 0;
++        p += std_frame(data + p, 0, 101);
++        run_case("stub", data, 40, &e, NULL, 0);
++    }
++    {
++        /* Extended-length header with no payload behind it. */
++        static const Expect e = { "ext-stub", 0, { 0 }, { 0 }, { 0 }, 7 };
++        static const uint8_t stub[7] =
++            { 0xAC, 0x41, 0xFF, 0xFF, 0x00, 0x00, 0x40 };
++        memcpy(data, stub, sizeof(stub));
++        run_case("ext-stub", data, 7, &e, NULL, 0);
++    }
++
++    /* Extended length carrying a real frame splits wider. */
++    {
++        static const Expect e =
++            { "extlen", 3, { 73, 70, 70 }, { 1, 1, 1 },
++              { 48000, 48000, 48000 }, 73 };
++        static const int slices[][2] = { { 0, 213 } };
++        uint8_t f0[F41_LEN];
++        int p = 0, raw_len = RAW_LEN;
++        std_frame(f0, 0, 101);
++        data[p++] = 0xAC;
++        data[p++] = 0x41;
++        data[p++] = 0xFF;
++        data[p++] = 0xFF;
++        data[p++] = (raw_len >> 16) & 0xFF;
++        data[p++] = (raw_len >> 8) & 0xFF;
++        data[p++] = raw_len & 0xFF;
++        memcpy(data + p, f0 + 4, raw_len);
++        p += raw_len;
++        {
++            /* CRC over the 5 length bytes plus raw. */
++            unsigned int crc = crc16_fix(data + 2, 5 + raw_len);
++            data[p++] = crc >> 8;
++            data[p++] = crc & 0xFF;
++        }
++        p += std_frame(data + p, 1, 102);
++        p += std_frame(data + p, 2, 103);
++        run_case("extlen", data, p, &e, slices, 1);
++    }
++
++    /* A length claim past EOF drops the head and resyncs behind it.
++     * The absurd claim rejects before buffering (n1), so the first
++     * call already emits f1: 73 skipped + 70 emitted. */
++    {
++        static const Expect e =
++            { "extlen-huge", 2, { 70, 70 }, { 1, 1 },
++              { 48000, 48000 }, 143 };
++        static const int slices[][2] = { { 73, 213 } };
++        uint8_t f0[F41_LEN];
++        int p = 0;
++        std_frame(f0, 0, 101);
++        data[p++] = 0xAC;
++        data[p++] = 0x41;
++        data[p++] = 0xFF;
++        data[p++] = 0xFF;
++        data[p++] = 0xFF;
++        data[p++] = 0xFF;
++        data[p++] = 0xFF;
++        memcpy(data + p, f0 + 4, RAW_LEN);
++        p += RAW_LEN;
++        data[p++] = f0[4 + RAW_LEN];
++        data[p++] = f0[4 + RAW_LEN + 1];
++        p += std_frame(data + p, 1, 102);
++        p += std_frame(data + p, 2, 103);
++        run_case("extlen-huge", data, p, &e, slices, 1);
++    }
++
++    /* A 5-byte split extended header (t13 shape): want-more-data,
++     * then nothing at EOF. */
++    {
++        static const Expect e = { "ext-split5", 0, { 0 }, { 0 }, { 0 }, 5 };
++        static const uint8_t stub[5] = { 0xAC, 0x41, 0xFF, 0xFF, 0x00 };
++        memcpy(data, stub, sizeof(stub));
++        run_case("ext-split5", data, 5, &e, NULL, 0);
++    }
++
++    /* Reserved rate rows fail the TOC gate; the chain survives. */
++    for (int rate = 14; rate <= 15; rate++) {
++        char tag[16];
++        static const int slices[][2] = { { 0, 70 }, { 140, 210 } };
++        Expect e = { tag, 2, { 70, 70 }, { 1, 1 },
++                     { 48000, 48000 }, 70 };
++        int p = 0;
++        snprintf(tag, sizeof(tag), "rate%d", rate);
++        p += std_frame(data + p, 0, 101);
++        p += build_f41(data + p, 2, 1, 1, rate, 1, 1, 102, -1);
++        p += std_frame(data + p, 2, 103);
++        run_case(tag, data, p, &e, slices, 2);
++    }
++
++    /* A rate reject on the first frame still resyncs (t17b shape). */
++    {
++        static const Expect e =
++            { "rate14-f0", 2, { 70, 70 }, { 1, 1 },
++              { 48000, 48000 }, 140 };
++        static const int slices[][2] = { { 70, 210 } };
++        int p = 0;
++        p += build_f41(data + p, 2, 0, 1, 14, 1, 1, 101, -1);
++        p += std_frame(data + p, 1, 102);
++        p += std_frame(data + p, 2, 103);
++        run_case("rate14-f0", data, p, &e, slices, 1);
++    }
++
++    /* The 44.1 kHz grid flag switches the reported rate. */
++    {
++        static const Expect e =
++            { "fs-flip", 3, { 70, 70, 70 }, { 1, 1, 1 },
++              { 48000, 44100, 48000 }, 70 };
++        static const int slices[][2] = { { 0, 210 } };
++        int p = 0;
++        p += std_frame(data + p, 0, 101);
++        p += build_f41(data + p, 2, 1, 0, 13, 1, 1, 102, -1);
++        p += std_frame(data + p, 2, 103);
++        run_case("fs-flip", data, p, &e, slices, 1);
++    }
++
++    /* A cleared iframe bit clears the keyframe flag only. */
++    {
++        static const Expect e =
++            { "ig-clear", 3, { 70, 70, 70 }, { 0, 1, 1 },
++              { 48000, 48000, 48000 }, 70 };
++        static const int slices[][2] = { { 0, 210 } };
++        int p = 0;
++        p += build_f41(data + p, 2, 0, 1, 13, 0, 1, 101, -1);
++        p += std_frame(data + p, 1, 102);
++        p += std_frame(data + p, 2, 103);
++        run_case("ig-clear", data, p, &e, slices, 1);
++    }
++
++    /* Bare chains anchor head-to-head with no checksums. */
++    {
++        static const Expect e =
++            { "ac40-chain", 3, { 68, 68, 68 }, { 1, 1, 1 },
++              { 48000, 48000, 48000 }, 68 };
++        static const int slices[][2] = { { 0, 204 } };
++        uint8_t f[F41_LEN];
++        int p = 0;
++        for (int i = 0; i < 3; i++) {
++            std_frame(f, i, 101 + i);
++            data[p++] = 0xAC;
++            data[p++] = 0x40;
++            memcpy(data + p, f + 2, 2 + RAW_LEN);
++            p += 2 + RAW_LEN;
++        }
++        run_case("ac40-chain", data, p, &e, slices, 1);
++    }
++
++    /* A mixed bare/checksummed chain anchors across kinds (t26). */
++    {
++        static const Expect e =
++            { "mixed40-41", 3, { 68, 70, 70 }, { 1, 1, 1 },
++              { 48000, 48000, 48000 }, 68 };
++        static const int slices[][2] = { { 0, 208 } };
++        uint8_t f[F41_LEN];
++        int p = 0;
++        std_frame(f, 0, 101);
++        data[p++] = 0xAC;
++        data[p++] = 0x40;
++        memcpy(data + p, f + 2, 2 + RAW_LEN);
++        p += 2 + RAW_LEN;
++        p += std_frame(data + p, 1, 102);
++        p += std_frame(data + p, 2, 103);
++        run_case("mixed40-41", data, p, &e, slices, 1);
++    }
++
++    /* A lone frame ending exactly at EOF still emits (TOR-1). */
++    {
++        static const Expect e =
++            { "single41", 1, { 70 }, { 1 }, { 48000 }, 70 };
++        static const int slices[][2] = { { 0, 70 } };
++        uint8_t f[F41_LEN];
++        std_frame(f, 1, 102);
++        run_case("single41", f, 70, &e, slices, 1);
++    }
++    {
++        static const Expect e =
++            { "single40", 1, { 68 }, { 1 }, { 48000 }, 68 };
++        static const int slices[][2] = { { 0, 68 } };
++        uint8_t f[F41_LEN], b[F40_LEN];
++        std_frame(f, 1, 102);
++        b[0] = 0xAC;
++        b[1] = 0x40;
++        memcpy(b + 2, f + 2, 2 + RAW_LEN);
++        run_case("single40", b, 68, &e, slices, 1);
++    }
++
++    /* A bare frame with neither anchor nor EOF behind it drops. */
++    {
++        static const Expect e = { "naked40", 0, { 0 }, { 0 }, { 0 }, 128 };
++        uint8_t f[F41_LEN];
++        int p = 0;
++        std_frame(f, 1, 102);
++        data[p++] = 0xAC;
++        data[p++] = 0x40;
++        memcpy(data + p, f + 2, 2 + RAW_LEN);
++        p += 2 + RAW_LEN;
++        noise(data + p, 60, 55);
++        p += 60;
++        run_case("naked40", data, p, &e, NULL, 0);
++    }
++
++    /* A bare head embedded in noise with no anchor drops (t24). */
++    {
++        static const Expect e = { "false-embed", 0, { 0 }, { 0 }, { 0 }, 104 };
++        int p = 0;
++        noise(data + p, 20, 66);
++        p += 20;
++        data[p++] = 0xAC;
++        data[p++] = 0x40;
++        data[p++] = 0x00;
++        data[p++] = 0x32;
++        noise(data + p, 80, 77);
++        p += 80;
++        run_case("false-embed", data, p, &e, NULL, 0);
++    }
++
++    /* The pathological bare embed false-locks but recovers bounded
++     * (TOR-2): the bogus frame emits, then the chain re-locks. */
++    {
++        static const Expect e =
++            { "falsechain", 3, { 100, 70, 70 }, { 1, 1, 1 },
++              { -1, 48000, 48000 }, 110 };
++        static const int slices[][2] = { { 10, 250 } };
++        uint8_t f[F41_LEN];
++        int p = 0;
++        std_frame(f, 1, 102);
++        noise(data + p, 10, 88);
++        p += 10;
++        data[p++] = 0xAC;
++        data[p++] = 0x40;
++        data[p++] = 0;
++        data[p++] = 96;
++        memcpy(data + p, f + 4, 7);   /* plausible head, garbage tail */
++        p += 7;
++        noise(data + p, 89, 89);
++        p += 89;
++        memcpy(data + p, f, 70);
++        p += 70;
++        std_frame(data + p, 2, 103);
++        p += 70;
++        run_case("falsechain", data, p, &e, slices, 1);
++    }
++
++    /* The sequence counter never rejects. */
++    {
++        static const Expect e =
++            { "seq", 3, { 70, 70, 70 }, { 1, 1, 1 },
++              { 48000, 48000, 48000 }, 70 };
++        static const int slices[][2] = { { 0, 210 } };
++        int p = 0;
++        p += build_f41(data + p, 2, 0, 1, 13, 1, 1, 101, -1);
++        p += build_f41(data + p, 2, 500, 1, 13, 1, 1, 102, -1);
++        p += std_frame(data + p, 2, 103);
++        run_case("seq", data, p, &e, slices, 1);
++    }
++
++    /* A bed walk that bails leaves params untouched past key_frame. */
++    {
++        static const Expect e =
++            { "bed-bail", 1, { 70 }, { 1 }, { -1 }, 70 };
++        static const int slices[][2] = { { 0, 70 } };
++        uint8_t f[F41_LEN];
++        build_f41(f, 2, 0, 1, 13, 1, 0, 101, -1);
++        run_case("bed-bail", f, 70, &e, slices, 1);
++        /* sr/dur/ch must read back zero on the emitted frame. */
++        {
++            AVCodecParserContext *pc;
++            AVCodecContext *avctx;
++            uint8_t *out = NULL;
++            int out_size = 0;
++            avctx = avcodec_alloc_context3(NULL);
++            avctx->codec_id = AV_CODEC_ID_AC4;
++            pc = av_parser_init(AV_CODEC_ID_AC4);
++            av_parser_parse2(pc, avctx, &out, &out_size, f, 70,
++                             AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
++            CHECK(out_size == 70, "bed-bail: out %d", out_size);
++            CHECK(pc->key_frame == 1, "bed-bail: kf %d", pc->key_frame);
++            CHECK(avctx->sample_rate == 0, "bed-bail: sr %d",
++                  avctx->sample_rate);
++            CHECK(pc->duration == 0, "bed-bail: dur %d",
++                  (int) pc->duration);
++            CHECK(avctx->ch_layout.nb_channels == 0, "bed-bail: ch %d",
++                  avctx->ch_layout.nb_channels);
++            av_parser_close(pc);
++            avcodec_free_context(&avctx);
++        }
++    }
++
++    /* A version-1 frame whose presentation record truncates after
++     * the head: the bed walk bails on budget, the frame still emits,
++     * and params stay untouched past key_frame. */
++    {
++        static const Expect e =
++            { "p1hostile", 1, { 9 }, { 1 }, { -1 }, 9 };
++        static const int slices[][2] = { { 0, 9 } };
++        uint8_t f[9] = { 0xAC, 0x41, 0, 3, 0, 0, 0, 0, 0 };
++        BitW w = { f + 4, 0 };
++        put_bits(&w, 2, 1);
++        put_bits(&w, 10, 7);
++        put_bits(&w, 1, 0);
++        put_bits(&w, 1, 1);
++        put_bits(&w, 4, 5);
++        put_bits(&w, 1, 1);
++        put_bits(&w, 1, 1);
++        put_bits(&w, 1, 0);
++        {
++            unsigned int crc = crc16_fix(f + 2, 5);
++            f[7] = crc >> 8;
++            f[8] = crc & 0xFF;
++        }
++        run_case("p1hostile", f, 9, &e, slices, 1);
++        {
++            AVCodecParserContext *pc;
++            AVCodecContext *avctx;
++            uint8_t *out = NULL;
++            int out_size = 0;
++            avctx = avcodec_alloc_context3(NULL);
++            avctx->codec_id = AV_CODEC_ID_AC4;
++            pc = av_parser_init(AV_CODEC_ID_AC4);
++            av_parser_parse2(pc, avctx, &out, &out_size, f, 9,
++                             AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
++            CHECK(out_size == 9, "p1hostile: out %d", out_size);
++            CHECK(pc->key_frame == 1, "p1hostile: kf %d", pc->key_frame);
++            CHECK(avctx->sample_rate == 0, "p1hostile: sr %d",
++                  avctx->sample_rate);
++            CHECK(pc->duration == 0, "p1hostile: dur %d",
++                  (int) pc->duration);
++            CHECK(avctx->ch_layout.nb_channels == 0, "p1hostile: ch %d",
++                  avctx->ch_layout.nb_channels);
++            av_parser_close(pc);
++            avcodec_free_context(&avctx);
++        }
++    }
++
++    /* Noise-only and empty inputs: nothing, clean EOF, no hang. */
++    {
++        static const Expect e0 = { "empty", 0, { 0 }, { 0 }, { 0 }, 0 };
++        static const Expect e7 = { "noise-only", 0, { 0 }, { 0 }, { 0 }, 256 };
++        noise(data, 256, 44);
++        run_case("noise-only", data, 256, &e7, NULL, 0);
++        run_case("empty", data, 0, &e0, NULL, 0);
++    }
++
++    /* COMPLETE_FRAMES passes raw frames through and only probes. */
++    {
++        uint8_t f[F41_LEN];
++        std_frame(f, 0, 101);
++        run_complete(f + 4, RAW_LEN, "complete/raw", 1, 48000);
++        /* All-ones fail the head parse (version escape overflows). */
++        memset(data, 0xFF, 40);
++        run_complete(data, 40, "complete/garbage", -1, 0);
++        run_complete(NULL, 0, "complete/empty", -1, 0);
++    }
++
++    if (failures == 0)
++        printf("ALL AC-4 PARSER TESTS PASSED\n");
++    else
++        printf("%d FAILURES\n", failures);
++    return failures != 0;
++}
+diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
+index abdc031..440953c 100644
+--- a/tests/fate/ac4.mak
++++ b/tests/fate/ac4.mak
+@@ -93,4 +93,15 @@ fate-ac4-mpegts-probe: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -v 0 -bitexact \
+ FATE_FFMPEG += $(FATE_AC4_MPEGTS_PMT-yes)
+ FATE_FFPROBE += $(FATE_AC4_MPEGTS_PROBE-yes)
+ 
+-fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes)
++# AC-4 parser tests. The vectors are synthesized inside the test tool,
++# so this needs no fate-suite samples.
++FATE_AC4_PARSE-$(CONFIG_AC4_PARSER) += fate-ac4-parser
++fate-ac4-parser: $(APITESTSDIR)/api-ac4-parser-test$(EXESUF)
++fate-ac4-parser: CMD = run $(APITESTSDIR)/api-ac4-parser-test$(EXESUF)
++fate-ac4-parser: CMP = null
++
++FATE-yes += $(FATE_AC4_PARSE-yes)
++
++fate-ac4-parse: $(FATE_AC4_PARSE-yes)
++
++fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes)
+-- 
+2.56.0
+
+From 0747972024798f32a2ae2ca79fd83a970d3074fc Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 04:07:57 -0400
+Subject: [PATCH 5/6] fate: add self-contained ac4 mp4 mux/demux roundtrip test
+
+Upstream will not take a testless mux/demux pair. New
+api-ac4-mp4-roundtrip-test synthesizes its vectors in code, so the
+suite needs no uploaded samples: bare raw_ac4_frame packets (the same
+minimal version-2 stereo TOC shape as fate-ac4-parser) plus AC40, AC41
+and ext-len AC41 Annex G framings with CRCs solved per frame, muxed to
+MP4 and demuxed back, asserting dac4 payload byte-exact vs the DSI
+golden at both the box level and the demux extradata level, stsz ==
+packets == 4, byte-identical payloads, and post-parse 48 kHz stereo
+params. Three negatives fail loud: mux without extradata refuses
+EINVAL, a file cut inside dac4 and a dac4 box claiming a 2-byte payload
+both fail open with INVALIDDATA. Wired as fate-ac4-mp4-roundtrip behind
+MP4_MUXER + MOV_DEMUXER + AC4_PARSER.
+
+Rebased onto Series C: appends to the C-created tests/fate/ac4.mak
+(and extends the fate-ac4 aggregate) instead of creating it.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ tests/api/Makefile                     |   1 +
+ tests/api/api-ac4-mp4-roundtrip-test.c | 691 +++++++++++++++++++++++++
+ tests/fate/ac4.mak                     |  14 +-
+ 3 files changed, 704 insertions(+), 2 deletions(-)
+ create mode 100644 tests/api/api-ac4-mp4-roundtrip-test.c
+
+diff --git a/tests/api/Makefile b/tests/api/Makefile
+index 751c84e..8beff3f 100644
+--- a/tests/api/Makefile
++++ b/tests/api/Makefile
+@@ -11,6 +11,7 @@ APITESTPROGS-$(HAVE_THREADS) += api-threadmessage
+ APITESTPROGS-$(CONFIG_AVCODEC) += api-enc-info
+ APITESTPROGS-$(call ALLYES, H261_ENCODER H261_PARSER) += api-enc-parser
+ APITESTPROGS-$(CONFIG_AC4_PARSER) += api-ac4-parser
++APITESTPROGS-$(call ALLYES, MP4_MUXER MOV_DEMUXER AC4_PARSER) += api-ac4-mp4-roundtrip
+ APITESTPROGS += $(APITESTPROGS-yes)
+ 
+ APITESTOBJS  := $(APITESTOBJS:%=$(APITESTSDIR)%) $(APITESTPROGS:%=$(APITESTSDIR)/%-test.o)
+diff --git a/tests/api/api-ac4-mp4-roundtrip-test.c b/tests/api/api-ac4-mp4-roundtrip-test.c
+new file mode 100644
+index 0000000..c14dd10
+--- /dev/null
++++ b/tests/api/api-ac4-mp4-roundtrip-test.c
+@@ -0,0 +1,691 @@
++/*
++ * AC-4 MP4 mux/demux roundtrip test.
++ * Copyright (c) 2026 Michael Rowlinson
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file
++ * Self-contained AC-4 MP4 roundtrip tests. Bare raw_ac4_frame vectors
++ * are synthesized in code (the same minimal version-2 stereo TOC shape
++ * as api-ac4-parser-test), muxed to MP4, demuxed back, and checked for
++ * dac4/extradata byte-exactness, stsz/packet counts and byte-identical
++ * payloads. Framed (Annex G) inputs cover the mux strip path; mux and
++ * demux negatives must fail loud. No fate-suite samples needed.
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdint.h>
++
++#include "libavformat/avformat.h"
++#include "libavcodec/avcodec.h"
++#include "libavutil/channel_layout.h"
++#include "libavutil/error.h"
++#include "libavutil/mem.h"
++
++static int failures = 0;
++#define CHECK(cond, ...) do { \
++    if (!(cond)) { \
++        printf("FAIL: " __VA_ARGS__); printf("\n"); failures++; \
++    } \
++} while (0)
++
++/* Deterministic noise without stray sync bytes. */
++static uint32_t lcg_state;
++static void noise(uint8_t *d, int n, uint32_t seed)
++{
++    lcg_state = seed;
++    for (int i = 0; i < n; i++) {
++        int b;
++        lcg_state = lcg_state * 1103515245u + 12345u;
++        b = (lcg_state >> 16) & 0xFF;
++        d[i] = (b == 0xAC) ? 0xAD : b;
++    }
++}
++
++/* CRC-16, MSB-first, poly 0x8005, init 0 (test-local copy of the
++ * sync-layer rule: accept on zero remainder over the span). */
++static unsigned int crc16_update(unsigned int crc, const uint8_t *p, int len)
++{
++    for (int i = 0; i < len; i++) {
++        crc ^= (unsigned int) p[i] << 8;
++        for (int k = 0; k < 8; k++)
++            crc = (crc & 0x8000) ? ((crc << 1) ^ 0x8005) : (crc << 1);
++        crc &= 0xFFFF;
++    }
++    return crc;
++}
++
++/* Stored word making (span plus word) check to zero. The map from the
++ * 16 stored bits to the final remainder is bijective, so the search
++ * always terminates. */
++static unsigned int crc16_fix(const uint8_t *span, int len)
++{
++    unsigned int r = crc16_update(0, span, len);
++
++    for (int v = 0; v < 65536; v++) {
++        uint8_t tail[2] = { v >> 8, v & 0xFF };
++        if (crc16_update(r, tail, 2) == 0)
++            return v;
++    }
++    return 0;
++}
++
++typedef struct BitW {
++    uint8_t *d;
++    int bit;
++} BitW;
++
++static void put_bits(BitW *w, int n, unsigned int v)
++{
++    for (int i = n - 1; i >= 0; i--) {
++        if ((v >> i) & 1)
++            w->d[w->bit / 8] |= 1 << (7 - w->bit % 8);
++        w->bit++;
++    }
++}
++
++/* Minimal version-2 stereo TOC: presentation 0, group 0, one
++ * channel-coded bed element, channel_mode 2. All other fields take
++ * their zero/absent shape. */
++static int build_toc(uint8_t *raw, int bv, int seq, int fs, int rate,
++                     int ig, int n_pres)
++{
++    BitW w = { raw, 0 };
++
++    put_bits(&w, 2, bv);
++    put_bits(&w, 10, seq);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, fs);
++    put_bits(&w, 4, rate);
++    put_bits(&w, 1, ig);
++    if (n_pres) {
++        put_bits(&w, 1, 1);
++    } else {
++        put_bits(&w, 1, 0);
++        put_bits(&w, 1, 0);
++    }
++    put_bits(&w, 1, 0);
++    if (bv == 2)
++        put_bits(&w, 1, 0);
++    if (!n_pres)
++        return (w.bit + 7) / 8;
++    /* One v1 presentation record, group index 0. */
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 0);       /* presentation_version 0 */
++    put_bits(&w, 3, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 2, 0);       /* emdf substream/version/shape: absent */
++    put_bits(&w, 3, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 2, 0);
++    put_bits(&w, 2, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 3, 0);       /* group index */
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 2, 0);
++    /* Group 0 head: bed present, channel_mode 2 (stereo). */
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 0);
++    if (fs)
++        put_bits(&w, 1, 0);
++    return (w.bit + 7) / 8;
++}
++
++#define RAW_LEN 64
++#define NFRAMES 4
++#define PKT_MAX 80
++
++/* One synthetic bare raw frame: bv2, 48 kHz grid, iframe. */
++static void build_raw(uint8_t *raw, int seq, uint32_t seed)
++{
++    int head_bytes;
++
++    memset(raw, 0, RAW_LEN);
++    head_bytes = build_toc(raw, 2, seq, 1, 13, 1, 1);
++    noise(raw + head_bytes, RAW_LEN - head_bytes, seed);
++}
++
++/* Annex G wrappers for the mux strip-path cases. CRCs solved per frame. */
++static int wrap_ac40(uint8_t *d, const uint8_t *raw)
++{
++    d[0] = 0xAC;
++    d[1] = 0x40;
++    d[2] = RAW_LEN >> 8;
++    d[3] = RAW_LEN & 0xFF;
++    memcpy(d + 4, raw, RAW_LEN);
++    return 4 + RAW_LEN;
++}
++
++static int wrap_ac41(uint8_t *d, const uint8_t *raw)
++{
++    unsigned int crc;
++
++    d[0] = 0xAC;
++    d[1] = 0x41;
++    d[2] = RAW_LEN >> 8;
++    d[3] = RAW_LEN & 0xFF;
++    memcpy(d + 4, raw, RAW_LEN);
++    /* CRC over the length bytes plus raw, stored big-endian. */
++    crc = crc16_fix(d + 2, 2 + RAW_LEN);
++    d[4 + RAW_LEN]     = crc >> 8;
++    d[4 + RAW_LEN + 1] = crc & 0xFF;
++    return 4 + RAW_LEN + 2;
++}
++
++static int wrap_ac41_ext(uint8_t *d, const uint8_t *raw)
++{
++    unsigned int crc;
++
++    d[0] = 0xAC;
++    d[1] = 0x41;
++    d[2] = 0xFF;
++    d[3] = 0xFF;
++    d[4] = (RAW_LEN >> 16) & 0xFF;
++    d[5] = (RAW_LEN >> 8) & 0xFF;
++    d[6] = RAW_LEN & 0xFF;
++    memcpy(d + 7, raw, RAW_LEN);
++    /* CRC over the 5 length bytes plus raw. */
++    crc = crc16_fix(d + 2, 5 + RAW_LEN);
++    d[7 + RAW_LEN]     = crc >> 8;
++    d[7 + RAW_LEN + 1] = crc & 0xFF;
++    return 7 + RAW_LEN + 2;
++}
++
++/* DSI golden: stereo 34 B payload (dashif shape, DSI-CONTRACT 5). */
++static const uint8_t dsi_golden[] = {
++    0x20, 0xa4, 0x01, 0x80, 0x96, 0x30, 0x00, 0x00,
++    0x00, 0x0f, 0xff, 0xff, 0xff, 0xf0, 0x01, 0x12,
++    0xf8, 0xa8, 0x00, 0x00, 0x42, 0x00, 0x00, 0x02,
++    0x50, 0x10, 0x00, 0x00, 0x03, 0x10, 0x99, 0x5b,
++    0x80, 0x80,
++};
++
++/* Minimal box reader for file-level asserts (stsz counts, dac4 bytes). */
++static uint32_t rb32(const uint8_t *p)
++{
++    return ((uint32_t) p[0] << 24) | ((uint32_t) p[1] << 16) |
++           ((uint32_t) p[2] << 8) | p[3];
++}
++
++/* First child box of type `want` in [start, end): payload range out,
++ * box head offset returned, -1 when absent. size 1/0 handled. */
++static int64_t find_box(const uint8_t *buf, int64_t start, int64_t end,
++                        uint32_t want, int64_t *pay_off, int64_t *pay_len)
++{
++    int64_t p = start;
++
++    while (p + 8 <= end) {
++        uint64_t size = rb32(buf + p);
++        uint32_t type = rb32(buf + p + 4);
++        int64_t head = 8;
++
++        if (size == 1) {
++            uint64_t hi, lo;
++            if (p + 16 > end)
++                return -1;
++            hi = rb32(buf + p + 8);
++            lo = rb32(buf + p + 12);
++            size = (hi << 32) | lo;
++            head = 16;
++        } else if (size == 0) {
++            size = end - p;
++        }
++        if (size < (uint64_t) head || p + (int64_t) size > end)
++            return -1;
++        if (type == want) {
++            *pay_off = p + head;
++            *pay_len = (int64_t) size - head;
++            return p;
++        }
++        p += size;
++    }
++    return -1;
++}
++
++static int64_t find_path(const uint8_t *buf, int64_t start, int64_t end,
++                         const uint32_t *types, int n,
++                         int64_t *pay_off, int64_t *pay_len)
++{
++    for (int i = 0; i < n; i++) {
++        if (find_box(buf, start, end, types[i], &start, pay_len) < 0)
++            return -1;
++        end = start + *pay_len;
++    }
++    *pay_off = start;
++    return start;
++}
++
++static uint8_t *read_file(const char *path, int *len_out)
++{
++    FILE *f = fopen(path, "rb");
++    uint8_t *buf;
++    long len;
++
++    if (!f)
++        return NULL;
++    fseek(f, 0, SEEK_END);
++    len = ftell(f);
++    fseek(f, 0, SEEK_SET);
++    if (len < 0 || len > 16 * 1024 * 1024) {
++        fclose(f);
++        return NULL;
++    }
++    buf = malloc(len + 1);
++    if (!buf) {
++        fclose(f);
++        return NULL;
++    }
++    if (len > 0 && fread(buf, 1, len, f) != (size_t) len) {
++        free(buf);
++        fclose(f);
++        return NULL;
++    }
++    fclose(f);
++    *len_out = (int) len;
++    return buf;
++}
++
++static int write_file(const char *path, const uint8_t *buf, int len)
++{
++    FILE *f = fopen(path, "wb");
++
++    if (!f)
++        return -1;
++    if (len > 0 && fwrite(buf, 1, len, f) != (size_t) len) {
++        fclose(f);
++        return -1;
++    }
++    fclose(f);
++    return 0;
++}
++
++static int mux_file(const char *path, uint8_t pkts[][PKT_MAX],
++                    const int *lens, int n,
++                    const uint8_t *dsi, int dsi_len)
++{
++    AVFormatContext *out = NULL;
++    AVStream *st;
++    AVPacket *pkt = NULL;
++    int ret, i;
++
++    ret = avformat_alloc_output_context2(&out, NULL, "mp4", path);
++    if (ret < 0 || !out)
++        return ret < 0 ? ret : AVERROR(ENOMEM);
++    st = avformat_new_stream(out, NULL);
++    if (!st) {
++        avformat_free_context(out);
++        return AVERROR(ENOMEM);
++    }
++    st->codecpar->codec_type  = AVMEDIA_TYPE_AUDIO;
++    st->codecpar->codec_id    = AV_CODEC_ID_AC4;
++    st->codecpar->sample_rate = 48000;
++    av_channel_layout_default(&st->codecpar->ch_layout, 2);
++    st->time_base = (AVRational){ 1, 48000 };
++    if (dsi) {
++        st->codecpar->extradata =
++            av_memdup(dsi, dsi_len + AV_INPUT_BUFFER_PADDING_SIZE);
++        if (!st->codecpar->extradata) {
++            avformat_free_context(out);
++            return AVERROR(ENOMEM);
++        }
++        memset(st->codecpar->extradata + dsi_len, 0,
++               AV_INPUT_BUFFER_PADDING_SIZE);
++        st->codecpar->extradata_size = dsi_len;
++    }
++
++    ret = avio_open(&out->pb, path, AVIO_FLAG_WRITE);
++    if (ret < 0) {
++        avformat_free_context(out);
++        return ret;
++    }
++    ret = avformat_write_header(out, NULL);
++    if (ret < 0)
++        goto done;
++    pkt = av_packet_alloc();
++    if (!pkt) {
++        ret = AVERROR(ENOMEM);
++        goto done;
++    }
++    for (i = 0; i < n; i++) {
++        ret = av_new_packet(pkt, lens[i]);
++        if (ret < 0)
++            break;
++        memcpy(pkt->data, pkts[i], lens[i]);
++        pkt->pts = pkt->dts = (int64_t) i * 2048;
++        pkt->duration = 2048;
++        pkt->stream_index = 0;
++        ret = av_interleaved_write_frame(out, pkt);
++        av_packet_unref(pkt);
++        if (ret < 0)
++            break;
++    }
++    if (ret >= 0)
++        ret = av_write_trailer(out);
++done:
++    av_packet_free(&pkt);
++    if (out->pb)
++        avio_closep(&out->pb);
++    avformat_free_context(out);
++    return ret;
++}
++
++#define TAG(a, b, c, d) \
++    (((uint32_t) (a) << 24) | ((uint32_t) (b) << 16) | \
++     ((uint32_t) (c) << 8) | (uint32_t) (d))
++
++/* stsz sample_count and per-sample sizes, straight from the boxes. */
++static int check_stsz(const char *tag, const uint8_t *buf, int len, int n)
++{
++    static const uint32_t path[] = {
++        TAG('m', 'o', 'o', 'v'), TAG('t', 'r', 'a', 'k'),
++        TAG('m', 'd', 'i', 'a'), TAG('m', 'i', 'n', 'f'),
++        TAG('s', 't', 'b', 'l'), TAG('s', 't', 's', 'z'),
++    };
++    int64_t off, plen;
++    uint32_t count, sample_size;
++    int i;
++
++    if (find_path(buf, 0, len, path, 6, &off, &plen) < 0) {
++        CHECK(0, "%s: stsz box missing", tag);
++        return -1;
++    }
++    if (plen < 12) {
++        CHECK(0, "%s: stsz payload short", tag);
++        return -1;
++    }
++    sample_size = rb32(buf + off + 4);
++    count       = rb32(buf + off + 8);
++    CHECK(count == (uint32_t) n, "%s: stsz count %u != %d", tag, count, n);
++    if (sample_size == 0) {
++        if (plen < 12 + 4 * (int64_t) count) {
++            CHECK(0, "%s: stsz entries short", tag);
++            return -1;
++        }
++        for (i = 0; i < n && (uint32_t) i < count; i++)
++            CHECK(rb32(buf + off + 12 + 4 * i) == RAW_LEN,
++                  "%s: stsz[%d] %u != %d", tag, i,
++                  rb32(buf + off + 12 + 4 * i), RAW_LEN);
++    } else {
++        CHECK(sample_size == RAW_LEN, "%s: stsz uniform %u != %d",
++              tag, sample_size, RAW_LEN);
++    }
++    return (int) count;
++}
++
++/* dac4 payload bytes, straight from the ac-4 sample entry. */
++static int64_t find_dac4(const uint8_t *buf, int len,
++                         int64_t *pay_off, int64_t *pay_len)
++{
++    static const uint32_t path[] = {
++        TAG('m', 'o', 'o', 'v'), TAG('t', 'r', 'a', 'k'),
++        TAG('m', 'd', 'i', 'a'), TAG('m', 'i', 'n', 'f'),
++        TAG('s', 't', 'b', 'l'), TAG('s', 't', 's', 'd'),
++    };
++    int64_t off, plen, entry, entry_len, children;
++
++    if (find_path(buf, 0, len, path, 6, &off, &plen) < 0)
++        return -1;
++    /* stsd: version/flags + entry_count, then sample entries. */
++    if (plen < 8 || rb32(buf + off + 4) != 1)
++        return -1;
++    off += 8;
++    plen -= 8;
++    entry_len = rb32(buf + off);
++    if (entry_len > plen || entry_len < 36 ||
++        rb32(buf + off + 4) != TAG('a', 'c', '-', '4'))
++        return -1;
++    entry = off;
++    /* v0 SoundSampleEntry header is 36 bytes; dac4 is a child. */
++    children = entry + 36;
++    return find_box(buf, children, entry + entry_len,
++                    TAG('d', 'a', 'c', '4'), pay_off, pay_len);
++}
++
++static void check_roundtrip(const char *tag, const char *path,
++                            uint8_t raws[][RAW_LEN], int n)
++{
++    AVFormatContext *in = NULL;
++    AVPacket *pkt = NULL;
++    uint8_t *file;
++    int file_len, stsz_count, count = 0, ret;
++    int64_t dac4_head, dac4_off, dac4_len;
++
++    file = read_file(path, &file_len);
++    CHECK(file != NULL, "%s: cannot read back %s", tag, path);
++    if (!file)
++        return;
++    stsz_count = check_stsz(tag, file, file_len, n);
++    dac4_head = find_dac4(file, file_len, &dac4_off, &dac4_len);
++    CHECK(dac4_head >= 0, "%s: dac4 box missing", tag);
++    if (dac4_head >= 0) {
++        CHECK(dac4_len == (int64_t) sizeof(dsi_golden),
++              "%s: dac4 payload %lld != %d", tag,
++              (long long) dac4_len, (int) sizeof(dsi_golden));
++        if (dac4_len == (int64_t) sizeof(dsi_golden))
++            CHECK(memcmp(file + dac4_off, dsi_golden, sizeof(dsi_golden)) == 0,
++                  "%s: dac4 payload differs from DSI", tag);
++    }
++    free(file);
++
++    ret = avformat_open_input(&in, path, NULL, NULL);
++    CHECK(ret >= 0, "%s: open failed (%d)", tag, ret);
++    if (ret < 0)
++        return;
++    ret = avformat_find_stream_info(in, NULL);
++    CHECK(ret >= 0, "%s: find_stream_info failed (%d)", tag, ret);
++    CHECK(in->nb_streams == 1, "%s: %d streams != 1", tag, in->nb_streams);
++    if (in->nb_streams == 1) {
++        AVCodecParameters *par = in->streams[0]->codecpar;
++        CHECK(par->codec_id == AV_CODEC_ID_AC4, "%s: codec %d != ac4",
++              tag, par->codec_id);
++        CHECK(par->extradata_size == (int) sizeof(dsi_golden) &&
++              memcmp(par->extradata, dsi_golden, sizeof(dsi_golden)) == 0,
++              "%s: demux extradata not byte-exact", tag);
++        CHECK(par->sample_rate == 48000, "%s: rate %d != 48000",
++              tag, par->sample_rate);
++        CHECK(par->ch_layout.nb_channels == 2, "%s: ch %d != 2",
++              tag, par->ch_layout.nb_channels);
++    }
++    pkt = av_packet_alloc();
++    if (!pkt) {
++        CHECK(0, "%s: packet alloc failed", tag);
++        avformat_close_input(&in);
++        return;
++    }
++    for (;;) {
++        ret = av_read_frame(in, pkt);
++        if (ret == AVERROR_EOF)
++            break;
++        if (ret < 0) {
++            CHECK(0, "%s: read failed (%d)", tag, ret);
++            break;
++        }
++        if (pkt->stream_index == 0) {
++            CHECK(pkt->size == RAW_LEN, "%s: pkt %d size %d != %d",
++                  tag, count, pkt->size, RAW_LEN);
++            if (count < n && pkt->size == RAW_LEN)
++                CHECK(memcmp(pkt->data, raws[count], RAW_LEN) == 0,
++                      "%s: pkt %d payload differs", tag, count);
++            count++;
++        }
++        av_packet_unref(pkt);
++    }
++    av_packet_free(&pkt);
++    avformat_close_input(&in);
++    CHECK(count == n, "%s: %d packets != %d", tag, count, n);
++    CHECK(count == stsz_count, "%s: %d packets != stsz %d",
++          tag, count, stsz_count);
++}
++
++/* Empty extradata must refuse with EINVAL, never an empty dac4 box. */
++static void check_mux_noext(const char *tag, const char *path,
++                            uint8_t pkts[][PKT_MAX], const int *lens, int n)
++{
++    int ret = mux_file(path, pkts, lens, n, NULL, 0);
++
++    CHECK(ret == AVERROR(EINVAL), "%s: mux-noext ret %d, want EINVAL",
++          tag, ret);
++}
++
++/* A file cut inside the dac4 payload must fail open, not misparse. */
++static void check_trunc_dac4(const char *tag, const char *good,
++                             const char *path)
++{
++    AVFormatContext *in = NULL;
++    uint8_t *file;
++    int file_len, ret;
++    int64_t dac4_head, dac4_off, dac4_len;
++
++    file = read_file(good, &file_len);
++    CHECK(file != NULL, "%s: cannot read %s", tag, good);
++    if (!file)
++        return;
++    dac4_head = find_dac4(file, file_len, &dac4_off, &dac4_len);
++    CHECK(dac4_head >= 0, "%s: dac4 box missing", tag);
++    if (dac4_head < 0) {
++        free(file);
++        return;
++    }
++    ret = write_file(path, file, (int) dac4_off + 10);
++    free(file);
++    CHECK(ret == 0, "%s: cannot write %s", tag, path);
++    if (ret)
++        return;
++    ret = avformat_open_input(&in, path, NULL, NULL);
++    CHECK(ret == AVERROR_INVALIDDATA,
++          "%s: trunc-dac4 ret %d, want INVALIDDATA", tag, ret);
++    if (ret >= 0)
++        avformat_close_input(&in);
++}
++
++/* A dac4 box claiming a sub-minimum payload must fail open loudly. */
++static void check_bad_dac4_size(const char *tag, const char *good,
++                                const char *path)
++{
++    AVFormatContext *in = NULL;
++    uint8_t *file;
++    int file_len, ret;
++    int64_t dac4_head, dac4_off, dac4_len;
++
++    file = read_file(good, &file_len);
++    CHECK(file != NULL, "%s: cannot read %s", tag, good);
++    if (!file)
++        return;
++    dac4_head = find_dac4(file, file_len, &dac4_off, &dac4_len);
++    CHECK(dac4_head >= 0, "%s: dac4 box missing", tag);
++    if (dac4_head < 0) {
++        free(file);
++        return;
++    }
++    /* Box length 10: a 2-byte payload trips the demux sanity floor. */
++    file[dac4_head] = 0;
++    file[dac4_head + 1] = 0;
++    file[dac4_head + 2] = 0;
++    file[dac4_head + 3] = 10;
++    ret = write_file(path, file, file_len);
++    free(file);
++    CHECK(ret == 0, "%s: cannot write %s", tag, path);
++    if (ret)
++        return;
++    ret = avformat_open_input(&in, path, NULL, NULL);
++    CHECK(ret == AVERROR_INVALIDDATA,
++          "%s: bad-dac4-size ret %d, want INVALIDDATA", tag, ret);
++    if (ret >= 0)
++        avformat_close_input(&in);
++}
++
++static const char *tmpdir(void)
++{
++    const char *t = getenv("TMPDIR");
++
++    return t && *t ? t : "/tmp";
++}
++
++int main(void)
++{
++    static uint8_t raws[NFRAMES][RAW_LEN];
++    static uint8_t pkts[NFRAMES][PKT_MAX];
++    static int lens[NFRAMES];
++    char path[512], good[512], bad[512];
++    int i;
++
++    av_log_set_level(AV_LOG_ERROR);
++    for (i = 0; i < NFRAMES; i++)
++        build_raw(raws[i], i, 101 + i);
++
++    /* Bare raw frames: mux writes samples as-is. */
++    for (i = 0; i < NFRAMES; i++) {
++        memcpy(pkts[i], raws[i], RAW_LEN);
++        lens[i] = RAW_LEN;
++    }
++    snprintf(path, sizeof(path), "%s/ac4rt-bare.mp4", tmpdir());
++    CHECK(mux_file(path, pkts, lens, NFRAMES,
++                   dsi_golden, sizeof(dsi_golden)) == 0, "bare: mux failed");
++    check_roundtrip("bare", path, raws, NFRAMES);
++    snprintf(good, sizeof(good), "%s", path);
++
++    /* AC40/AC41/ext wrappers: mux strips to the same bare samples. */
++    for (i = 0; i < NFRAMES; i++)
++        lens[i] = wrap_ac40(pkts[i], raws[i]);
++    snprintf(path, sizeof(path), "%s/ac4rt-ac40.mp4", tmpdir());
++    CHECK(mux_file(path, pkts, lens, NFRAMES,
++                   dsi_golden, sizeof(dsi_golden)) == 0, "ac40: mux failed");
++    check_roundtrip("ac40", path, raws, NFRAMES);
++
++    for (i = 0; i < NFRAMES; i++)
++        lens[i] = wrap_ac41(pkts[i], raws[i]);
++    snprintf(path, sizeof(path), "%s/ac4rt-ac41.mp4", tmpdir());
++    CHECK(mux_file(path, pkts, lens, NFRAMES,
++                   dsi_golden, sizeof(dsi_golden)) == 0, "ac41: mux failed");
++    check_roundtrip("ac41", path, raws, NFRAMES);
++
++    for (i = 0; i < NFRAMES; i++)
++        lens[i] = wrap_ac41_ext(pkts[i], raws[i]);
++    snprintf(path, sizeof(path), "%s/ac4rt-ac41ext.mp4", tmpdir());
++    CHECK(mux_file(path, pkts, lens, NFRAMES,
++                   dsi_golden, sizeof(dsi_golden)) == 0, "ac41ext: mux failed");
++    check_roundtrip("ac41ext", path, raws, NFRAMES);
++
++    /* Negatives fail loud. */
++    for (i = 0; i < NFRAMES; i++) {
++        memcpy(pkts[i], raws[i], RAW_LEN);
++        lens[i] = RAW_LEN;
++    }
++    snprintf(path, sizeof(path), "%s/ac4rt-noext.mp4", tmpdir());
++    check_mux_noext("neg", path, pkts, lens, NFRAMES);
++    snprintf(bad, sizeof(bad), "%s/ac4rt-trunc.mp4", tmpdir());
++    check_trunc_dac4("neg", good, bad);
++    snprintf(bad, sizeof(bad), "%s/ac4rt-badsize.mp4", tmpdir());
++    check_bad_dac4_size("neg", good, bad);
++
++    if (failures == 0)
++        printf("PASS: ac4 mp4 roundtrip (4 shapes + 3 negatives)\n");
++    else
++        printf("%d FAILURES\n", failures);
++    return failures != 0;
++}
+diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
+index 440953c..2b8277f 100644
+--- a/tests/fate/ac4.mak
++++ b/tests/fate/ac4.mak
+@@ -100,8 +100,18 @@ fate-ac4-parser: $(APITESTSDIR)/api-ac4-parser-test$(EXESUF)
+ fate-ac4-parser: CMD = run $(APITESTSDIR)/api-ac4-parser-test$(EXESUF)
+ fate-ac4-parser: CMP = null
+ 
+-FATE-yes += $(FATE_AC4_PARSE-yes)
++# AC-4 MP4 mux/demux roundtrip. Frames and DSI are synthesized inside
++# the test tool, so this needs no fate-suite samples either: bare and
++# Annex G framed inputs mux to MP4 and demux back with byte-exact dac4
++# extradata, stsz/packet counts and payloads, plus mux/demux negatives.
++FATE_AC4_MP4-$(call ALLYES, MP4_MUXER MOV_DEMUXER AC4_PARSER) += fate-ac4-mp4-roundtrip
++fate-ac4-mp4-roundtrip: $(APITESTSDIR)/api-ac4-mp4-roundtrip-test$(EXESUF)
++fate-ac4-mp4-roundtrip: CMD = run $(APITESTSDIR)/api-ac4-mp4-roundtrip-test$(EXESUF)
++fate-ac4-mp4-roundtrip: CMP = null
++
++FATE-yes += $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes)
+ 
+ fate-ac4-parse: $(FATE_AC4_PARSE-yes)
++fate-ac4-mp4: $(FATE_AC4_MP4-yes)
+ 
+-fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes)
++fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes)
+-- 
+2.56.0
+
+From 08b4f00097e6ca3abbfbadc7daf9d534a5242614 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 09:14:46 -0400
+Subject: [PATCH 6/6] fate: add self-contained ac4 ts demux test
+
+Upstream takes no testless demux path: the TS side relied on the
+Series E mux+PMT pins plus a codec-id probe, with nothing asserting
+demux through in-tree mpegts + ff_ac4_parser. New
+api-ac4-ts-demux-test synthesizes its vectors in code (the same
+minimal version-2 stereo TOC shape as fate-ac4-parser, wrapped as
+Annex G AC41 with CRCs solved per frame), so the suite needs no
+uploaded samples and no encoder: pre-encoded synth payloads keep
+the Series C encoder dependency out by design (documented choice).
+
+Roundtrip: mux 4x70 B AC41 to MPEG-TS with -mpegts_flags system_b
+(via the Series E descriptor path), then assert at the file level
+(188 framing, PAT/PMT CRCs, one stream, stream_type 0x06, 'AC-4'
+registration, 0x7F/0x15 config-only stereo descriptor) and at the
+demux level (1 stream, codec ac4/tag AC-4, pid match, post-parse
+48 kHz stereo params, 4 packets == byte-identical payloads). Two
+negatives fail loud: every PMT section corrupted (table_id 0x02->0xFF,
+id+CRC both break) must not yield an AC-4 stream -- observed shape is
+open-ok with codec unknown on pid 0x100 -- and a file cut
+mid-PES-payload of frame 3 must yield <4 packets (observed: the 2
+whole frames, matched) with the read loop terminating.
+
+Wired as fate-ac4-ts-demux behind MPEGTS_MUXER + MPEGTS_DEMUXER
++ AC4_PARSER, next to fate-ac4-parser/fate-ac4-mp4-roundtrip in
+tests/fate/ac4.mak. No mux/demux code changes.
+
+Upstream placement: Series D (parser), not E and not standalone.
+The test pins demux+parser behavior (params fill, framing,
+negatives); the Series E mux bytes are only the stimulus.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ tests/api/Makefile                |   2 +
+ tests/api/api-ac4-ts-demux-test.c | 691 ++++++++++++++++++++++++++++++
+ tests/fate/ac4.mak                |  13 +-
+ 3 files changed, 704 insertions(+), 2 deletions(-)
+ create mode 100644 tests/api/api-ac4-ts-demux-test.c
+
+diff --git a/tests/api/Makefile b/tests/api/Makefile
+index 8beff3f..c0515c1 100644
+--- a/tests/api/Makefile
++++ b/tests/api/Makefile
+@@ -12,6 +12,8 @@ APITESTPROGS-$(CONFIG_AVCODEC) += api-enc-info
+ APITESTPROGS-$(call ALLYES, H261_ENCODER H261_PARSER) += api-enc-parser
+ APITESTPROGS-$(CONFIG_AC4_PARSER) += api-ac4-parser
+ APITESTPROGS-$(call ALLYES, MP4_MUXER MOV_DEMUXER AC4_PARSER) += api-ac4-mp4-roundtrip
++APITESTPROGS-$(call ALLYES, MPEGTS_MUXER MPEGTS_DEMUXER \
++    AC4_PARSER) += api-ac4-ts-demux
+ APITESTPROGS += $(APITESTPROGS-yes)
+ 
+ APITESTOBJS  := $(APITESTOBJS:%=$(APITESTSDIR)%) $(APITESTPROGS:%=$(APITESTSDIR)/%-test.o)
+diff --git a/tests/api/api-ac4-ts-demux-test.c b/tests/api/api-ac4-ts-demux-test.c
+new file mode 100644
+index 0000000..7b6d2c2
+--- /dev/null
++++ b/tests/api/api-ac4-ts-demux-test.c
+@@ -0,0 +1,691 @@
++/*
++ * AC-4 MPEG-TS mux/demux roundtrip test.
++ * Copyright (c) 2026 Michael Rowlinson
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file
++ * Self-contained AC-4 MPEG-TS roundtrip tests. Annex G AC41 vectors are
++ * synthesized in code (the same minimal version-2 stereo TOC shape as
++ * api-ac4-parser-test, CRCs solved per frame), muxed to MPEG-TS via the
++ * E1 descriptor path, demuxed back through in-tree mpegts +
++ * ff_ac4_parser, and checked for PMT descriptor bytes, stream params,
++ * packet counts and byte-identical payloads. Bad-PMT and truncated-PES
++ * negatives must fail loud. No fate-suite samples needed and no
++ * encoder dependency: the payloads are pre-encoded synth by design.
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdint.h>
++
++#include "libavformat/avformat.h"
++#include "libavcodec/avcodec.h"
++#include "libavutil/channel_layout.h"
++#include "libavutil/common.h"
++#include "libavutil/error.h"
++#include "libavutil/mem.h"
++#include "libavutil/opt.h"
++
++static int failures = 0;
++#define CHECK(cond, ...) do { \
++    if (!(cond)) { \
++        printf("FAIL: " __VA_ARGS__); printf("\n"); failures++; \
++    } \
++} while (0)
++
++/* Deterministic noise without stray sync bytes. */
++static uint32_t lcg_state;
++static void noise(uint8_t *d, int n, uint32_t seed)
++{
++    lcg_state = seed;
++    for (int i = 0; i < n; i++) {
++        int b;
++        lcg_state = lcg_state * 1103515245u + 12345u;
++        b = (lcg_state >> 16) & 0xFF;
++        d[i] = (b == 0xAC) ? 0xAD : b;
++    }
++}
++
++/* CRC-16, MSB-first, poly 0x8005, init 0 (test-local copy of the
++ * sync-layer rule: accept on zero remainder over the span). */
++static unsigned int crc16_update(unsigned int crc, const uint8_t *p, int len)
++{
++    for (int i = 0; i < len; i++) {
++        crc ^= (unsigned int) p[i] << 8;
++        for (int k = 0; k < 8; k++)
++            crc = (crc & 0x8000) ? ((crc << 1) ^ 0x8005) : (crc << 1);
++        crc &= 0xFFFF;
++    }
++    return crc;
++}
++
++/* Stored word making (span plus word) check to zero. The map from the
++ * 16 stored bits to the final remainder is bijective, so the search
++ * always terminates. */
++static unsigned int crc16_fix(const uint8_t *span, int len)
++{
++    unsigned int r = crc16_update(0, span, len);
++
++    for (int v = 0; v < 65536; v++) {
++        uint8_t tail[2] = { v >> 8, v & 0xFF };
++        if (crc16_update(r, tail, 2) == 0)
++            return v;
++    }
++    return 0;
++}
++
++typedef struct BitW {
++    uint8_t *d;
++    int bit;
++} BitW;
++
++static void put_bits(BitW *w, int n, unsigned int v)
++{
++    for (int i = n - 1; i >= 0; i--) {
++        if ((v >> i) & 1)
++            w->d[w->bit / 8] |= 1 << (7 - w->bit % 8);
++        w->bit++;
++    }
++}
++
++/* Minimal version-2 stereo TOC: presentation 0, group 0, one
++ * channel-coded bed element, channel_mode 2. All other fields take
++ * their zero/absent shape. */
++static int build_toc(uint8_t *raw, int bv, int seq, int fs, int rate,
++                     int ig, int n_pres)
++{
++    BitW w = { raw, 0 };
++
++    put_bits(&w, 2, bv);
++    put_bits(&w, 10, seq);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, fs);
++    put_bits(&w, 4, rate);
++    put_bits(&w, 1, ig);
++    if (n_pres) {
++        put_bits(&w, 1, 1);
++    } else {
++        put_bits(&w, 1, 0);
++        put_bits(&w, 1, 0);
++    }
++    put_bits(&w, 1, 0);
++    if (bv == 2)
++        put_bits(&w, 1, 0);
++    if (!n_pres)
++        return (w.bit + 7) / 8;
++    /* One v1 presentation record, group index 0. */
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 0);       /* presentation_version 0 */
++    put_bits(&w, 3, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 2, 0);       /* emdf substream/version/shape: absent */
++    put_bits(&w, 3, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 2, 0);
++    put_bits(&w, 2, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 3, 0);       /* group index */
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 2, 0);
++    /* Group 0 head: bed present, channel_mode 2 (stereo). */
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 0);
++    if (fs)
++        put_bits(&w, 1, 0);
++    return (w.bit + 7) / 8;
++}
++
++#define RAW_LEN 64
++#define F41_LEN (4 + RAW_LEN + 2)
++#define NFRAMES 4
++
++/* One synthetic AC41 frame: bv2, rate 13 (48 kHz grid), iframe. */
++static void build_f41(uint8_t *d, int seq, uint32_t seed)
++{
++    uint8_t raw[RAW_LEN];
++    int head_bytes;
++    unsigned int crc;
++
++    memset(raw, 0, sizeof(raw));
++    head_bytes = build_toc(raw, 2, seq, 1, 13, 1, 1);
++    noise(raw + head_bytes, RAW_LEN - head_bytes, seed);
++    d[0] = 0xAC;
++    d[1] = 0x41;
++    d[2] = RAW_LEN >> 8;
++    d[3] = RAW_LEN & 0xFF;
++    memcpy(d + 4, raw, RAW_LEN);
++    /* CRC over the length bytes plus raw, stored big-endian. */
++    crc = crc16_fix(d + 2, 2 + RAW_LEN);
++    d[4 + RAW_LEN]     = crc >> 8;
++    d[4 + RAW_LEN + 1] = crc & 0xFF;
++}
++
++/* MPEG-2 CRC32 (poly 0x04C11DB7, init all-ones): a section including
++ * its stored CRC checks to zero. The demuxer enforces this before it
++ * trusts a PAT/PMT, so pinning it pins the demux precondition. */
++static uint32_t mpeg2_crc32(const uint8_t *p, int len)
++{
++    uint32_t crc = 0xFFFFFFFFu;
++
++    for (int i = 0; i < len; i++) {
++        crc ^= (uint32_t) p[i] << 24;
++        for (int k = 0; k < 8; k++)
++            crc = (crc & 0x80000000u) ? (crc << 1) ^ 0x04C11DB7u :
++                                        crc << 1;
++    }
++    return crc;
++}
++
++/* Payload offset of TS packet o, with pid/PUSI out. -1 past the end. */
++static int ts_payload(const uint8_t *b, int o, int *pid, int *pusi)
++{
++    int afc = (b[o + 3] >> 4) & 3;
++    int s = o + 4;
++
++    *pid  = ((b[o + 1] & 0x1F) << 8) | b[o + 2];
++    *pusi = (b[o + 1] & 0x40) != 0;
++    if (afc == 2 || afc == 3)
++        s += 1 + b[o + 4];
++    if (s >= o + 188)
++        return -1;
++    return s;
++}
++
++/* Section start in a PUSI packet: skip the pointer field. -1 when the
++ * section head would leave the packet. */
++static int ts_section(const uint8_t *b, int o, int s)
++{
++    int sec = s + 1 + b[s];
++
++    if (sec + 3 > o + 188)
++        return -1;
++    return sec;
++}
++
++/* PMT pid of the first nonzero program, straight from the PAT. */
++static int find_pmt_pid(const char *tag, const uint8_t *b, int len)
++{
++    int npkt = len / 188;
++
++    for (int k = 0; k < npkt; k++) {
++        int o = k * 188, pid, pusi, s, sec, slen, total, end;
++
++        s = ts_payload(b, o, &pid, &pusi);
++        if (pid != 0 || !pusi || s < 0)
++            continue;
++        sec = ts_section(b, o, s);
++        CHECK(sec >= 0, "%s: PAT pointer overrun", tag);
++        if (sec < 0)
++            return -1;
++        CHECK(b[sec] == 0x00, "%s: PAT table_id 0x%02x", tag, b[sec]);
++        if (b[sec] != 0x00)
++            return -1;
++        slen  = ((b[sec + 1] & 0x0F) << 8) | b[sec + 2];
++        total = 3 + slen;
++        CHECK(sec + total <= o + 188, "%s: multi-packet PAT", tag);
++        if (sec + total > o + 188)
++            return -1;
++        CHECK(mpeg2_crc32(b + sec, total) == 0, "%s: PAT CRC bad", tag);
++        end = sec + 3 + slen - 4;
++        for (int j = sec + 8; j + 3 < end; j += 4) {
++            if (((b[j] << 8) | b[j + 1]) == 0)
++                continue;
++            return ((b[j + 2] & 0x1F) << 8) | b[j + 3];
++        }
++        CHECK(0, "%s: no PMT pid in PAT", tag);
++        return -1;
++    }
++    CHECK(0, "%s: no PAT found", tag);
++    return -1;
++}
++
++/* First PMT section: one stream, stream_type 0x06, the 'AC-4'
++ * registration and the DVB AC-4 descriptor (0x7F/0x15, config-only
++ * stereo). Returns the audio pid. */
++static int check_pmt(const char *tag, const uint8_t *b, int len, int pmt_pid)
++{
++    int npkt = len / 188;
++
++    for (int k = 0; k < npkt; k++) {
++        int o = k * 188, pid, pusi, s, sec, slen, total;
++        int pilen, q, qend, nstreams = 0, apid = -1, stype = -1;
++        int reg_ok = 0, ac4_ok = 0;
++
++        s = ts_payload(b, o, &pid, &pusi);
++        if (pid != pmt_pid || !pusi || s < 0)
++            continue;
++        sec = ts_section(b, o, s);
++        CHECK(sec >= 0, "%s: PMT pointer overrun", tag);
++        if (sec < 0)
++            return -1;
++        CHECK(b[sec] == 0x02, "%s: PMT table_id 0x%02x", tag, b[sec]);
++        if (b[sec] != 0x02)
++            return -1;
++        slen  = ((b[sec + 1] & 0x0F) << 8) | b[sec + 2];
++        total = 3 + slen;
++        CHECK(sec + total <= o + 188, "%s: multi-packet PMT", tag);
++        if (sec + total > o + 188)
++            return -1;
++        CHECK(mpeg2_crc32(b + sec, total) == 0, "%s: PMT CRC bad", tag);
++        pilen = ((b[sec + 10] & 0x0F) << 8) | b[sec + 11];
++        q     = sec + 12 + pilen;
++        qend  = sec + 3 + slen - 4;
++        while (q + 5 <= qend) {
++            int eslen = ((b[q + 3] & 0x0F) << 8) | b[q + 4];
++            int r = q + 5, rend = r + eslen;
++
++            nstreams++;
++            apid  = ((b[q + 1] & 0x1F) << 8) | b[q + 2];
++            stype = b[q];
++            if (rend > qend) {
++                CHECK(0, "%s: ES descriptors overrun", tag);
++                return -1;
++            }
++            while (r + 2 <= rend) {
++                int dtag = b[r], dlen = b[r + 1];
++
++                if (r + 2 + dlen > rend) {
++                    CHECK(0, "%s: descriptor overrun", tag);
++                    return -1;
++                }
++                if (dtag == 0x05 && dlen == 4 &&
++                    memcmp(b + r + 2, "AC-4", 4) == 0)
++                    reg_ok = 1;
++                if (dtag == 0x7F && dlen == 3 && b[r + 2] == 0x15 &&
++                    b[r + 3] == 0x80 && b[r + 4] == 0x20)
++                    ac4_ok = 1;
++                r += 2 + dlen;
++            }
++            q = rend;
++        }
++        CHECK(nstreams == 1, "%s: %d PMT streams != 1", tag, nstreams);
++        CHECK(stype == 0x06, "%s: stream_type 0x%02x != 0x06",
++              tag, stype);
++        CHECK(reg_ok, "%s: AC-4 registration descriptor missing", tag);
++        CHECK(ac4_ok, "%s: DVB AC-4 descriptor missing/mismatch", tag);
++        return apid;
++    }
++    CHECK(0, "%s: no PMT found", tag);
++    return -1;
++}
++
++/* Whole-file TS framing plus PAT/PMT; returns the audio pid. */
++static int check_ts_file(const char *tag, const uint8_t *b, int len)
++{
++    int npkt, pmt_pid;
++
++    CHECK(len % 188 == 0, "%s: file length %d not 188-aligned", tag, len);
++    if (len % 188 != 0)
++        return -1;
++    npkt = len / 188;
++    for (int k = 0; k < npkt; k++)
++        if (b[k * 188] != 0x47) {
++            CHECK(0, "%s: sync loss at packet %d", tag, k);
++            return -1;
++        }
++    pmt_pid = find_pmt_pid(tag, b, len);
++    if (pmt_pid < 0)
++        return -1;
++    return check_pmt(tag, b, len, pmt_pid);
++}
++
++static uint8_t *read_file(const char *path, int *len_out)
++{
++    FILE *f = fopen(path, "rb");
++    uint8_t *buf;
++    long len;
++
++    if (!f)
++        return NULL;
++    fseek(f, 0, SEEK_END);
++    len = ftell(f);
++    fseek(f, 0, SEEK_SET);
++    if (len < 0 || len > 16 * 1024 * 1024) {
++        fclose(f);
++        return NULL;
++    }
++    buf = malloc(len + 1);
++    if (!buf) {
++        fclose(f);
++        return NULL;
++    }
++    if (len > 0 && fread(buf, 1, len, f) != (size_t) len) {
++        free(buf);
++        fclose(f);
++        return NULL;
++    }
++    fclose(f);
++    *len_out = (int) len;
++    return buf;
++}
++
++static int write_file(const char *path, const uint8_t *buf, int len)
++{
++    FILE *f = fopen(path, "wb");
++
++    if (!f)
++        return -1;
++    if (len > 0 && fwrite(buf, 1, len, f) != (size_t) len) {
++        fclose(f);
++        return -1;
++    }
++    fclose(f);
++    return 0;
++}
++
++/* Mux the synth frames to MPEG-TS with system_b (the DVB AC-4
++ * descriptor rides the SYSTEM_B path). */
++static int mux_file(const char *path, uint8_t frames[][F41_LEN], int n)
++{
++    AVFormatContext *out = NULL;
++    AVStream *st;
++    AVPacket *pkt = NULL;
++    int ret, i;
++
++    ret = avformat_alloc_output_context2(&out, NULL, "mpegts", path);
++    if (ret < 0 || !out)
++        return ret < 0 ? ret : AVERROR(ENOMEM);
++    st = avformat_new_stream(out, NULL);
++    if (!st) {
++        avformat_free_context(out);
++        return AVERROR(ENOMEM);
++    }
++    st->codecpar->codec_type  = AVMEDIA_TYPE_AUDIO;
++    st->codecpar->codec_id    = AV_CODEC_ID_AC4;
++    st->codecpar->sample_rate = 48000;
++    av_channel_layout_default(&st->codecpar->ch_layout, 2);
++    st->codecpar->frame_size  = 2048;
++    st->time_base = (AVRational){ 1, 48000 };
++    ret = av_opt_set(out->priv_data, "mpegts_flags", "system_b", 0);
++    if (ret < 0) {
++        avformat_free_context(out);
++        return ret;
++    }
++
++    ret = avio_open(&out->pb, path, AVIO_FLAG_WRITE);
++    if (ret < 0) {
++        avformat_free_context(out);
++        return ret;
++    }
++    ret = avformat_write_header(out, NULL);
++    if (ret < 0)
++        goto done;
++    pkt = av_packet_alloc();
++    if (!pkt) {
++        ret = AVERROR(ENOMEM);
++        goto done;
++    }
++    for (i = 0; i < n; i++) {
++        ret = av_new_packet(pkt, F41_LEN);
++        if (ret < 0)
++            break;
++        memcpy(pkt->data, frames[i], F41_LEN);
++        pkt->pts = pkt->dts = (int64_t) i * 2048;
++        pkt->duration = 2048;
++        pkt->stream_index = 0;
++        ret = av_interleaved_write_frame(out, pkt);
++        av_packet_unref(pkt);
++        if (ret < 0)
++            break;
++    }
++    if (ret >= 0)
++        ret = av_write_trailer(out);
++done:
++    av_packet_free(&pkt);
++    if (out->pb)
++        avio_closep(&out->pb);
++    avformat_free_context(out);
++    return ret;
++}
++
++static void check_roundtrip(const char *tag, const char *path,
++                            uint8_t frames[][F41_LEN], int n)
++{
++    AVFormatContext *in = NULL;
++    AVPacket *pkt = NULL;
++    uint8_t *file;
++    int file_len, apid, count = 0, ret;
++
++    file = read_file(path, &file_len);
++    CHECK(file != NULL, "%s: cannot read back %s", tag, path);
++    if (!file)
++        return;
++    apid = check_ts_file(tag, file, file_len);
++    free(file);
++    if (apid < 0)
++        return;
++
++    ret = avformat_open_input(&in, path, NULL, NULL);
++    CHECK(ret >= 0, "%s: open failed (%d)", tag, ret);
++    if (ret < 0)
++        return;
++    ret = avformat_find_stream_info(in, NULL);
++    CHECK(ret >= 0, "%s: find_stream_info failed (%d)", tag, ret);
++    CHECK(in->nb_streams == 1, "%s: %d streams != 1", tag,
++          in->nb_streams);
++    if (in->nb_streams == 1) {
++        AVCodecParameters *par = in->streams[0]->codecpar;
++
++        CHECK(par->codec_id == AV_CODEC_ID_AC4, "%s: codec %d != ac4",
++              tag, par->codec_id);
++        CHECK(par->codec_type == AVMEDIA_TYPE_AUDIO, "%s: not audio",
++              tag);
++        CHECK(par->codec_tag == MKTAG('A', 'C', '-', '4'),
++              "%s: codec_tag 0x%08x != AC-4", tag, par->codec_tag);
++        CHECK(in->streams[0]->id == apid, "%s: stream id %d != pid %d",
++              tag, in->streams[0]->id, apid);
++        CHECK(par->sample_rate == 48000, "%s: rate %d != 48000",
++              tag, par->sample_rate);
++        CHECK(par->ch_layout.nb_channels == 2, "%s: ch %d != 2",
++              tag, par->ch_layout.nb_channels);
++    }
++    pkt = av_packet_alloc();
++    if (!pkt) {
++        CHECK(0, "%s: packet alloc failed", tag);
++        avformat_close_input(&in);
++        return;
++    }
++    for (;;) {
++        ret = av_read_frame(in, pkt);
++        if (ret == AVERROR_EOF)
++            break;
++        if (ret < 0) {
++            CHECK(0, "%s: read failed (%d)", tag, ret);
++            break;
++        }
++        if (pkt->stream_index == 0) {
++            CHECK(pkt->size == F41_LEN, "%s: pkt %d size %d != %d",
++                  tag, count, pkt->size, F41_LEN);
++            if (count < n && pkt->size == F41_LEN)
++                CHECK(memcmp(pkt->data, frames[count], F41_LEN) == 0,
++                      "%s: pkt %d payload differs", tag, count);
++            count++;
++        }
++        av_packet_unref(pkt);
++    }
++    av_packet_free(&pkt);
++    avformat_close_input(&in);
++    CHECK(count == n, "%s: %d packets != %d", tag, count, n);
++}
++
++/* Every PMT section corrupted (table_id 0x02 -> 0xFF breaks the id
++ * and the CRC): the demuxer must not yield the good outcome. Either
++ * open refuses or no AC-4 stream survives; a clean AC-4 demux here
++ * means the corruption did not take and fails loud. */
++static void check_bad_pmt(const char *tag, const char *good,
++                          const char *path)
++{
++    AVFormatContext *in = NULL;
++    uint8_t *file;
++    int file_len, pmt_pid, npkt, ncorrupt = 0, ret;
++
++    file = read_file(good, &file_len);
++    CHECK(file != NULL, "%s: cannot read %s", tag, good);
++    if (!file)
++        return;
++    pmt_pid = find_pmt_pid(tag, file, file_len);
++    if (pmt_pid < 0) {
++        free(file);
++        return;
++    }
++    npkt = file_len / 188;
++    for (int k = 0; k < npkt; k++) {
++        int o = k * 188, pid, pusi, s, sec;
++
++        s = ts_payload(file, o, &pid, &pusi);
++        if (pid != pmt_pid || !pusi || s < 0)
++            continue;
++        sec = ts_section(file, o, s);
++        if (sec < 0 || sec + 3 > o + 188)
++            continue;
++        file[sec] = 0xFF;
++        ncorrupt++;
++    }
++    CHECK(ncorrupt >= 1, "%s: no PMT section corrupted", tag);
++    ret = write_file(path, file, file_len);
++    free(file);
++    CHECK(ret == 0, "%s: cannot write %s", tag, path);
++    if (ret)
++        return;
++    ret = avformat_open_input(&in, path, NULL, NULL);
++    if (ret < 0)
++        return;
++    avformat_find_stream_info(in, NULL);
++    if (in->nb_streams == 1 &&
++        in->streams[0]->codecpar->codec_id == AV_CODEC_ID_AC4)
++        CHECK(0, "%s: bad-pmt still yields an AC-4 stream", tag);
++    avformat_close_input(&in);
++}
++
++/* File cut mid-PES-payload of the third frame: only the two whole
++ * frames ahead of the cut may emit, and what emits must match. */
++static void check_trunc_pes(const char *tag, const char *good,
++                            const char *path, uint8_t frames[][F41_LEN])
++{
++    AVFormatContext *in = NULL;
++    AVPacket *pkt = NULL;
++    uint8_t *file;
++    int file_len, pmt_pid, apid, npkt, npes = 0, cut = -1;
++    int count = 0, ret;
++
++    file = read_file(good, &file_len);
++    CHECK(file != NULL, "%s: cannot read %s", tag, good);
++    if (!file)
++        return;
++    pmt_pid = find_pmt_pid(tag, file, file_len);
++    apid = pmt_pid < 0 ? -1 : check_pmt(tag, file, file_len, pmt_pid);
++    if (apid >= 0) {
++        npkt = file_len / 188;
++        for (int k = 0; k < npkt; k++) {
++            int o = k * 188, pid, pusi, s;
++
++            s = ts_payload(file, o, &pid, &pusi);
++            if (pid != apid || !pusi || s < 0)
++                continue;
++            if (npes == 2)
++                cut = o + 50;
++            npes++;
++        }
++    }
++    CHECK(npes == NFRAMES, "%s: %d PES packets != %d", tag, npes,
++          NFRAMES);
++    CHECK(cut > 0 && cut < file_len, "%s: no mid-PES cut point", tag);
++    if (cut <= 0 || cut >= file_len) {
++        free(file);
++        return;
++    }
++    ret = write_file(path, file, cut);
++    free(file);
++    CHECK(ret == 0, "%s: cannot write %s", tag, path);
++    if (ret)
++        return;
++    ret = avformat_open_input(&in, path, NULL, NULL);
++    CHECK(ret >= 0, "%s: trunc-pes open failed (%d)", tag, ret);
++    if (ret < 0)
++        return;
++    avformat_find_stream_info(in, NULL);
++    pkt = av_packet_alloc();
++    if (!pkt) {
++        CHECK(0, "%s: packet alloc failed", tag);
++        avformat_close_input(&in);
++        return;
++    }
++    for (;;) {
++        ret = av_read_frame(in, pkt);
++        if (ret == AVERROR_EOF)
++            break;
++        if (ret < 0) {
++            CHECK(0, "%s: trunc-pes read failed (%d)", tag, ret);
++            break;
++        }
++        if (pkt->stream_index == 0) {
++            if (count < 2 && pkt->size == F41_LEN)
++                CHECK(memcmp(pkt->data, frames[count], F41_LEN) == 0,
++                      "%s: trunc-pes pkt %d differs", tag, count);
++            count++;
++        }
++        av_packet_unref(pkt);
++    }
++    av_packet_free(&pkt);
++    avformat_close_input(&in);
++    CHECK(count < NFRAMES, "%s: trunc-pes yielded %d, want < %d",
++          tag, count, NFRAMES);
++}
++
++static const char *tmpdir(void)
++{
++    const char *t = getenv("TMPDIR");
++
++    return t && *t ? t : "/tmp";
++}
++
++int main(void)
++{
++    static uint8_t frames[NFRAMES][F41_LEN];
++    char good[512], bad[512], trunc[512];
++    int i;
++
++    av_log_set_level(AV_LOG_ERROR);
++    for (i = 0; i < NFRAMES; i++)
++        build_f41(frames[i], i, 101 + i);
++
++    snprintf(good, sizeof(good), "%s/ac4ts-good.ts", tmpdir());
++    CHECK(mux_file(good, frames, NFRAMES) == 0, "mux: write failed");
++    check_roundtrip("roundtrip", good, frames, NFRAMES);
++
++    snprintf(bad, sizeof(bad), "%s/ac4ts-badpmt.ts", tmpdir());
++    check_bad_pmt("neg", good, bad);
++    snprintf(trunc, sizeof(trunc), "%s/ac4ts-trunc.ts", tmpdir());
++    check_trunc_pes("neg", good, trunc, frames);
++
++    if (failures == 0)
++        printf("PASS: ac4 ts demux (roundtrip + 2 negatives)\n");
++    else
++        printf("%d FAILURES\n", failures);
++    return failures != 0;
++}
+diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
+index 2b8277f..959a669 100644
+--- a/tests/fate/ac4.mak
++++ b/tests/fate/ac4.mak
+@@ -109,9 +109,18 @@ fate-ac4-mp4-roundtrip: $(APITESTSDIR)/api-ac4-mp4-roundtrip-test$(EXESUF)
+ fate-ac4-mp4-roundtrip: CMD = run $(APITESTSDIR)/api-ac4-mp4-roundtrip-test$(EXESUF)
+ fate-ac4-mp4-roundtrip: CMP = null
+ 
+-FATE-yes += $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes)
++# AC-4 MPEG-TS demux tests. The vectors are synthesized inside the test
++# tool, so this needs no fate-suite samples.
++FATE_AC4_TSDEMUX-$(call ALLYES, MPEGTS_MUXER MPEGTS_DEMUXER \
++    AC4_PARSER) += fate-ac4-ts-demux
++fate-ac4-ts-demux: $(APITESTSDIR)/api-ac4-ts-demux-test$(EXESUF)
++fate-ac4-ts-demux: CMD = run $(APITESTSDIR)/api-ac4-ts-demux-test$(EXESUF)
++fate-ac4-ts-demux: CMP = null
++
++FATE-yes += $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes) $(FATE_AC4_TSDEMUX-yes)
+ 
+ fate-ac4-parse: $(FATE_AC4_PARSE-yes)
+ fate-ac4-mp4: $(FATE_AC4_MP4-yes)
++fate-ac4-ts: $(FATE_AC4_TSDEMUX-yes)
+ 
+-fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes)
++fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes) $(FATE_AC4_TSDEMUX-yes)
+-- 
+2.56.0
+
