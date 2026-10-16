@@ -162,6 +162,16 @@ extras — the Q1 close is visible in the artifact itself.
   (emitted==fed, verified across the corpus); flush tails pop the
   remainder. Underflow (lib invariant break) falls back to last+spf
   with a one-time warning.
+- Truncation mirrors the shim's sync-chain rule (F2/B2EXEC-REAL):
+  a lone clean framing (one unflagged packet) followed by skipped
+  packets is unanchored sync: the lone prefix is discarded and EOF
+  fails loud (`INVALIDDATA`, `no-sync` diagnostic, zero output, CLI
+  exit 69 via the error-rate abort). Two chained framings (t11 with
+  a runt tail: exit 0 + valid prefix) or a lone framing at clean EOF
+  (exit 0) decode normally. First-frame emit waits one framing for
+  the shape decision (second clean framing or EOF); a latched fatal
+  releases the hold. Committed gate: `lavc-dec/tests/f2-gap-trunc.sh`
+  + pinned `gap-trunc.ac4` (500 B, `e54faf83…`).
 
 ## Gates (Q1 wave, all in scratch, out-of-tree builds only)
 
