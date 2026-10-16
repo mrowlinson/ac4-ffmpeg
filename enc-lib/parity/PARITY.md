@@ -97,8 +97,9 @@ carries the R3 `detail=[baked peak gate: ...]` string.
 
 Root cause (S5-FU): the uniform spectral gain 3.0 is wrong
 for stereo. DEE stages stereo coefficients at x2.0 of the
-forward correlation (pre-IMDCT CODUMP DEE/forward = 1.9934
-on G7 997Hz) and 5.1 at x3.0 (G5 spectral ratio ours/DEE =
+forward correlation (offset-+2 aligned pre-IMDCT CODUMP
+peak pairing: DEE/forward = 1.9995 on G7 997Hz, residual
+-0.002 dB) and 5.1 at x3.0 (G5 spectral ratio ours/DEE =
 0.99): every stereo file decoded exactly 3/2 (+3.52 dB)
 hot on all correct decoders at the same dialnorm (G7:
 DRP -30.17, frozen CLI -30.12 vs our monly -26.56).

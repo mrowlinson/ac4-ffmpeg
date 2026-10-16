@@ -47,10 +47,11 @@ enc_core_abs_sat(int v)
 #define ENC_CORE_DIG_GAIN 3.0
 /* S5FU: stereo spectral gain is 2.0, not 3.0. DEE stages
  * stereo coefficients at x2.0 of the forward correlation
- * (pre-IMDCT CODUMP ratio DEE/forward = 1.9934 on G7 997Hz;
- * residual -0.03 dB is analysis-window coherent-gain delta,
- * inside codec tolerance) while 5.1 stages at x3.0 (G5
- * spectral ratio ours/DEE = 0.99). The uniform 3.0 decoded
+ * (offset-+2 aligned pre-IMDCT CODUMP peak pairing:
+ * DEE/forward = 1.9995 on G7 997Hz, residual -0.002 dB;
+ * the figure is alignment-sensitive: unaligned aggregates
+ * understate it) while 5.1 stages at x3.0 (G5 spectral
+ * ratio ours/DEE = 0.99). The uniform 3.0 decoded
  * every stereo file exactly 3/2 (+3.52 dB) hot on all
  * correct decoders (DRP G7 = -30.17, ours = -26.56, same
  * dialnorm). Multichannel keeps ENC_CORE_DIG_GAIN. */

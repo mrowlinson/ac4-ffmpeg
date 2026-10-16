@@ -43,7 +43,15 @@ S5FU_STABLE = frozenset([
 ])
 
 
+# F4: read-once cache; the goldens file is fixed for the
+# run, so memoize instead of re-reading per S5FU-FIXED case.
+_GOLD_CACHE = None
+
+
 def load_goldens():
+    global _GOLD_CACHE
+    if _GOLD_CACHE is not None:
+        return _GOLD_CACHE
     gold = {}
     try:
         for line in open(GOLDP):
@@ -52,6 +60,7 @@ def load_goldens():
                 gold[p[0]] = p[1]
     except OSError:
         pass
+    _GOLD_CACHE = gold
     return gold
 
 
