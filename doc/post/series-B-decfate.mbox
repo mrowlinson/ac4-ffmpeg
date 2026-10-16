@@ -1,0 +1,324 @@
+From d70cba9890c36a9d77ff45929681b48da58263d6 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 14:44:01 -0400
+Subject: [PATCH 1/2] doc: AC-4 decoder docs
+
+Decoder table row, @section ac4 with the Series A private options,
+Changelog entry. No APIchanges entry (no public API change).
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ Changelog                 |  1 +
+ doc/decoders.texi         | 38 ++++++++++++++++++++++++++++++++++++++
+ doc/general_contents.texi |  1 +
+ 3 files changed, 40 insertions(+)
+
+diff --git a/Changelog b/Changelog
+index 32e7c8b..8bff2da 100644
+--- a/Changelog
++++ b/Changelog
+@@ -19,6 +19,7 @@ version <next>:
+ - Panasonic RW2 decoder
+ - xHE-AAC encoding via libfdk-xhe-aac
+ - jpegapp bitstream filter
++- native AC-4 audio decoder
+ 
+ 
+ version 9.0:
+diff --git a/doc/decoders.texi b/doc/decoders.texi
+index 5652252..9fef5a3 100644
+--- a/doc/decoders.texi
++++ b/doc/decoders.texi
+@@ -317,6 +317,44 @@ Loud sounds are fully compressed.  Soft sounds are enhanced.
+ 
+ @end table
+ 
++@section ac4
++
++AC-4 audio decoder.
++
++Native decoder for Dolby AC-4 (ATSC A/344), handling mono, stereo
++and multichannel beds up to 7.1. Output is 16-bit PCM.
++
++@subsection AC-4 Decoder Options
++
++@table @option
++
++@item -pres_sel @var{value}
++Presentation select. Default @option{-1} decodes the default
++presentation; @option{0} to @option{63} select a specific one.
++
++@item -drc @var{boolean}
++Apply dynamic range control. Reserved for future use: enabling it is
++currently rejected at decoder init. Default off.
++
++@item -drc_out_ref @var{value}
++DRC output reference level, @option{-31} to @option{0}. Takes effect
++only when DRC is supported. Default @option{-31}.
++
++@item -drc_boost @var{value}
++DRC boost factor in percent, @option{0} to @option{200}. Takes effect
++only when DRC is supported. Default @option{100}.
++
++@item -drc_cut @var{value}
++DRC cut factor in percent, @option{0} to @option{200}. Takes effect
++only when DRC is supported. Default @option{100}.
++
++@item -de_level @var{value}
++Dialog enhancement level in dB, @option{-12} to @option{12}.
++Reserved for future use: nonzero values are currently rejected at
++decoder init. Default @option{0} (off).
++
++@end table
++
+ @section flac
+ 
+ FLAC audio decoder.
+diff --git a/doc/general_contents.texi b/doc/general_contents.texi
+index 7032f14..7cf7400 100644
+--- a/doc/general_contents.texi
++++ b/doc/general_contents.texi
+@@ -1307,6 +1307,7 @@ following image formats are supported:
+ @item AAC+                   @tab  E  @tab  IX
+     @tab encoding supported through external library libfdk-aac
+ @item AC-3                   @tab IX  @tab  IX
++@item AC-4                   @tab     @tab  X
+ @item ACELP.KELVIN           @tab     @tab  X
+ @item ADPCM 4X Movie         @tab     @tab  X
+ @item ADPCM Yamaha AICA      @tab     @tab  X
+-- 
+2.56.0
+
+
+From 859e618af872d764d545fdaf94030fb8d19749fa Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 14:44:01 -0400
+Subject: [PATCH 2/2] fate: add ac4 decoder tests
+
+framemd5/framecrc decode tests over the uploaded suite clips, plus
+probe/copy/seek demux tests. Goldens recorded from the real decoder;
+STAGED: suite pending, goldens re-cut at suite-landed +24h.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ tests/Makefile                      |   1 +
+ tests/fate/ac4.mak                  | 105 ++++++++++++++++++++++++++++
+ tests/ref/fate/fate-ac4-51          |   2 +
+ tests/ref/fate/fate-ac4-714         |   2 +
+ tests/ref/fate/fate-ac4-copy-51     |   2 +
+ tests/ref/fate/fate-ac4-copy-stereo |   2 +
+ tests/ref/fate/fate-ac4-crc-bad     |   2 +
+ tests/ref/fate/fate-ac4-delay       |   2 +
+ tests/ref/fate/fate-ac4-ims120      |   2 +
+ tests/ref/fate/fate-ac4-seek-eof    |   2 +
+ tests/ref/fate/fate-ac4-stereo51    |   2 +
+ 11 files changed, 124 insertions(+)
+ create mode 100644 tests/fate/ac4.mak
+ create mode 100644 tests/ref/fate/fate-ac4-51
+ create mode 100644 tests/ref/fate/fate-ac4-714
+ create mode 100644 tests/ref/fate/fate-ac4-copy-51
+ create mode 100644 tests/ref/fate/fate-ac4-copy-stereo
+ create mode 100644 tests/ref/fate/fate-ac4-crc-bad
+ create mode 100644 tests/ref/fate/fate-ac4-delay
+ create mode 100644 tests/ref/fate/fate-ac4-ims120
+ create mode 100644 tests/ref/fate/fate-ac4-seek-eof
+ create mode 100644 tests/ref/fate/fate-ac4-stereo51
+
+diff --git a/tests/Makefile b/tests/Makefile
+index 97e9d39..46d175a 100644
+--- a/tests/Makefile
++++ b/tests/Makefile
+@@ -154,6 +154,7 @@ include $(SRC_PATH)/tests/fate/seek.mak
+ 
+ include $(SRC_PATH)/tests/fate/aac.mak
+ include $(SRC_PATH)/tests/fate/ac3.mak
++include $(SRC_PATH)/tests/fate/ac4.mak
+ include $(SRC_PATH)/tests/fate/adpcm.mak
+ include $(SRC_PATH)/tests/fate/alac.mak
+ include $(SRC_PATH)/tests/fate/als.mak
+diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
+new file mode 100644
+index 0000000..4c1e405
+--- /dev/null
++++ b/tests/fate/ac4.mak
+@@ -0,0 +1,105 @@
++# AC-4 decoder and demux FATE tests.
++#
++# Inputs live in the fate-suite under ac4/ (see the [samples-request]
++# AC-4 decoder mail for the 12-file set); pcm REF files are suite
++# files too, while framemd5/framecrc goldens live in tests/ref/fate/.
++# The Series A decoder is experimental, so every decode CMD carries
++# -strict -2 (fate/acodec.mak DCA precedent).
++
++# --- decode (pcm): stereo, byte-exact pcm vs suite ref ---
++FATE_AC4 += fate-ac4-stereo
++fate-ac4-stereo: CMD = pcm -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-stereo.ac4
++fate-ac4-stereo: REF = $(SAMPLES)/ac4/clip-stereo-ref.pcm
++# clip-stereo.ac4: 3 frames stereo; suite ref 16384 B s16le 48 kHz.
++fate-ac4-stereo: CMP = oneoff
++
++# --- decode (pcm): input seek decodes the 2-packet suffix ---
++FATE_AC4 += fate-ac4-seek
++fate-ac4-seek: CMD = pcm -ss 0.05 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-stereo.ac4
++fate-ac4-seek: REF = $(SAMPLES)/ac4/clip-stereo-seek-0.05.pcm
++# Suite slice ref 8192 B (2nd half of the stereo ref).
++fate-ac4-seek: CMP = oneoff
++
++# --- decode (framemd5): 5.1 real clip ---
++FATE_AC4_MD5 += fate-ac4-51
++fate-ac4-51: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-51-real.ac4
++# clip-51-real.ac4: 5.1 beds; golden pins saturated S16 bytes as-is.
++
++# --- decode (framemd5): immersive-stereo clip, 6ch presented ---
++FATE_AC4_MD5 += fate-ac4-ims120
++fate-ac4-ims120: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-ims120.ac4
++# clip-ims120.ac4: cm120 immersive stereo (BSD-3 Chromium test file).
++
++# --- decode (framemd5): 7.1 clip, 8ch presented ---
++FATE_AC4_MD5 += fate-ac4-714
++fate-ac4-714: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-714.ac4
++# clip-714.ac4: cm253 7.1 excerpt (broadcast capture, suite-accepted).
++
++# --- decode (framemd5): stereo program in a 5.1 bed ---
++FATE_AC4_MD5 += fate-ac4-stereo51
++fate-ac4-stereo51: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-stereo51.ac4
++# L/R content + 4 digital-silent channels; golden pins c2-c5 exact-zero.
++
++# --- decode (framemd5): impulse pins the codec delay ---
++FATE_AC4_MD5 += fate-ac4-delay
++fate-ac4-delay: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-impulse.ac4
++# Golden is post-trim bytes; any delay change shifts bytes and fails.
++
++# --- decode (framemd5): CRC-bad frame rejected, survivor decodes ---
++FATE_AC4_MD5 += fate-ac4-crc-bad
++fate-ac4-crc-bad: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-crc-bad.ac4
++# 1 bad frame rejected + counted, 1 frame decodes (exit 0).
++# Decode-phase only: the demuxer passes corrupt payloads through.
++FATE_AC4_MD5 += fate-ac4-crc-bad-note
++fate-ac4-crc-bad-note: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-crc-bad.ac4
++fate-ac4-crc-bad-note: CMP = grep
++fate-ac4-crc-bad-note: REF = crc1
++# Stderr companion: asserts the reject count (astc.mak grep idiom).
++
++# --- decode (framemd5+grep): truncated input fails loudly ---
++FATE_AC4_MD5 += fate-ac4-gap-trunc
++fate-ac4-gap-trunc: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-gap-fail.ac4 ; test $$? -ne 0
++fate-ac4-gap-trunc: CMP = grep
++fate-ac4-gap-trunc: REF = no-sync
++# clip-gap-fail.ac4: 500 B truncated mid-frame; nonzero exit, no-sync
++# diagnostic, no output. Must never silent-pass.
++
++# --- demux: copy roundtrips, framecrc CMP (muxer rewrites file bytes) ---
++FATE_AC4_REMUX += fate-ac4-copy-stereo
++fate-ac4-copy-stereo: CMD = framecrc -i $(TARGET_SAMPLES)/ac4/clip-stereo.ac4 -c copy
++# Compares framecrc, never file bytes: the muxer rewrites framing.
++FATE_AC4_REMUX += fate-ac4-copy-51
++fate-ac4-copy-51: CMD = framecrc -i $(TARGET_SAMPLES)/ac4/clip-51-real.ac4 -c copy
++# Same framecrc-not-file-bytes rule as copy-stereo.
++
++# --- demux: past-EOF seek clamps to the last packet ---
++FATE_AC4_REMUX += fate-ac4-seek-eof
++fate-ac4-seek-eof: CMD = framecrc -ss 5 -i $(TARGET_SAMPLES)/ac4/clip-stereo.ac4 -c copy
++# Emits the last packet, exit 0; golden is never empty.
++
++# --- demux: garbage input yields no stream (negative slot) ---
++FATE_AC4_REMUX += fate-ac4-probe-garbage
++fate-ac4-probe-garbage: CMD = framecrc -i $(TARGET_SAMPLES)/ac4/garbage.ac4 -c copy ; test $$? -eq 234
++fate-ac4-probe-garbage: CMP = grep
++fate-ac4-probe-garbage: REF = Output file does not contain any stream
++# 1 KiB noise probes by extension; exit 234 (EINVAL) + pinned message.
++
++FATE_AC4-$(call PCM, AC4, AC4, ARESAMPLE_FILTER) += $(FATE_AC4)
++FATE_AC4_MD5-$(call FRAMEMD5, AC4, AC4, ARESAMPLE_FILTER) += $(FATE_AC4_MD5)
++FATE_AC4_REMUX-$(call REMUX, AC4) += $(FATE_AC4_REMUX)
++# Three split gates (PCM / FRAMEMD5 / REMUX) so --disable-everything
++# runs pull only the deps each group needs. REMUX needs no decoder.
++
++# --- deferred slots (comment-only; no sample bytes exist) ---
++# fate-ac4-mono: needs ac4/clip-mono.ac4 + suite ref. No public mono
++#   AC-4 exists anywhere; add the stanza once a sample is proposed.
++# fate-ac4-gap-fails: needs ac4/clip-51-acpl4.ac4 (codec-4 5.1 stub).
++#   No public codec-4 bytes exist; pins deterministic-silence bytes
++#   via framemd5 once they do.
++# fate-ac4-delay-1536: needs a 1536-spf impulse ref (does not exist).
++# fate-ac4-float: needs float-stage plumbing; no quantized-float
++#   golden is ever pinned before then.
++
++FATE_SAMPLES_AVCONV += $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes)
++
++fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes)
+diff --git a/tests/ref/fate/fate-ac4-51 b/tests/ref/fate/fate-ac4-51
+new file mode 100644
+index 0000000..72dcd94
+--- /dev/null
++++ b/tests/ref/fate/fate-ac4-51
+@@ -0,0 +1,2 @@
++PENDING: recorded from the real decoder at suite-landed +24h.
++See B-POST-CHECKLIST.md; never post this stub.
+diff --git a/tests/ref/fate/fate-ac4-714 b/tests/ref/fate/fate-ac4-714
+new file mode 100644
+index 0000000..72dcd94
+--- /dev/null
++++ b/tests/ref/fate/fate-ac4-714
+@@ -0,0 +1,2 @@
++PENDING: recorded from the real decoder at suite-landed +24h.
++See B-POST-CHECKLIST.md; never post this stub.
+diff --git a/tests/ref/fate/fate-ac4-copy-51 b/tests/ref/fate/fate-ac4-copy-51
+new file mode 100644
+index 0000000..72dcd94
+--- /dev/null
++++ b/tests/ref/fate/fate-ac4-copy-51
+@@ -0,0 +1,2 @@
++PENDING: recorded from the real decoder at suite-landed +24h.
++See B-POST-CHECKLIST.md; never post this stub.
+diff --git a/tests/ref/fate/fate-ac4-copy-stereo b/tests/ref/fate/fate-ac4-copy-stereo
+new file mode 100644
+index 0000000..72dcd94
+--- /dev/null
++++ b/tests/ref/fate/fate-ac4-copy-stereo
+@@ -0,0 +1,2 @@
++PENDING: recorded from the real decoder at suite-landed +24h.
++See B-POST-CHECKLIST.md; never post this stub.
+diff --git a/tests/ref/fate/fate-ac4-crc-bad b/tests/ref/fate/fate-ac4-crc-bad
+new file mode 100644
+index 0000000..72dcd94
+--- /dev/null
++++ b/tests/ref/fate/fate-ac4-crc-bad
+@@ -0,0 +1,2 @@
++PENDING: recorded from the real decoder at suite-landed +24h.
++See B-POST-CHECKLIST.md; never post this stub.
+diff --git a/tests/ref/fate/fate-ac4-delay b/tests/ref/fate/fate-ac4-delay
+new file mode 100644
+index 0000000..72dcd94
+--- /dev/null
++++ b/tests/ref/fate/fate-ac4-delay
+@@ -0,0 +1,2 @@
++PENDING: recorded from the real decoder at suite-landed +24h.
++See B-POST-CHECKLIST.md; never post this stub.
+diff --git a/tests/ref/fate/fate-ac4-ims120 b/tests/ref/fate/fate-ac4-ims120
+new file mode 100644
+index 0000000..72dcd94
+--- /dev/null
++++ b/tests/ref/fate/fate-ac4-ims120
+@@ -0,0 +1,2 @@
++PENDING: recorded from the real decoder at suite-landed +24h.
++See B-POST-CHECKLIST.md; never post this stub.
+diff --git a/tests/ref/fate/fate-ac4-seek-eof b/tests/ref/fate/fate-ac4-seek-eof
+new file mode 100644
+index 0000000..72dcd94
+--- /dev/null
++++ b/tests/ref/fate/fate-ac4-seek-eof
+@@ -0,0 +1,2 @@
++PENDING: recorded from the real decoder at suite-landed +24h.
++See B-POST-CHECKLIST.md; never post this stub.
+diff --git a/tests/ref/fate/fate-ac4-stereo51 b/tests/ref/fate/fate-ac4-stereo51
+new file mode 100644
+index 0000000..72dcd94
+--- /dev/null
++++ b/tests/ref/fate/fate-ac4-stereo51
+@@ -0,0 +1,2 @@
++PENDING: recorded from the real decoder at suite-landed +24h.
++See B-POST-CHECKLIST.md; never post this stub.
+-- 
+2.56.0
+

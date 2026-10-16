@@ -1,29 +1,28 @@
 Subject: [PATCH 0/2] doc + FATE for the native AC-4 decoder
 
 Docs and tests for the Series A decoder. Posts after A lands (decoder
-option list must be frozen first); rides the A tail.
+option list frozen) and the suite clips are live +24h; rides the A tail.
 
 Patches:
-  [PATCH 1/2] doc: AC-4 decoder rows + section + Changelog
-    Decoder table row, @section ac4 with private options, Changelog
+  [PATCH 1/2] doc: AC-4 decoder docs
+    Audio-codecs table row, @section ac4 with the private options
+    (pres_sel, drc, drc_out_ref, drc_boost, drc_cut, de_level) + Changelog
     entry. No APIchanges entry (no public API change).
   [PATCH 2/2] fate: add ac4 decoder tests
-    md5/framecrc decode tests over the uploaded suite clips, plus
-    probe/copy/seek demux tests (A0-unblocked). Goldens from the
-    real decoder, never overwritten. No silence round-trip tests.
+    framemd5/framecrc decode tests over the uploaded suite clips
+    (stereo, 5.1, ims120, 7.1, stereo51, impulse, crc-bad), input-seek
+    and byte-exact pcm tests vs suite refs, plus probe/copy/seek-eof
+    demux tests. Goldens recorded from the real decoder, never
+    overwritten. Mono + codec-4 gap tests stay deferred (no public
+    bytes exist for either).
 
 Why split: docs need only the frozen option list; FATE needs the
-uploaded samples +24 h clock plus green decoder runs. Different
+uploaded samples +24h clock plus green decoder runs. Different
 gates, independently revertable.
 
 Testing:
-  make fate-ac4-dec / fate-ac4-demux (suite: ac4/clip-* from the
-  samples upload; WJCT 4-dead-channel and hot clips pinned as-is,
-  never FATE inputs where noted)
+  make fate-ac4 (suite: ac4/clip-* live +24h)
   full make fate green; pre-patch negative (tests fail without A).
-
-Open: none code-side; B2 posts only after the samples-request mail is
-confirmed and `make fate-rsync` shows ac4/clip-*.
 
 Provenance: docs/tests only; the tested decoder is the Series A
 independent cleanroom implementation (ETSI TS 103 190-1 V1.4.1 /
