@@ -1,0 +1,284 @@
+From 5e2d5d53d09d6944a889f7ab322e722e8a68b2f7 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 03:54:32 -0400
+Subject: [PATCH 1/2] lavf/mpegtsenc: write AC-4 descriptors
+
+AC-4 over MPEG-TS rides as PES private data (ETSI TS 103 190-2 Annex D).
+Give it an explicit DVB stream type (0x06, no more "may not be
+recognized" warning), the AC-4 registration descriptor demuxers key on,
+and the DVB AC-4 descriptor (EN 300 468 D.7: tag 0x7F, ext 0x15) on the
+SYSTEM_B path.
+
+The AC-4 descriptor carries config only (dialog enhancement off, channel
+mode from the channel count: 0 mono / 1 stereo / 2 multi); TOC is
+omitted (optional per EN 300 468 D.6). Unknown channel layouts
+(nb_channels 0) map to stereo, the most common case.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ libavformat/mpegtsenc.c | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/libavformat/mpegtsenc.c b/libavformat/mpegtsenc.c
+index 7d04ad0..f48b8f0 100644
+--- a/libavformat/mpegtsenc.c
++++ b/libavformat/mpegtsenc.c
+@@ -421,6 +421,11 @@ static int get_dvb_stream_type(AVFormatContext *s, AVStream *st)
+                       ? STREAM_TYPE_PRIVATE_DATA
+                       : STREAM_TYPE_ATSC_AUDIO_EAC3;
+         break;
++    case AV_CODEC_ID_AC4:
++        /* ETSI TS 103 190-2 Annex D: AC-4 rides as PES private data;
++         * identified by the AC-4 registration and AC-4 descriptors below. */
++        stream_type = STREAM_TYPE_PRIVATE_DATA;
++        break;
+     case AV_CODEC_ID_DTS:
+         stream_type = STREAM_TYPE_BLURAY_AUDIO_DTS; // should be STREAM_TYPE_PRIVATE_DATA (ETSI TS 101 154), needs a DTS_descriptor() (ETSI EN 300 468)
+         break;
+@@ -580,6 +585,8 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
+                 put_registration_descriptor(&q, MKTAG('A', 'C', '-', '3'));
+             if (codec_id == AV_CODEC_ID_EAC3)
+                 put_registration_descriptor(&q, MKTAG('E', 'A', 'C', '3'));
++            if (codec_id == AV_CODEC_ID_AC4)
++                put_registration_descriptor(&q, MKTAG('A', 'C', '-', '4'));
+             if (ts->flags & MPEGTS_FLAG_SYSTEM_B) {
+                 if (codec_id == AV_CODEC_ID_AC3) {
+                     DVBAC3Descriptor *dvb_ac3_desc = ts_st->dvb_ac3_desc;
+@@ -608,6 +615,25 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
+                     *q++= ENHANCED_AC3_DESCRIPTOR; // EAC3 descriptor see A038 DVB SI
+                     *q++=1; // 1 byte, all flags sets to 0
+                     *q++=0; // omit all fields...
++                } else if (codec_id == AV_CODEC_ID_AC4) {
++                    /* DVB AC-4 descriptor, EN 300 468 D.7: extension tag
++                     * 0x15. TOC omitted (optional per D.6); config
++                     * carries channel mode only. */
++                    int ch = st->codecpar->ch_layout.nb_channels;
++                    int channel_mode = ch <= 0 ? 1 : ch <= 1 ? 0 :
++                                       ch <= 2 ? 1 : 2;
++
++                    /* tag + len + ext_tag + flags + config */
++                    if (q - data > SECTION_LENGTH - 5) {
++                        err = 1;
++                        break;
++                    }
++
++                    *q++ = DVB_EXTENSION_DESCRIPTOR;
++                    *q++ = 3;                 /* ext_tag + flags + config */
++                    *q++ = AC4_DESCRIPTOR;    /* 0x15 */
++                    *q++ = 0x80;              /* ac4_config_flag=1, toc=0 */
++                    *q++ = channel_mode << 5; /* dialog_enh=0, mode, reserved */
+                 }
+             }
+             if (codec_id == AV_CODEC_ID_S302M)
+-- 
+2.56.0
+
+From a2485a9f613699583b82948185953f2fb2707ff9 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 03:54:39 -0400
+Subject: [PATCH 2/2] fate: ac4 ts mux tests
+
+Add fate-ac4-mpegts-pmt: encode asynth stereo to MPEG-TS with
+-mpegts_flags system_b, then tests/fate/ac4-pmt-section.sh (POSIX sh +
+od + awk, no extra tooling) locates the PMT pid via the PAT and prints
+the first PMT section (table_id through CRC32) as one hex line, pinning
+stream_type 0x06, the 'AC-4' registration and the 0x7F/0x15 AC-4
+descriptor without coupling to float-encoder bytes.
+
+Also fate-ac4-mpegts-probe (generated .ts probes back as codec_name=ac4,
+codec_tag_string=AC-4). No new samples; -loudness_target 0 dodges the
+by-design full-span loudness refusal. No framecrc stage yet: demux-side
+sample rate/channels stay unknown until the Series D parser lands.
+
+The '[mpegts] frame size not set' noise is Series C's (the encoder never
+sets frame_size); fate runs at loglevel error.
+
+Rebased onto Series C: appends to the C-created tests/fate/ac4.mak
+(and extends the fate-ac4 aggregate) instead of creating it.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ tests/fate/ac4-pmt-section.sh   | 105 ++++++++++++++++++++++++++++++++
+ tests/fate/ac4.mak              |  45 +++++++++++++-
+ tests/ref/fate/ac4-mpegts-probe |   4 ++
+ 3 files changed, 153 insertions(+), 1 deletion(-)
+ create mode 100755 tests/fate/ac4-pmt-section.sh
+ create mode 100644 tests/ref/fate/ac4-mpegts-probe
+
+diff --git a/tests/fate/ac4-pmt-section.sh b/tests/fate/ac4-pmt-section.sh
+new file mode 100755
+index 0000000..640cbe2
+--- /dev/null
++++ b/tests/fate/ac4-pmt-section.sh
+@@ -0,0 +1,105 @@
++#!/bin/sh
++# Print the first PMT section of a 188-byte MPEG-TS file as one lowercase
++# hex line (table_id through CRC32). The PAT (pid 0) locates the PMT pid
++# of the first nonzero program; the first PUSI packet on that pid carries
++# the section. Single-packet sections only; anything unexpected (sync
++# loss, missing PAT/PMT, multi-packet section) fails loudly. POSIX sh +
++# od + awk (+ cat for stderr, all POSIX), so fate clients need no extra
++# tooling.
++set -u
++
++[ -r "${1:-}" ] || { echo "usage: $0 file.ts" >&2; exit 1; }
++
++od -A d -t u1 -v "$1" | awk '
++{
++    for (i = 2; i <= NF; i++)
++        b[n++] = $i
++}
++function payload(o,   afc, s) {
++    afc = int(b[o+3] / 16) % 4
++    s = o + 4
++    if (afc == 2 || afc == 3)
++        s += 1 + b[o+4]
++    if (s >= o + 188) {
++        print "adaptation overrun" | "cat >&2"
++        return -1
++    }
++    return s
++}
++END {
++    if (n % 188 != 0) {
++        print "not 188-byte TS" | "cat >&2"
++        exit 1
++    }
++    npkt = n / 188
++    # PAT: first PUSI packet on pid 0 -> PMT pid of program != 0.
++    pmt_pid = -1
++    for (k = 0; k < npkt && pmt_pid < 0; k++) {
++        o = k * 188
++        if (b[o] != 71) {
++            print "sync loss" | "cat >&2"
++            exit 1
++        }
++        if ((b[o+1] % 32) * 256 + b[o+2] != 0)
++            continue
++        if (int(b[o+1] / 64) % 2 == 0)
++            continue
++        s = payload(o)
++        if (s < 0)
++            exit 1
++        sec = s + 1 + b[s]
++        if (sec + 2 >= o + 188) {
++            print "pointer overrun" | "cat >&2"
++            exit 1
++        }
++        if (b[sec] != 0) {
++            print "PAT table_id" | "cat >&2"
++            exit 1
++        }
++        slen = (b[sec+1] % 16) * 256 + b[sec+2]
++        end = sec + 3 + slen - 4
++        for (j = sec + 8; j + 3 < end; j += 4) {
++            if (b[j] * 256 + b[j+1] == 0)
++                continue
++            pmt_pid = (b[j+2] % 32) * 256 + b[j+3]
++            break
++        }
++    }
++    if (pmt_pid < 0) {
++        print "no PMT pid" | "cat >&2"
++        exit 1
++    }
++    # PMT: first PUSI packet on that pid -> whole section as hex.
++    for (k = 0; k < npkt; k++) {
++        o = k * 188
++        if ((b[o+1] % 32) * 256 + b[o+2] != pmt_pid)
++            continue
++        if (int(b[o+1] / 64) % 2 == 0)
++            continue
++        s = payload(o)
++        if (s < 0)
++            exit 1
++        sec = s + 1 + b[s]
++        if (sec + 2 >= o + 188) {
++            print "pointer overrun" | "cat >&2"
++            exit 1
++        }
++        if (b[sec] != 2) {
++            print "PMT table_id" | "cat >&2"
++            exit 1
++        }
++        slen = (b[sec+1] % 16) * 256 + b[sec+2]
++        total = 3 + slen
++        if (sec + total > o + 188) {
++            print "multi-packet section" | "cat >&2"
++            exit 1
++        }
++        out = ""
++        for (i = sec; i < sec + total; i++)
++            out = out sprintf("%02x", b[i])
++        print out
++        exit 0
++    }
++    print "no PMT" | "cat >&2"
++    exit 1
++}'
+diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
+index a77e917..abdc031 100644
+--- a/tests/fate/ac4.mak
++++ b/tests/fate/ac4.mak
+@@ -50,4 +50,47 @@ fate-ac4-tail: CMD = framecrc -i $(SRC) -c:a ac4 -ab 128k -af aresample,atrim=en
+ 
+ FATE_FFMPEG += $(FATE_AC4_ENC-yes)
+ 
+-fate-ac4: $(FATE_AC4_ENC-yes)
++# AC-4 mux tests. No new samples: inputs are generated asynth only.
++#
++# fate-ac4-mpegts-pmt: encode asynth stereo to MPEG-TS (-mpegts_flags
++# system_b), then pin the PMT descriptor bytes without touching the
++# encoder payload: ac4-pmt-section.sh locates the PMT pid via the PAT
++# and prints the first PMT section (table_id through CRC32) as one hex
++# line -- stream_type 0x06, 'AC-4' registration, 0x7F/0x15 AC-4
++# descriptor. A whole-file .ts md5 would couple this to float-encoder
++# bytes (breaks on heterogeneous fate clients / any encoder change).
++# -loudness_target 0 dodges the by-design full-span loudness refusal
++# (encoder keeps the measure path, skips the correction gain).
++tests/data/fate/ac4-mpegts.ts: TAG = GEN
++tests/data/fate/ac4-mpegts.ts: tests/data/asynth-48000-2.wav
++tests/data/fate/ac4-mpegts.ts: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data/fate
++	$(M)$(TARGET_EXEC) $(TARGET_PATH)/$< \
++	-hide_banner -loglevel error -nostdin \
++	-i $(TARGET_PATH)/tests/data/asynth-48000-2.wav \
++	-c:a ac4 -ab 128k -loudness_target 0 -mpegts_flags system_b \
++	-flags +bitexact -fflags +bitexact -af aresample \
++	-f mpegts -y $(TARGET_PATH)/$@
++
++FATE_AC4_MPEGTS_PMT-$(call ALLYES, FFMPEG AC4_ENCODER MPEGTS_MUXER \
++    WAV_DEMUXER PCM_S16LE_DECODER ARESAMPLE_FILTER FILE_PROTOCOL) += fate-ac4-mpegts-pmt
++fate-ac4-mpegts-pmt: tests/data/fate/ac4-mpegts.ts
++fate-ac4-mpegts-pmt: SRC = $(TARGET_PATH)/tests/data/fate/ac4-mpegts.ts
++fate-ac4-mpegts-pmt: CMD = runlocal fate/ac4-pmt-section.sh "$(SRC)"
++fate-ac4-mpegts-pmt: CMP = oneline
++fate-ac4-mpegts-pmt: REF = 02b01d0001c10000e100f00006e100f00b050441432d347f0315802057f3bb20
++
++# fate-ac4-mpegts-probe: the generated .ts probes back as AC-4.
++# (Demux fills codec id via the 'AC-4' registration descriptor; sample
++# rate/channels stay unknown until the Series D parser lands, so there is
++# no framecrc stage yet -- PMT section + probe pin what E1 writes.)
++FATE_AC4_MPEGTS_PROBE-$(call ALLYES, FFMPEG FFPROBE AC4_ENCODER MPEGTS_MUXER MPEGTS_DEMUXER \
++    WAV_DEMUXER PCM_S16LE_DECODER ARESAMPLE_FILTER FILE_PROTOCOL) += fate-ac4-mpegts-probe
++fate-ac4-mpegts-probe: tests/data/fate/ac4-mpegts.ts
++fate-ac4-mpegts-probe: SRC = $(TARGET_PATH)/tests/data/fate/ac4-mpegts.ts
++fate-ac4-mpegts-probe: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -v 0 -bitexact \
++    -show_entries stream=codec_name,codec_tag_string -of default -i "$(SRC)"
++
++FATE_FFMPEG += $(FATE_AC4_MPEGTS_PMT-yes)
++FATE_FFPROBE += $(FATE_AC4_MPEGTS_PROBE-yes)
++
++fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes)
+diff --git a/tests/ref/fate/ac4-mpegts-probe b/tests/ref/fate/ac4-mpegts-probe
+new file mode 100644
+index 0000000..d350be5
+--- /dev/null
++++ b/tests/ref/fate/ac4-mpegts-probe
+@@ -0,0 +1,4 @@
++[STREAM]
++codec_name=ac4
++codec_tag_string=AC-4
++[/STREAM]
+-- 
+2.56.0
+
