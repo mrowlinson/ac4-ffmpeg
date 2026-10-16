@@ -1,0 +1,111 @@
+tag,result,detail,measure
+000_m8_mix_24000.wav_8stereo,PASS,frames=14/14 bytes=4779/4779,measure m=-6.0086567101979451 f=0.047133797312404108 tf=1 peak=26086 dpeak=26086.403359891949 hasd=1
+001_m8_mix_24000.wav_851,PASS,frames=14/14 bytes=9557/9557,measure m=-2.0964838142838524 f=0.20495474970056202 tf=1 peak=16384 dpeak=16384 hasd=1
+002_m8_noise_96000.wav_8stereo,PASS,frames=49/49 bytes=16726/16726,measure m=-6.6503538975132335 f=0.56511266504666369 tf=1 peak=23083 dpeak=23083.158784859312 hasd=1
+003_m8_noise_96000.wav_851,PASS,frames=49/49 bytes=33451/33451,measure m=-5.642572333663348 f=0.5657899456565374 tf=1 peak=9830 dpeak=9830 hasd=1
+004_m8_silence_2049.wav_8stereo,PASS,frames=4/4 bytes=1366/1366,measure m=-inf f=0 tf=0 peak=0 dpeak=0 hasd=1
+005_m8_silence_2049.wav_851,PASS,frames=4/4 bytes=2731/2731,measure m=-inf f=0 tf=0 peak=0 dpeak=0 hasd=1
+006_m8_sweep_24000.wav_8stereo,PASS,frames=14/14 bytes=4779/4779,measure m=-4.3131258223142179 f=0.015607280766963549 tf=1 peak=17498 dpeak=17498.052703510246 hasd=1
+007_m8_sweep_24000.wav_851,PASS,frames=14/14 bytes=9557/9557,measure m=-0.1263394363150554 f=0.017472956584381038 tf=1 peak=16383 dpeak=16383 hasd=1
+008_mc_clicks_2049.wav,PASS,frames=4/4 bytes=2731/2731,measure m=-15.495640794614026 f=0.072603991326860656 tf=0.5 peak=29490 dpeak=0 hasd=0
+009_mc_clicks_24000.wav,PASS,frames=14/14 bytes=9557/9557,measure m=-15.907388002349855 f=0.037455724755706417 tf=1 peak=29490 dpeak=0 hasd=0
+010_mc_clicks_96000.wav,PASS,frames=49/49 bytes=33451/33451,measure m=-15.903863796134134 f=0.03658382568733326 tf=1 peak=29490 dpeak=0 hasd=0
+011_mc_noise_2049.wav,PASS,frames=4/4 bytes=2731/2731,measure m=-4.4931765196230948 f=0.54614062978724465 tf=0.5 peak=9830 dpeak=0 hasd=0
+012_mc_noise_24000.wav,PASS,frames=14/14 bytes=9557/9557,measure m=-4.4738771393582688 f=0.56663414074525909 tf=1 peak=9830 dpeak=0 hasd=0
+013_mc_noise_96000.wav,PASS,frames=49/49 bytes=33451/33451,measure m=-4.4386119108648892 f=0.56263603579912203 tf=1 peak=9830 dpeak=0 hasd=0
+014_mc_silence_2049.wav,PASS,frames=4/4 bytes=2731/2731,measure m=-inf f=0 tf=0 peak=0 dpeak=0 hasd=0
+015_mc_silence_24000.wav,PASS,frames=14/14 bytes=9557/9557,measure m=-inf f=0 tf=0 peak=0 dpeak=0 hasd=0
+016_mc_silence_96000.wav,PASS,frames=49/49 bytes=33451/33451,measure m=-inf f=0 tf=0 peak=0 dpeak=0 hasd=0
+017_mc_sine440_2049.wav,PASS,frames=4/4 bytes=2731/2731,measure m=-2.0502299756839499 f=0.00051686903144991699 tf=0.5 peak=16384 dpeak=0 hasd=0
+018_mc_sine440_24000.wav,PASS,frames=14/14 bytes=9557/9557,measure m=-2.0613059648770333 f=0.00086207446716552057 tf=1 peak=16384 dpeak=0 hasd=0
+019_mc_sine440_96000.wav,PASS,frames=49/49 bytes=33451/33451,measure m=-2.0610651233669635 f=0.00086481681065908166 tf=1 peak=16384 dpeak=0 hasd=0
+020_mc_sparse_2049.wav,PASS,frames=4/4 bytes=2731/2731,measure m=-4.007232884183713 f=0.010089384179146061 tf=0.5 peak=29490 dpeak=0 hasd=0
+021_mc_sparse_24000.wav,PASS,frames=14/14 bytes=9557/9557,measure m=-13.724825586915463 f=0.010089384179146061 tf=0.083333333333333329 peak=29490 dpeak=0 hasd=0
+022_mc_sparse_96000.wav,PASS,frames=49/49 bytes=33451/33451,measure m=-13.724825586915463 f=0.010089384179146061 tf=0.085106382978723402 peak=29490 dpeak=0 hasd=0
+023_mc_sweep_2049.wav,PASS,frames=4/4 bytes=2731/2731,measure m=0.70075195861761841 f=0.46629626364799309 tf=0.5 peak=16383 dpeak=0 hasd=0
+024_mc_sweep_24000.f32,PASS,frames=14/14 bytes=9557/9557,measure m=0.85130363883618865 f=0.017231461733091383 tf=1 peak=16384 dpeak=0 hasd=0
+025_mc_sweep_24000.wav,PASS,frames=14/14 bytes=9557/9557,measure m=0.85103883239529809 f=0.017230772394931829 tf=1 peak=16383 dpeak=0 hasd=0
+026_mc_sweep_96000.wav,PASS,frames=49/49 bytes=33451/33451,measure m=0.84429563184298784 f=0.0017757374596055443 tf=1 peak=16383 dpeak=0 hasd=0
+027_st_alt_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=0.3415524938057527 f=0 tf=1 peak=16384 dpeak=0 hasd=0
+028_st_clicks_2049.wav,PASS,frames=4/4 bytes=1366/1366,measure m=-20.138300134954779 f=0.072603991326860656 tf=0.5 peak=29490 dpeak=0 hasd=0
+029_st_clicks_24000.s24,PASS,frames=14/14 bytes=4779/4779,measure m=-20.54979372788463 f=0.037457065047867361 tf=1 peak=29492 dpeak=0 hasd=0
+030_st_clicks_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-20.550047342690608 f=0.037455724755706417 tf=1 peak=29490 dpeak=0 hasd=0
+031_st_clicks_240000.wav,PASS,frames=120/120 bytes=40960/40960,measure m=-20.546223336040299 f=0.036026275920339627 tf=0.99152542372881358 peak=29490 dpeak=0 hasd=0
+032_st_clip_48000.f32,PASS,frames=26/26 bytes=8875/8875,measure m=0.64357527595126951 f=0.001518627728420946 tf=1 peak=32768 dpeak=0 hasd=0
+033_st_dc_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-8.6062210488296866 f=0.0015109671101611584 tf=1 peak=16384 dpeak=0 hasd=0
+034_st_dual_2049.wav,PASS,frames=4/4 bytes=1366/1366,measure m=-9.3102245263075538 f=0.0021812142170381864 tf=0.5 peak=16358 dpeak=0 hasd=0
+035_st_dual_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-9.3202042030776919 f=0.0013287533657859638 tf=1 peak=16358 dpeak=0 hasd=0
+036_st_dual_240000.wav,PASS,frames=120/120 bytes=40960/40960,measure m=-9.3196477695834883 f=0.001136660613578385 tf=0.99152542372881358 peak=16358 dpeak=0 hasd=0
+037_st_frac_2049.f32,PASS,frames=4/4 bytes=1366/1366,measure m=-18.37637375271456 f=0.00023545994080638458 tf=0.5 peak=5279 dpeak=0 hasd=0
+038_st_frac_24000.f32,PASS,frames=14/14 bytes=4779/4779,measure m=-18.398015292478849 f=0.00077287886448379852 tf=1 peak=5283 dpeak=0 hasd=0
+039_st_fullscale_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-0.57692896192349585 f=0.00033614207262025702 tf=1 peak=32439 dpeak=0 hasd=0
+040_st_noise_2049.s16,BOTH-FAIL,"o=1 h=2 error: flush rc=-5
+",
+041_st_noise_2049.wav,BOTH-FAIL,"o=1 h=2 error: flush rc=-5
+",
+042_st_noise_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-9.1656478531387826 f=0.55818606464099918 tf=1 peak=9830 dpeak=0 hasd=0
+043_st_noise_240000.wav,PASS,frames=120/120 bytes=40960/40960,measure m=-9.0801325654905529 f=0.5627049281071016 tf=0.99152542372881358 peak=9830 dpeak=0 hasd=0
+044_st_ramp_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-8.890932277407769 f=0.0072751365328465592 tf=1 peak=16383 dpeak=0 hasd=0
+045_st_silence_2049.wav,PASS,frames=4/4 bytes=1366/1366,measure m=-inf f=0 tf=0 peak=0 dpeak=0 hasd=0
+046_st_silence_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-inf f=0 tf=0 peak=0 dpeak=0 hasd=0
+047_st_silence_240000.wav,PASS,frames=120/120 bytes=40960/40960,measure m=-inf f=0 tf=0 peak=0 dpeak=0 hasd=0
+048_st_sine10k_2049.wav,PASS,frames=4/4 bytes=1366/1366,measure m=-7.106976108021243 f=0.0017218568703692566 tf=0.5 peak=9830 dpeak=0 hasd=0
+049_st_sine10k_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-7.1070151769589165 f=0.0023577947935263981 tf=1 peak=9830 dpeak=0 hasd=0
+050_st_sine10k_240000.wav,PASS,frames=120/120 bytes=40960/40960,measure m=-7.1069999247104789 f=0.0024033671378981352 tf=0.99152542372881358 peak=9830 dpeak=0 hasd=0
+051_st_sine1k_1.wav,PASS,frames=3/3 bytes=1024/1024,measure m=-6.8079598533226573 f=0 tf=1 peak=10555 dpeak=0 hasd=0
+052_st_sine1k_100.wav,PASS,frames=3/3 bytes=1024/1024,measure m=-5.9370139487982714 f=0 tf=1 peak=16384 dpeak=0 hasd=0
+053_st_sine1k_1000.wav,PASS,frames=3/3 bytes=1024/1024,measure m=-5.9887650035311522 f=0 tf=1 peak=16384 dpeak=0 hasd=0
+054_st_sine1k_2047.wav,PASS,frames=3/3 bytes=1024/1024,measure m=-6.0067554918724317 f=0 tf=1 peak=16384 dpeak=0 hasd=0
+055_st_sine1k_2048.wav,PASS,frames=3/3 bytes=1024/1024,measure m=-6.0051436130783857 f=0.0017162859576257282 tf=1 peak=16384 dpeak=0 hasd=0
+056_st_sine1k_2049.wav,PASS,frames=4/4 bytes=1366/1366,measure m=-6.0036162860014493 f=0.0017162859576257282 tf=0.5 peak=16384 dpeak=0 hasd=0
+057_st_sine1k_24000.s16,PASS,frames=14/14 bytes=4779/4779,measure m=-6.0140285854887781 f=0.0017059313189315894 tf=1 peak=16384 dpeak=0 hasd=0
+058_st_sine1k_24000.s24,PASS,frames=14/14 bytes=4779/4779,measure m=-6.0138541154664322 f=0.0017059197739444651 tf=1 peak=16384 dpeak=0 hasd=0
+059_st_sine1k_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-6.0140285854887781 f=0.0017059313189315894 tf=1 peak=16384 dpeak=0 hasd=0
+060_st_sine1k_240000.wav,PASS,frames=120/120 bytes=40960/40960,measure m=-6.0141256970144648 f=0.0015856873359329003 tf=0.99152542372881358 peak=16384 dpeak=0 hasd=0
+061_st_sine1k_4096.wav,PASS,frames=4/4 bytes=1366/1366,measure m=-6.0079063532761836 f=0.0022470292424256895 tf=1 peak=16384 dpeak=0 hasd=0
+062_st_sine1k_48000.wav,PASS,frames=26/26 bytes=8875/8875,measure m=-6.0141010335641356 f=0.0016431953278018385 tf=1 peak=16384 dpeak=0 hasd=0
+063_st_sine1k_96000.wav,PASS,frames=49/49 bytes=16726/16726,measure m=-6.0141180803457361 f=0.0015885264364044836 tf=1 peak=16384 dpeak=0 hasd=0
+064_st_sine440_2049.wav,PASS,frames=4/4 bytes=1366/1366,measure m=-6.6843256656646046 f=0.001446067724091325 tf=0.5 peak=16384 dpeak=0 hasd=0
+065_st_sine440_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-6.7041025627633903 f=0.00085651294233381301 tf=1 peak=16384 dpeak=0 hasd=0
+066_st_sine440_240000.wav,PASS,frames=120/120 bytes=40960/40960,measure m=-6.7037062614017158 f=0.00085947012446464842 tf=0.99152542372881358 peak=16384 dpeak=0 hasd=0
+067_st_sparse_2049.wav,PASS,frames=4/4 bytes=1366/1366,measure m=-8.6498922245244678 f=0.010089384179146061 tf=0.5 peak=29490 dpeak=0 hasd=0
+068_st_sparse_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-18.367484927256214 f=0.010089384179146061 tf=0.083333333333333329 peak=29490 dpeak=0 hasd=0
+069_st_sparse_240000.wav,PASS,frames=120/120 bytes=40960/40960,measure m=-18.367484927256214 f=0.010089384179146061 tf=0.084745762711864403 peak=29490 dpeak=0 hasd=0
+070_st_speechish_2049.wav,PASS,frames=4/4 bytes=1366/1366,measure m=-16.151959940197674 f=0.00030640811004397549 tf=0.5 peak=11401 dpeak=0 hasd=0
+071_st_speechish_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-17.826427875493881 f=0.0011913909187790466 tf=0.5 peak=12613 dpeak=0 hasd=0
+072_st_speechish_240000.wav,PASS,frames=120/120 bytes=40960/40960,measure m=-17.774018234966878 f=0.0012282573653932542 tf=0.50847457627118642 peak=12613 dpeak=0 hasd=0
+073_st_sweep_2049.wav,PASS,frames=4/4 bytes=1366/1366,measure m=-3.9542968513535 f=0.45859984262753511 tf=0.5 peak=16383 dpeak=0 hasd=0
+074_st_sweep_24000.wav,PASS,frames=14/14 bytes=4779/4779,measure m=-3.789234302932408 f=0.012076648411875879 tf=1 peak=16383 dpeak=0 hasd=0
+075_st_sweep_240000.wav,PASS,frames=120/120 bytes=40960/40960,measure m=-3.8634906874496524 f=0.0013776624479398065 tf=0.99152542372881358 peak=16383 dpeak=0 hasd=0
+076_st_sweep_48000.s16,PASS,frames=26/26 bytes=8875/8875,measure m=-3.7175839069017322 f=0.0032399805342757824 tf=1 peak=16383 dpeak=0 hasd=0
+077_mc_sine440_24000.wav_51stereo,PASS,frames=14/14 bytes=4779/4779,measure m=-6.0542274950419701 f=0.00086157070073400802 tf=1 peak=18275 dpeak=18275.533398318461 hasd=1
+078_mc_noise_96000.wav_51stereo,PASS,frames=49/49 bytes=16726/16726,measure m=-6.0819550838883361 f=0.56062938182715971 tf=1 peak=23205 dpeak=23205.934000859535 hasd=1
+079_mc_sweep_2049.wav_51stereo,PASS,frames=4/4 bytes=1366/1366,measure m=-3.27915654149131 f=0.45109127432148843 tf=0.5 peak=18276 dpeak=18276.015108355226 hasd=1
+080_var_t0-st,PASS,frames=14/14 bytes=4779/4779,measure m=-3.789234302932408 f=0.012076648411875879 tf=1 peak=16383 dpeak=0 hasd=0
+081_var_t0-mc,PASS,frames=14/14 bytes=9557/9557,measure m=-4.4738771393582688 f=0.56663414074525909 tf=1 peak=9830 dpeak=0 hasd=0
+082_var_t0-long,PASS,frames=120/120 bytes=40960/40960,measure m=-9.0801325654905529 f=0.5627049281071016 tf=0.99152542372881358 peak=9830 dpeak=0 hasd=0
+083_var_t0-noise2049,PASS,frames=4/4 bytes=1366/1366,measure m=-9.1840892592411354 f=0.53732557612273146 tf=0.5 peak=9830 dpeak=0 hasd=0
+084_var_shorts0,PASS,frames=14/14 bytes=4779/4779,measure m=-20.550047342690608 f=0.037455724755706417 tf=1 peak=29490 dpeak=0 hasd=0
+085_var_shorts0-mc,PASS,frames=14/14 bytes=9557/9557,measure m=-15.907388002349855 f=0.037455724755706417 tf=1 peak=29490 dpeak=0 hasd=0
+086_var_jshort,PASS,frames=14/14 bytes=4779/4779,measure m=-20.550047342690608 f=0.037455724755706417 tf=1 peak=29490 dpeak=0 hasd=0
+087_var_jshort-noise,PASS,frames=14/14 bytes=4779/4779,measure m=-9.1656478531387826 f=0.55818606464099918 tf=1 peak=9830 dpeak=0 hasd=0
+088_var_bake+3,PASS,frames=14/14 bytes=4779/4779,measure m=-6.0140285854887781 f=0.0017059313189315894 tf=1 peak=16384 dpeak=0 hasd=0
+089_var_bake-6,PASS,frames=14/14 bytes=4779/4779,measure m=-9.3202042030776919 f=0.0013287533657859638 tf=1 peak=16358 dpeak=0 hasd=0
+090_var_rate256,PASS,frames=14/14 bytes=19115/19115,measure m=-3.789234302932408 f=0.012076648411875879 tf=1 peak=16383 dpeak=0 hasd=0
+091_var_rate320mc,PASS,frames=14/14 bytes=23893/23893,measure m=0.85103883239529809 f=0.017230772394931829 tf=1 peak=16383 dpeak=0 hasd=0
+092_var_forced,PASS,frames=120/120 bytes=40960/40960,measure m=-9.0801325654905529 f=0.5627049281071016 tf=0.99152542372881358 peak=9830 dpeak=0 hasd=0
+093_var_forced-mc,PASS,frames=49/49 bytes=33451/33451,measure m=-4.4386119108648892 f=0.56263603579912203 tf=1 peak=9830 dpeak=0 hasd=0
+094_var_iv48,PASS,frames=120/120 bytes=40960/40960,measure m=-3.8634906874496524 f=0.0013776624479398065 tf=0.99152542372881358 peak=16383 dpeak=0 hasd=0
+095_var_iv11mc,PASS,frames=49/49 bytes=33451/33451,measure m=0.84429563184298784 f=0.0017757374596055443 tf=1 peak=16383 dpeak=0 hasd=0
+096_var_preset-ebu,PASS,frames=14/14 bytes=4779/4779,measure m=-6.0140285854887781 f=0.0017059313189315894 tf=1 peak=16384 dpeak=0 hasd=0
+097_var_preset-atsc,PASS,frames=14/14 bytes=9557/9557,measure m=-2.0613059648770333 f=0.00086207446716552057 tf=1 peak=16384 dpeak=0 hasd=0
+098_var_ffloat-st,PASS,frames=14/14 bytes=4779/4779,measure m=-3.789234302932408 f=0.012076648411875879 tf=1 peak=16383 dpeak=16383 hasd=1
+099_var_ffloat-mc,PASS,frames=14/14 bytes=9557/9557,measure m=-15.907388002349855 f=0.037455724755706417 tf=1 peak=29490 dpeak=29490 hasd=1
+100_var_ffloat-edge,PASS,frames=4/4 bytes=1366/1366,measure m=-6.0036162860014493 f=0.0017162859576257282 tf=0.5 peak=16384 dpeak=16384 hasd=1
+101_var_ffloat-raw,PASS,frames=26/26 bytes=8875/8875,measure m=-3.7175839069017322 f=0.0032399805342757824 tf=1 peak=16383 dpeak=16383 hasd=1
+102_neutral_st_sweep_24000.wav,DIVERGE-neutral,frames=14/14 bytes=4779/4779 ndiff=3329/4779 nframes-diff=13,
+103_neutral_st_sparse_24000.wav,DIVERGE-neutral,frames=14/14 bytes=4779/4779 ndiff=279/4779 nframes-diff=2,
+104_neutral_mc_noise_24000.wav,DIVERGE-neutral,frames=14/14 bytes=9557/9557 ndiff=7356/9557 nframes-diff=13,
+105_neutral_st_silence_24000.wav,DIVERGE-neutral,frames=14/14 bytes=4779/4779 ndiff=30/4779 nframes-diff=1,
+106_neutral_st_clicks_24000.wav,DIVERGE-neutral,frames=14/14 bytes=4779/4779 ndiff=2165/4779 nframes-diff=13,
+107_neutral_mc_sweep_96000.wav,DIVERGE-neutral,frames=49/49 bytes=33451/33451 ndiff=23713/33451 nframes-diff=48,
