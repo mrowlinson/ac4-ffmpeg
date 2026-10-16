@@ -1,9 +1,8 @@
 #ifndef AC4_ENC_TAIL59_H
 #define AC4_ENC_TAIL59_H
 
-/* Frame-level ASPX/ACPL tail assembler: C port of
- * encoder/tail59.py (public entry write_tail_steady only;
- * _run/_write_*_ec stay static like the Python privates).
+/* Frame-level ASPX/ACPL tail assembler (public entry
+ * write_tail_steady only; _run/_write_*_ec stay static).
  * Tail = aspx_data_2ch + aspx_data_1ch + acpl_data_1ch#0 +
  * acpl_data_1ch#1 (A-59 block order; 220b at fr2 steady).
  * ASPX books resolve from the committed table by A-64 name;

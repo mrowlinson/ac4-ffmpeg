@@ -83,7 +83,7 @@ struct ac4enc_ctx {
     /* Stream state. */
     enc_step_ctx_t *eng;
     int domain; /* 0 none, 1 int, 2 float */
-    int fed_total;
+    int64_t fed_total; /* m2: 64-bit sample total (per ch) */
     int input_ended;
     int enc_err;
     ac4enc_subcode_t err_sub;
@@ -183,6 +183,20 @@ ac4enc_err_detail(const ac4enc_ctx_t *c)
     return c ? c->err_detail : "";
 }
 
+int64_t
+ac4enc_fed_samples(const ac4enc_ctx_t *c)
+{
+    return c ? c->fed_total : -1;
+}
+
+int64_t
+ac4enc_emitted_frames(const ac4enc_ctx_t *c)
+{
+    if (!c)
+        return -1;
+    return (int64_t)enc_step_emitted(c->eng);
+}
+
 static int
 record(ac4enc_ctx_t *c, ac4enc_subcode_t sub,
        const char *stage, int frame, int rc)
@@ -222,8 +236,9 @@ from_engine(ac4enc_ctx_t *c, const char *stage, int rc)
     if (detail == ENC_STEP_EBAKE) {
         int ech = 0, eidx = 0;
         double x = 0.0, nb;
+        long long fr = c->fed_total / AC4ENC_FRAME_SAMPLES;
         record(c, AC4ENC_EBAKE_OVERFLOW, stage,
-               c->fed_total / AC4ENC_FRAME_SAMPLES, rc);
+               fr > INT_MAX ? INT_MAX : (int)fr, rc);
         if (enc_step_err_sample(c->eng, &ech, &eidx, &x))
             ech = eidx = 0;
         if (ech < 0 || ech >= c->nch)
@@ -326,11 +341,11 @@ measure_i(const int *const *chs, const int *lens, int nch,
         free(d0);
         free(d1);
         for (int k = 0; k < lens[0]; k++)
-            if (abs(chs[0][k]) > peak)
-                peak = abs(chs[0][k]);
+            if (enc_core_abs_sat(chs[0][k]) > peak)
+                peak = enc_core_abs_sat(chs[0][k]);
         for (int k = 0; k < lens[1]; k++)
-            if (abs(chs[1][k]) > peak)
-                peak = abs(chs[1][k]);
+            if (enc_core_abs_sat(chs[1][k]) > peak)
+                peak = enc_core_abs_sat(chs[1][k]);
     } else {
         double *dm[6];
         const double *dmp[6];
@@ -369,8 +384,8 @@ measure_i(const int *const *chs, const int *lens, int nch,
         free(mono);
         for (int c = 0; c < 6; c++) {
             for (int k = 0; k < lens[c]; k++)
-                if (abs(chs[c][k]) > peak)
-                    peak = abs(chs[c][k]);
+                if (enc_core_abs_sat(chs[c][k]) > peak)
+                    peak = enc_core_abs_sat(chs[c][k]);
             free(dm[c]);
         }
     }
@@ -1129,15 +1144,21 @@ feed2(ac4enc_ctx_t *c, const char *stage, int domain,
     }
     if (is_tail) {
         /* Tail ends input: frame #emitted is forthcoming
-         * iff it precedes the now-known plan. */
-        int total = c->fed_total + n, plan;
-        if (c->nch == 6 || c->priming)
-            plan = enc_core_nframes_for_samples(total);
-        else if (total <= 0)
+         * iff it precedes the now-known plan. Totals are
+         * 64-bit (m2); the int plan saturates (only the
+         * < comparison below consumes it). */
+        long long total = c->fed_total + n;
+        int plan;
+        if (c->nch == 6 || c->priming) {
+            int tin = total > INT_MAX ? INT_MAX : (int)total;
+            plan = enc_core_nframes_for_samples(tin);
+        } else if (total <= 0) {
             plan = 0;
-        else
-            plan = (total + AC4ENC_FRAME_SAMPLES - 1) /
+        } else {
+            long long p = (total + AC4ENC_FRAME_SAMPLES - 1) /
                 AC4ENC_FRAME_SAMPLES;
+            plan = p > INT_MAX ? INT_MAX : (int)p;
+        }
         will_emit = enc_step_emitted(c->eng) < plan;
     } else {
         will_emit = enc_step_ready(c->eng) == 1 ||
@@ -1299,14 +1320,6 @@ ac4enc_flush2(ac4enc_ctx_t *c, uint8_t *out, size_t outcap,
     }
     return serve(c, "flush", out, outcap, out_len,
                  is_iframe);
-}
-
-int
-ac4enc_flush(ac4enc_ctx_t *c, uint8_t *out, size_t outcap,
-             int *is_iframe)
-{
-    size_t olen = 0;
-    return ac4enc_flush2(c, out, outcap, &olen, is_iframe);
 }
 
 const char *

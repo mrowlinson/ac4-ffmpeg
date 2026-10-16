@@ -254,15 +254,13 @@ int ac4enc_encode_tail_f2(ac4enc_ctx_t *c,
                           size_t *out_len /* required */,
                           int *is_iframe);
 
-/* Drain encoded frames. 1 = bare frame in out, 0 = done,
- * <0 error. The first call ends input (no-feed streams encode
- * the priming plan) and runs the baked-peak check. */
-int ac4enc_flush(ac4enc_ctx_t *c, uint8_t *out, size_t outcap,
-                 int *is_iframe);
-/* Length-reporting flush (preferred): *out_len set on 1, and
- * to the needed size on short-buffer -EINVAL. */
+/* Drain encoded frames. 1 = bare frame in out (with
+ * *out_len set), 0 = done, <0 error. The first call ends
+ * input (no-feed streams encode the priming plan: 2 frames
+ * at fed 0, m9) and runs the baked-peak check. Short-buffer
+ * -EINVAL sets *out_len to the needed size. */
 int ac4enc_flush2(ac4enc_ctx_t *c, uint8_t *out,
-                  size_t outcap, size_t *out_len,
+                  size_t outcap, size_t *out_len /* required */,
                   int *is_iframe);
 void ac4enc_close(ac4enc_ctx_t *c); /* NULL-safe */
 
@@ -284,6 +282,13 @@ int ac4enc_err_frame(const ac4enc_ctx_t *c);
  * subcodes ("baked peak gate: ...", "bake_round gate: ..."),
  * else "". Never NULL (NULL ctx -> ""). Follows err_sub. */
 const char *ac4enc_err_detail(const ac4enc_ctx_t *c);
+
+/* 64-bit stream totals (m2): samples fed per ch (all feeds)
+ * and bare frames emitted. int64 never wraps in practice
+ * (the old int total overflowed past ~12h at 48 kHz).
+ * -1 on NULL. Reset clears both. */
+int64_t ac4enc_fed_samples(const ac4enc_ctx_t *c);
+int64_t ac4enc_emitted_frames(const ac4enc_ctx_t *c);
 
 /* Max bare-frame bytes for a rate (exact CBR period max), or
  * -EINVAL on bad rate. Buffers of this size never go short. */

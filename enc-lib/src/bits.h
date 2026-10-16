@@ -1,8 +1,8 @@
 /* bits.h: MSB-first bit writer + CRC-16 for the clean AC-4 encoder.
  *
- * C port of encoder/bits.py (C-port phase, module 1). Byte-identical
- * contract: the same op sequence produces the same bit stream as the
- * Python BitWriter; see tests/test_bits_parity.py. C11, zero deps.
+ * Byte-identical contract: the same op sequence produces the
+ * same bit stream as the reference BitWriter; see
+ * tests/test_bits_parity.py. C11, zero deps.
  */
 #ifndef AC4_BITS_H
 #define AC4_BITS_H
