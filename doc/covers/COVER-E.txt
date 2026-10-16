@@ -43,4 +43,4 @@ Branch state (draft, unposted): ac4/E-ts-r3@a2485a9
 r2 (98486f6/09a1bd2): sign-offs, 2/2 ASCII, 2/2 appends to the
 Series C tests/fate/ac4.mak instead of creating it.
 
-Signed-off-by on each patch: [OWNER NAME] <[OWNER EMAIL]>
+Signed-off-by on each patch: Michael Rowlinson <mrowlinson@gmail.com>

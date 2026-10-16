@@ -27,8 +27,8 @@ FATE: carried on this 1-patch submit (M3): fate-ac4-demux/-51
 (demux.mak, FATE_SAMPLES_DEMUX) + fate-seek-extra-ac4 (seek.mak,
 FATE_SEEK_EXTRA) with 3 refs. Needs ac4/clip-stereo.ac4 +
 ac4/clip-51-real.ac4 live in fate-suite before post; samples mail
-(ff-samples-pack/REQUEST.txt) still UNSENT ([OWNER NAME]
-unfilled). Series B (B2) still gated on this patch.
+(ff-samples-pack/REQUEST.txt) still UNSENT (owner name filled,
+send pending). Series B (B2) still gated on this patch.
 M3 local pins (ff-A0-M3-local/, no suite samples): 8/10 review
 sub-items pinned by a 58/58-gate battery over synth vectors
 (bit-mutations of a local c-ac4enc sine clip): trunc/bad-sync/
@@ -52,4 +52,4 @@ implementers/distributors should consider patent licensing.
 Branch state (draft, unposted): ac4/A0-submit-r2@fc4866b over
 baseline 3e6cd5e (1 commit; ASCII-only comments re-cut of c22b0fe).
 
-Signed-off-by: [OWNER NAME] <[OWNER EMAIL]>
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>

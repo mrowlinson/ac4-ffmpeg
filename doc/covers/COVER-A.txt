@@ -44,4 +44,4 @@ covered by Dolby patents; this submission addresses copyright-clean
 code only and implementers/distributors should consider patent
 licensing.
 
-Signed-off-by on each patch: [OWNER NAME] <[OWNER EMAIL]>
+Signed-off-by on each patch: Michael Rowlinson <mrowlinson@gmail.com>
