@@ -14,6 +14,8 @@ against merged dec-lib (d505b36). Lands in-tree as
 - `pins.txt` — pins validated vs dec-lib output bytes (this branch).
 - `validate.py` — runnable pin gate (`python3 validate.py`, exit 0 =
   all pins match lib output). Needs scratch samples (see --help).
+- `samples-manifest.md` — blocked-5 acquired-sample pins + provenance
+  (ims120, chanbased, 714-caveat; bytes-ready, mail pending).
 
 ## Per-item verdicts
 
