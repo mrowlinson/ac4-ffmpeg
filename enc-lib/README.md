@@ -1,8 +1,9 @@
 # enc-lib: AC-4 encoder library (opaque-ctx API, r2 incremental)
 
-R2 status: measured-loudness parity vs `c-ac4enc` is **100/102
-runs PASS** (2 bilateral consistent refusals, 0 non-parity;
-same counts as v1, refusals now fail fast at open); see
+Merged status (r2 + S1): measured-loudness parity vs
+`c-ac4enc` is **100/102 runs PASS + 2 LIB-AHEAD** (the frozen
+oracle still refuses the S1 sparse class while the lib
+encodes, byte-identical to `enc.py`; 0 non-parity); see
 `parity/PARITY.md`. The core is refactored into an incremental
 engine (see `VENDOR.md`); the whole-stream drivers survive as
 thin wrappers proving zero-divergence.
@@ -129,13 +130,14 @@ PASS); R5 closed (flags pinned + guard + probe + parity gate).
 ## Heisenbugs / quirks found
 
 - CLI `--forced-iframes csvfile:` paths may not contain `:`.
-- CLI fails SILENTLY (rc 1, zero stderr) on bake peak
-  overflow (e.g. short noise at -24); the lib refuses the same
-  input (now fail-fast at open). Both refuse consistently
-  (2 cases).
+- CLI fails SILENTLY (rc 1, zero stderr) on the S1 sparse
+  class (e.g. short noise at -24); the frozen oracle keeps
+  the pre-fix `nfr0 == 12` demand while the lib encodes
+  (2 LIB-AHEAD cases, byte-identical to `enc.py`).
 - Sparse I-frame stamp shape (`compose_sub0` returns 11, not
-  12) is a core refusal path, distinct from bake overflow;
-  the lib mirrors it exactly (fail-fast `-EIO` at open).
+  12) is legitimate (`enc.py` sparse branch), not a refusal
+  path: the core drivers and the lib accept
+  `sparse ? 11 : 12` (S1 fix, `t_sparse`-gated).
 - CLI requires `--output-manifest` (hard error without it).
 
 ## Build / test

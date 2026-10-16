@@ -702,6 +702,7 @@ main(int argc, char **argv)
                         ac4enc_subcode_str(
                             ac4enc_err_sub(ctx)),
                         ac4enc_err_stage(ctx));
+                rc = 1;
                 free(pkt);
                 goto done;
             }
@@ -743,6 +744,7 @@ main(int argc, char **argv)
                         ac4enc_subcode_str(
                             ac4enc_err_sub(ctx)),
                         ac4enc_err_stage(ctx));
+                rc = 1;
                 free(pkt);
                 goto done;
             }
@@ -773,6 +775,7 @@ main(int argc, char **argv)
                         ac4enc_subcode_str(
                             ac4enc_err_sub(ctx)),
                         ac4enc_err_stage(ctx));
+                rc = 1;
                 goto done;
             }
             if (frc == 0)

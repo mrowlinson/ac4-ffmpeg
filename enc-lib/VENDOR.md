@@ -59,8 +59,10 @@ left untouched, read-only oracle).
 - Loud diagnostic: `enc_core_last_error()` (new, declared
   in `enc_core.h`) + `ac4enc_last_error()` passthrough;
   all 8 drivers clear it on entry and the 8
-  stamp-composition checks record refusals; `encharness`
-  prints it on flush failure.
+  stamp-composition checks record refusals; the store is
+  `_Thread_local` after the r2 merge (B1), and `t_sparse`
+  pins the empty-on-success contract (the r2 harness
+  prints M1 subcode/stage on failures).
 - `diff` vs upstream now shows the fix hunks as `^<`/`^>`
   pairs in `enc_core_enc.c` (8 check sites + `#include
   <stdio.h>` + error block); everything else still 0 `^<`.

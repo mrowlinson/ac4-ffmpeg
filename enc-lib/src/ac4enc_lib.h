@@ -192,9 +192,9 @@ typedef enum {
 } ac4enc_subcode_t;
 
 /* 0 ok / -EINVAL bad opts / -ENOMEM / -EIO fpenv or core
- * refusal (e.g. sparse stamp shape: fail-fast at open). Copies
- * opts content; validates everything (interval rule, DRC
- * dry-run, measure/line ranges, rate). */
+ * refusal (e.g. uncomposable stamp: fail-fast at open).
+ * Copies opts content; validates everything (interval rule,
+ * DRC dry-run, measure/line ranges, rate). */
 int ac4enc_open(ac4enc_ctx_t **ctx, const ac4enc_opts_t *opts);
 
 /* Feed exactly 2048 samples per ch (ch-major, same scale as

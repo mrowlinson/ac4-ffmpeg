@@ -9,25 +9,22 @@ Python recompute of `iframe_set`. Vectors: 73 synthetic files
 (24M, 48 kHz) in scratch `vectors/` — repo has zero PCM
 fixtures, so the battery generates its own (cap 100 files).
 
-## Result: 100/102 PASS, 0 non-parity
+## Result: 100/102 PASS + 2 LIB-AHEAD, 0 non-parity
 
 108 runs total: **100 PASS** (byte-identical bare frames +
-iframe flags), **2 BOTH-FAIL** (bilateral consistent refusal,
-same input class fails identically on both sides), **6
-DIVERGE-neutral** (neutral-mode divergence docs, by design).
+iframe flags), **2 LIB-AHEAD** (frozen oracle still refuses
+the S1 sparse class, lib encodes), **6 DIVERGE-neutral**
+(neutral-mode divergence docs, by design).
 
 r2 (ff/enc-libr2, 2026-10-16): same 100/102 + 2 + 6 through
 the incremental lib (frames pulled per feed, not buffered).
-The 2 BOTH-FAIL cases now refuse fail-fast at open (sparse
-stamp shape, `-EIO`) instead of late at flush; the parity
-class is unchanged (both sides refuse). Neutral stats are
-byte-identical to v1 (the neutral spec-lines default matches
-on all 6 cases).
+Neutral stats are byte-identical to v1 (the neutral
+spec-lines default matches on all 6 cases).
 
 Per-file: 71/73 vector files pass outright; the 2
-`st_noise_2049` files refuse on both sides at default -24
-(bake peak overflow: short noise measures loud, rebake
-exceeds s16 — oracle exits 1 silently, lib returns -EIO).
+`st_noise_2049` files are LIB-AHEAD at default -24 (sparse
+class: the oracle exits 1 silently on the pre-fix stamp
+check while the lib encodes — see the S1 rerun note below).
 Same files pass at `--target-db 0` (incl. dedicated case).
 
 ## Rerun 2026-10-16 (ff/enc-libfix, S1): still 100/102, 0 non-parity

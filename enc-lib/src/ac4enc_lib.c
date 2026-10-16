@@ -523,7 +523,11 @@ stereo_stamp(double m, int in_peak, double d_peak,
         1, 0, sby, t16, ENC_CORE_I12_MID_TAIL, pid, i12);
     nfr0 = enc_core_compose_sub0(1, sparse, sby, c16, NULL,
                                 pid, fr0);
-    if (np6 != 6 || ni12 != 12 || nfr0 != 12)
+    /* S1: the sparse-iframe fr0 stamp is legitimately 11
+     * bytes (enc.py sparse branch); accept the actual length
+     * and store it (downstream splice is length-agnostic). */
+    if (np6 != 6 || ni12 != 12 ||
+        nfr0 != (sparse ? 11 : 12))
         return -1;
     memcpy(s4, ENC_CORE_SUB2_DEE, 4);
     stamp->p6 = p6;
@@ -533,7 +537,7 @@ stereo_stamp(double m, int in_peak, double d_peak,
     stamp->s4 = s4;
     stamp->n_s4 = 4;
     stamp->fr0 = fr0;
-    stamp->n_fr0 = 12;
+    stamp->n_fr0 = nfr0;
     return 0;
 }
 
@@ -922,9 +926,10 @@ ac4enc_open(ac4enc_ctx_t **ctx, const ac4enc_opts_t *opts)
     memcpy(c->spec_lines, opts->spec_lines,
            sizeof c->spec_lines);
     if (prologue(c, opts)) {
-        /* Stamp-shape refusal (e.g. sparse I-frame): the config
-         * is valid but the core refuses the encode, so -EIO
-         * (fail-fast at open instead of late at flush). */
+        /* Stamp-shape refusal (e.g. uncomposable loudness
+         * stamp): the config is valid but the core refuses
+         * the encode, so -EIO (fail-fast at open instead of
+         * late at flush). */
         ac4enc_close(c);
         return -EIO;
     }

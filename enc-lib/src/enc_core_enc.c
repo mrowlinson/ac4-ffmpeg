@@ -30,8 +30,9 @@ const double ENC_CORE_LEG_COMP_51_DB[6] =
 
 /* Last-error string (S1 loud diagnostic). Cleared on entry
  * of every public encode driver; set by stamp-composition
- * refusals. Single global; core is single-threaded (H7). */
-static char core_errmsg[256];
+ * refusals. Thread-local (r2 B1: concurrent encodes on
+ * separate ctx must not clobber each other's diagnostic). */
+static _Thread_local char core_errmsg[256];
 
 static void
 core_clear_error(void)

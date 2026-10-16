@@ -284,7 +284,8 @@ t_sparse(void)
         CHECK(enc_core_last_error()[0] == '\0',
               "no error recorded on success");
     }
-    /* Lib path (_m via caller measure) drains 49 frames. */
+    /* Lib path (measured + caller spec lines, incremental
+     * pull protocol) emits 49 frames total. */
     {
         ac4enc_ctx_t *c = NULL;
         ac4enc_opts_t o;
@@ -292,11 +293,14 @@ t_sparse(void)
         const int *chs[2] = { L, R };
         int lens[2] = { ns, ns };
         static uint8_t big[AC4ENC_OUTCAP_SAFE];
+        double *Ld = malloc((size_t)ns * sizeof *Ld);
         int full = ns / AC4ENC_FRAME_SAMPLES;
         int rem = ns % AC4ENC_FRAME_SAMPLES;
-        int nframes = 0, frc;
+        int nframes = 0, frc, nl = 0, sl[7];
         size_t olen = 0;
+        int is_if = 0;
         memset(&o, 0, sizeof o);
+        CHECK(Ld != NULL, "sparse lines alloc");
         CHECK(ac4enc_measure2(chs, lens, 2, &m) == 0,
               "sparse measure ok");
         CHECK(m.tf_tone < 0.6 && m.f_flat > 0.5,
@@ -316,6 +320,17 @@ t_sparse(void)
         o.in_peak = m.in_peak;
         o.d_peak = m.d_peak;
         o.has_d_peak = m.has_d_peak;
+        if (Ld) {
+            for (int k = 0; k < ns; k++)
+                Ld[k] = (double)L[k];
+            CHECK(ac4enc_spectral_lines(Ld, ns, &m,
+                                        o.target_db, 0, 0.0,
+                                        &nl, sl) == 0,
+                  "sparse lines ok");
+            o.has_spec_lines = 1;
+            o.n_spec_lines = nl;
+            memcpy(o.spec_lines, sl, sizeof sl);
+        }
         CHECK(ac4enc_open(&c, &o) == 0, "sparse lib open");
         if (c) {
             for (int f = 0; f < full; f++) {
@@ -323,34 +338,42 @@ t_sparse(void)
                     L + f * AC4ENC_FRAME_SAMPLES,
                     R + f * AC4ENC_FRAME_SAMPLES
                 };
-                if (ac4enc_encode_frame(c, rr, NULL, 0,
-                                        NULL)) {
+                int erc = ac4enc_encode_frame2(
+                    c, rr, big, sizeof big, &olen,
+                    &is_if);
+                if (erc < 0) {
                     CHECK(0, "sparse lib feed");
                     break;
                 }
+                if (erc == 1)
+                    nframes++;
             }
             if (rem > 0) {
                 const int *rr[2] = {
                     L + full * AC4ENC_FRAME_SAMPLES,
                     R + full * AC4ENC_FRAME_SAMPLES
                 };
-                CHECK(ac4enc_encode_tail(c, rr, rem, NULL,
-                                         0, NULL) == 0,
-                      "sparse lib tail");
+                int erc = ac4enc_encode_tail2(
+                    c, rr, rem, big, sizeof big, &olen,
+                    &is_if);
+                CHECK(erc >= 0, "sparse lib tail");
+                if (erc == 1)
+                    nframes++;
             }
             for (;;) {
                 frc = ac4enc_flush2(c, big, sizeof big,
-                                    &olen, NULL);
+                                    &olen, &is_if);
                 if (frc <= 0)
                     break;
                 nframes++;
             }
             CHECK(frc == 0 && nframes == 49,
-                  "sparse lib drains 49 frames");
+                  "sparse lib emits 49 frames");
             CHECK(ac4enc_last_error()[0] == '\0',
                   "lib error empty on success");
             ac4enc_close(c);
         }
+        free(Ld);
     }
     free(L);
     free(R);

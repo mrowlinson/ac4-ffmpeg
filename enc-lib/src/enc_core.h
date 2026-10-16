@@ -180,8 +180,8 @@ int enc_core_compose_sub0(int iframe, int sparse, int stamp,
  * the refusal carried a message (currently the loudness-stamp
  * composition checks). Cleared on entry of every encode
  * driver, so a non-empty string always belongs to the most
- * recent call. Never NULL. Single global: core is
- * single-threaded (H7). */
+ * recent call on THIS thread. Never NULL. Thread-local:
+ * safe under concurrent encodes on separate ctx (r2 B1). */
 const char *enc_core_last_error(void);
 int enc_core_compose_sub0_51(int stamp, int content16,
                              const uint8_t *mid23 /*NULL=I12_MID*/,
