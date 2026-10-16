@@ -151,7 +151,8 @@ read-only oracle):
 - Upstream follow-up (not done here): cleanroom
   `encoder/enc.py` `DIG_GAIN` needs the same stereo
   split (legs/fullband/mixed stereo call sites to
-  2.0), then the C port re-sync; until then the
+  2.0, mixed incl. joint-M/S `:1403/:1405`), then
+  the C port re-sync; until then the
   frozen CLI keeps x3.0 and S5FU-FIXED stays the
   parity expectation for stereo spectral content.
   `diff` vs upstream gains 6 one-line hunks + the
