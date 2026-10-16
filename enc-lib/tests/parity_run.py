@@ -7,12 +7,20 @@ import os
 import subprocess
 import sys
 
-S = "/Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-enc-librefactor"
-R = "/Users/mrowlinson/Projects/dolby-ac4-cleanroom"
-ORACLE = os.path.join(R, "c-ac4enc")
-HARNESS = os.path.join(S, "encharness")
-VEC = os.path.join(S, "vectors")
-OUT = os.path.join(S, "parity-out")
+# Paths: overridable via env for lanes/scratches; defaults are the
+# v1 refactor scratch (vectors live there; binaries + outputs go to S).
+S = os.environ.get("ENC_PARITY_S",
+                   "/Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-enc-librefactor")
+R = os.environ.get(
+    "ENC_PARITY_R", "/Users/mrowlinson/Projects/dolby-ac4-cleanroom")
+ORACLE = os.environ.get("ENC_PARITY_ORACLE",
+                        os.path.join(R, "c-ac4enc"))
+HARNESS = os.environ.get("ENC_PARITY_HARNESS",
+                         os.path.join(S, "encharness"))
+VEC = os.environ.get("ENC_PARITY_VEC",
+                     os.path.join(S, "vectors"))
+OUT = os.environ.get("ENC_PARITY_OUT",
+                     os.path.join(S, "parity-out"))
 TIMEOUT = 180
 
 
