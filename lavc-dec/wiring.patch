@@ -1,0 +1,27 @@
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index 249b0fe..46405e6 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -216,6 +216,10 @@ OBJS-$(CONFIG_AC3_DECODER)             += ac3dec_float.o ac3dec_data.o ac3.o \
+                                           kbdwin.o ac3tab.o ac3_channel_layout_tab.o
+ OBJS-$(CONFIG_AC3_FIXED_DECODER)       += ac3dec_fixed.o ac3dec_data.o ac3.o \
+                                           kbdwin.o ac3tab.o ac3_channel_layout_tab.o
++# AC-4 decoder core lives outside this tree until the Q1 port lands;
++# link the dec-lib static archive (built with AC4D_LIB_ONLY) via
++# --extra-libs, with its headers on --extra-cflags.
++OBJS-$(CONFIG_AC4_DECODER)             += ac4dec.o
+ OBJS-$(CONFIG_AC3_ENCODER)             += ac3enc_float.o ac3enc.o ac3tab.o \
+                                           ac3.o kbdwin.o
+ OBJS-$(CONFIG_AC3_FIXED_ENCODER)       += ac3enc_fixed.o ac3enc.o ac3tab.o ac3.o kbdwin.o
+diff --git a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
+index c344cb5..5921bfb 100644
+--- a/libavcodec/allcodecs.c
++++ b/libavcodec/allcodecs.c
+@@ -430,6 +430,7 @@ extern const FFCodec ff_ac3_encoder;
+ extern const FFCodec ff_ac3_decoder;
+ extern const FFCodec ff_ac3_fixed_encoder;
+ extern const FFCodec ff_ac3_fixed_decoder;
++extern const FFCodec ff_ac4_decoder;
+ extern const FFCodec ff_acelp_kelvin_decoder;
+ extern const FFCodec ff_ahx_decoder;
+ extern const FFCodec ff_alac_encoder;
