@@ -28,7 +28,13 @@ build/%.o: src/%.c | build
 build:
 	mkdir -p build
 
-clean:
-	rm -f build/*.o build/libac4d.a build/shim
+build/ac4_src_test: ac4_src_test.c src/ac4_src.h | build
+	$(CC) $(CFLAGS) ac4_src_test.c -o $@
 
-.PHONY: all clean
+test: build/ac4_src_test
+	./build/ac4_src_test
+
+clean:
+	rm -f build/*.o build/libac4d.a build/shim build/ac4_src_test
+
+.PHONY: all clean test
