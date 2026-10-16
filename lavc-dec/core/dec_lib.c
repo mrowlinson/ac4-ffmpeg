@@ -1341,7 +1341,7 @@ static int toc_parse_bv2(const uint8_t *raw, size_t rawlen, toc_t *t,
         if (br_pres_v1(&b, rate, gis[i], &ngis[i], &frfs[i], &pvers[i],
                        &pndots[i]) != 0)
             return -1;
-        /* FINDING-1: belt-and-braces — never trust the count against
+        /* FINDING-1: belt-and-braces -- never trust the count against
          * gis[i][E4_MAXGRP]; over-range fails loud (frame reject). */
         if (ngis[i] < 0 || ngis[i] > E4_MAXGRP)
             return -1;
