@@ -72,12 +72,8 @@ static const double BC_DQ[5][5] = {
  * 4 modules (immersive b_5fronts 0) x ALPHA/BETA x 15 bands.
  * Zero-init per decode (acpl_reset); first-frame DIFF_TIME adds
  * onto zeros (encoder-emitted FREQ first in practice). */
-static int prev_q[4][2][15];
-static int prev_have[4][2];
-
-void acpl_reset(void) {
-    memset(prev_q, 0, sizeof prev_q);
-    memset(prev_have, 0, sizeof prev_have);
+void acpl_reset(acpl_state_t *st) {
+    memset(st, 0, sizeof *st);
 }
 
 /* ---- Decorrelator + ducker + interpolation (P1 5.7.7.2/5.7.7.3/5.7.7.4,
@@ -317,7 +313,7 @@ static int parse_huff(ac4_ebr_t *b, int dt, int qm, int nbands, int *raw,
 /* Parse one acpl_data_1ch (Table 61) + diff-decode + dequant into
  * *out. Returns 0 ok, -1 bit error (*note set). */
 int acpl_parse_1ch(ac4_ebr_t *b, int nbands, int fine, int module,
-                   acpl_mod_t *out, const char **note) {
+                   acpl_mod_t *out, const char **note, acpl_state_t *st) {
     unsigned interp = ebr_u(b, 1);
     unsigned cod = ebr_u(b, 1);
     if (b->err) {
@@ -354,7 +350,7 @@ int acpl_parse_1ch(ac4_ebr_t *b, int nbands, int fine, int module,
                 aq[i] = aq[i - 1] + araw[i];
         } else {
             for (int i = 0; i < nbands; i++)
-                aq[i] = prev_q[module][0][i] + araw[i];
+                aq[i] = st->diff.prev_q[module][0][i] + araw[i];
         }
         if (bdt == 0) {
             bq[0] = braw[0];
@@ -362,13 +358,13 @@ int acpl_parse_1ch(ac4_ebr_t *b, int nbands, int fine, int module,
                 bq[i] = bq[i - 1] + braw[i];
         } else {
             for (int i = 0; i < nbands; i++)
-                bq[i] = prev_q[module][1][i] + braw[i];
+                bq[i] = st->diff.prev_q[module][1][i] + braw[i];
         }
         for (int i = 0; i < nbands; i++) {
-            prev_q[module][0][i] = aq[i];
-            prev_q[module][1][i] = bq[i];
+            st->diff.prev_q[module][0][i] = aq[i];
+            st->diff.prev_q[module][1][i] = bq[i];
         }
-        prev_have[module][0] = prev_have[module][1] = 1;
+        st->diff.prev_have[module][0] = st->diff.prev_have[module][1] = 1;
         if (getenv("AC4DEC_ACPLPROBE")) {
             fprintf(stderr, "AQ m=%d ps=%d aq:", module, ps);
             for (int i = 0; i < nbands; i++)
@@ -400,9 +396,9 @@ int acpl_parse_1ch(ac4_ebr_t *b, int nbands, int fine, int module,
 }
 
 int acpl_probe_1ch(ac4_ebr_t *b, int nbands, int fine, int module,
-                   long frameno, const char **note) {
+                   long frameno, const char **note, acpl_state_t *st) {
     acpl_mod_t m;
-    if (acpl_parse_1ch(b, nbands, fine, module, &m, note))
+    if (acpl_parse_1ch(b, nbands, fine, module, &m, note, st))
         return -1;
     for (int ps = 0; ps < m.npset; ps++) {
         fprintf(stderr, "ACPL f=%ld m=%d ps=%d nb=%d %s adt=%d bdt=%d\n",
@@ -432,18 +428,12 @@ void acpl_imm_init(acpl_imm_t *s) {
     s->dump_frame = 0;
 }
 
-/* Function-static QMF work buffers (single-threaded decoder). */
-static double complex IW_X[4][32][QMF_NSB];
-static double complex IW_Y[4][32][QMF_NSB];
-static double complex IW_Z[4][2][32][QMF_NSB];
-static double complex IW_ZERO[32][QMF_NSB];
-static double IW_T[4][2048];
-static double IW_O[6][2048];
+/* QMF work buffers: per-instance acpl_state_t work area (param). */
 
 void acpl_imm_frame(acpl_imm_t *s, const double *D, const double *E,
                     const double *F, const double *G,
                     const acpl_mod_t *P, int spf, double fold_div,
-                    double *Ls, double *Rs, double *H) {
+                    double *Ls, double *Rs, double *H, acpl_state_t *st) {
     const double sq2 = 1.4142135623730951;
     int nslots = qmf_slots(spf);
     if (nslots < 0 || nslots > 32 || spf > 2048)
@@ -456,42 +446,42 @@ void acpl_imm_frame(acpl_imm_t *s, const double *D, const double *E,
     /* Pre x2 (time) + QMF analysis. */
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < spf; j++)
-            IW_T[i][j] = 2.0 * IN[i][j];
-        qmf_analysis(IW_T[i], nslots, &s->qa[i], IW_X[i]);
+            st->wk.T[i][j] = 2.0 * IN[i][j];
+        qmf_analysis(st->wk.T[i], nslots, &s->qa[i], st->wk.X[i]);
     }
     /* y0..y3 = duck(decorr(xNin)). */
     for (int i = 0; i < 4; i++)
-        acpl_decorr_apply(IW_X[i], nslots, &s->dd[i], 1, IW_Y[i]);
+        acpl_decorr_apply(st->wk.X[i], nslots, &s->dd[i], 1, st->wk.Y[i]);
     /* Modules (ACPL_2: in1 = 0; FULL: qmf_band = 0). */
     for (int m = 0; m < 4; m++)
         acpl_module(P[m].a, P[m].b, s->pa[m], s->pbv[m], P[m].npset,
-                    P[m].nbands, P[m].itype, P[m].timeslot, 0, IW_X[m],
-                    IW_ZERO, IW_Y[m], nslots, IW_Z[m][0], IW_Z[m][1]);
+                    P[m].nbands, P[m].itype, P[m].timeslot, 0, st->wk.X[m],
+                    st->wk.ZERO, st->wk.Y[m], nslots, st->wk.Z[m][0], st->wk.Z[m][1]);
     /* Post sqrt(2) on z5,z7,z9,z10,z11,z12 (skip z6/z8: backs). */
     static const int ZM[6] = {0, 1, 2, 2, 3, 3};
     static const int ZO[6] = {0, 0, 0, 1, 0, 1};
     for (int i = 0; i < 6; i++) {
         for (int ts = 0; ts < nslots; ts++)
             for (int sb = 0; sb < QMF_NSB; sb++)
-                IW_Z[ZM[i]][ZO[i]][ts][sb] *= sq2;
-        qmf_synthesis(IW_Z[ZM[i]][ZO[i]], nslots, &s->qs[i], IW_O[i]);
+                st->wk.Z[ZM[i]][ZO[i]][ts][sb] *= sq2;
+        qmf_synthesis(st->wk.Z[ZM[i]][ZO[i]], nslots, &s->qs[i], st->wk.O[i]);
     }
     /* Fold: Ls = z5 + (z9+z10)/fold_div (gain-indexed). */
     if (!(fold_div > 0.0))
         fold_div = sq2;
     for (int j = 0; j < spf; j++) {
-        Ls[j] = IW_O[0][j] + (IW_O[2][j] + IW_O[3][j]) / fold_div;
-        Rs[j] = IW_O[1][j] + (IW_O[4][j] + IW_O[5][j]) / fold_div;
+        Ls[j] = st->wk.O[0][j] + (st->wk.O[2][j] + st->wk.O[3][j]) / fold_div;
+        Rs[j] = st->wk.O[1][j] + (st->wk.O[4][j] + st->wk.O[5][j]) / fold_div;
     }
     if (H) {
         /* AB-20 heights: Tfl=z9 Tfr=z11 Tbl=z10 Tbr=z12 (CROSSED:
-         * z10=back-left, z11=front-right). IW_O[2..5] = z9,z10,z11,z12
+         * z10=back-left, z11=front-right). st->wk.O[2..5] = z9,z10,z11,z12
          * post-sqrt(2) synth (ZM/ZO order). NO fold. */
         for (int j = 0; j < spf; j++) {
-            H[0 * spf + j] = IW_O[2][j];
-            H[1 * spf + j] = IW_O[4][j];
-            H[2 * spf + j] = IW_O[3][j];
-            H[3 * spf + j] = IW_O[5][j];
+            H[0 * spf + j] = st->wk.O[2][j];
+            H[1 * spf + j] = st->wk.O[4][j];
+            H[2 * spf + j] = st->wk.O[3][j];
+            H[3 * spf + j] = st->wk.O[5][j];
         }
     }
     { /* ZDUMP (H-SPLIT forensics): z-synth time + y @ sb2/3. */
@@ -502,10 +492,10 @@ void acpl_imm_frame(acpl_imm_t *s, const double *D, const double *E,
             snprintf(p2, sizeof p2, "%s.y2.f64", zp);
             FILE *f1 = fopen(p1, "ab");
             if (f1) {
-                fwrite(IW_O[2], sizeof(double), (size_t)spf, f1);
-                fwrite(IW_O[3], sizeof(double), (size_t)spf, f1);
-                fwrite(IW_O[4], sizeof(double), (size_t)spf, f1);
-                fwrite(IW_O[5], sizeof(double), (size_t)spf, f1);
+                fwrite(st->wk.O[2], sizeof(double), (size_t)spf, f1);
+                fwrite(st->wk.O[3], sizeof(double), (size_t)spf, f1);
+                fwrite(st->wk.O[4], sizeof(double), (size_t)spf, f1);
+                fwrite(st->wk.O[5], sizeof(double), (size_t)spf, f1);
                 fclose(f1);
             }
             FILE *f2 = fopen(p2, "ab");
@@ -513,10 +503,10 @@ void acpl_imm_frame(acpl_imm_t *s, const double *D, const double *E,
                 for (int m = 2; m < 4; m++)
                     for (int sb = 2; sb < 4; sb++)
                         for (int ts = 0; ts < nslots; ts++) {
-                            double re = creal(IW_Y[m][ts][sb]);
-                            double im = cimag(IW_Y[m][ts][sb]);
-                            double xe = creal(IW_X[m][ts][sb]);
-                            double xi = cimag(IW_X[m][ts][sb]);
+                            double re = creal(st->wk.Y[m][ts][sb]);
+                            double im = cimag(st->wk.Y[m][ts][sb]);
+                            double xe = creal(st->wk.X[m][ts][sb]);
+                            double xi = cimag(st->wk.X[m][ts][sb]);
                             fwrite(&re, sizeof re, 1, f2);
                             fwrite(&im, sizeof im, 1, f2);
                             fwrite(&xe, sizeof xe, 1, f2);
@@ -552,11 +542,11 @@ void acpl_5x_init(acpl_5x_t *s) {
 
 void acpl_5x_frame(acpl_5x_t *s, const double *L, const double *R,
                    const acpl_mod_t *P, int spf, double *oL,
-                   double *oR, double *oLs, double *oRs) {
+                   double *oR, double *oLs, double *oRs, acpl_state_t *st) {
+    /* (was: shared file-static IW_* scratch; now per-instance via st) */
     /* Mirror of acpl_imm_frame for 2 modules + straight outputs
-     * (AB-12, NO fold). Shares the file-static IW_* scratch with
-     * the 714 path (sequential use: one decode = one path, never
-     * interleaved, so the first-2/first-4 subsets are safe). */
+     * (AB-12, NO fold). Uses the per-instance work area (first-2 /
+     * first-4 subsets; paths never interleave within one decode). */
     const double sq2 = 1.4142135623730951;
     int nslots = qmf_slots(spf);
     if (nslots < 0 || nslots > 32 || spf > 2048)
@@ -566,30 +556,30 @@ void acpl_5x_frame(acpl_5x_t *s, const double *L, const double *R,
     IN[1] = R;
     for (int i = 0; i < 2; i++) {
         for (int j = 0; j < spf; j++)
-            IW_T[i][j] = 2.0 * IN[i][j];
-        qmf_analysis(IW_T[i], nslots, &s->qa[i], IW_X[i]);
+            st->wk.T[i][j] = 2.0 * IN[i][j];
+        qmf_analysis(st->wk.T[i], nslots, &s->qa[i], st->wk.X[i]);
     }
     for (int i = 0; i < 2; i++)
-        acpl_decorr_apply(IW_X[i], nslots, &s->dd[i], 1, IW_Y[i]);
+        acpl_decorr_apply(st->wk.X[i], nslots, &s->dd[i], 1, st->wk.Y[i]);
     for (int m = 0; m < 2; m++)
         acpl_module(P[m].a, P[m].b, s->pa[m], s->pbv[m], P[m].npset,
-                    P[m].nbands, P[m].itype, P[m].timeslot, 0, IW_X[m],
-                    IW_ZERO, IW_Y[m], nslots, IW_Z[m][0], IW_Z[m][1]);
+                    P[m].nbands, P[m].itype, P[m].timeslot, 0, st->wk.X[m],
+                    st->wk.ZERO, st->wk.Y[m], nslots, st->wk.Z[m][0], st->wk.Z[m][1]);
     /* Post sqrt(2) on z1,z3 only (AB-12 straight map). */
     for (int ts = 0; ts < nslots; ts++)
         for (int sb = 0; sb < QMF_NSB; sb++) {
-            IW_Z[0][1][ts][sb] *= sq2;
-            IW_Z[1][1][ts][sb] *= sq2;
+            st->wk.Z[0][1][ts][sb] *= sq2;
+            st->wk.Z[1][1][ts][sb] *= sq2;
         }
-    qmf_synthesis(IW_Z[0][0], nslots, &s->qs[0], IW_O[0]);
-    qmf_synthesis(IW_Z[1][0], nslots, &s->qs[1], IW_O[1]);
-    qmf_synthesis(IW_Z[0][1], nslots, &s->qs[2], IW_O[2]);
-    qmf_synthesis(IW_Z[1][1], nslots, &s->qs[3], IW_O[3]);
+    qmf_synthesis(st->wk.Z[0][0], nslots, &s->qs[0], st->wk.O[0]);
+    qmf_synthesis(st->wk.Z[1][0], nslots, &s->qs[1], st->wk.O[1]);
+    qmf_synthesis(st->wk.Z[0][1], nslots, &s->qs[2], st->wk.O[2]);
+    qmf_synthesis(st->wk.Z[1][1], nslots, &s->qs[3], st->wk.O[3]);
     for (int j = 0; j < spf; j++) {
-        oL[j] = IW_O[0][j];
-        oR[j] = IW_O[1][j];
-        oLs[j] = IW_O[2][j];
-        oRs[j] = IW_O[3][j];
+        oL[j] = st->wk.O[0][j];
+        oR[j] = st->wk.O[1][j];
+        oLs[j] = st->wk.O[2][j];
+        oRs[j] = st->wk.O[3][j];
     }
     for (int m = 0; m < 2; m++) {
         int lp = P[m].npset - 1;

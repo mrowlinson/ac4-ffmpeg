@@ -38,6 +38,10 @@
 #include "imdct.h"
 #include "qmf.h"
 #include "sfb_offsets.h"
+#include "ac4d.h"
+#ifdef AC4D_LIB_ONLY
+#include <stdarg.h>
+#endif
 /* ---- ac4d_ctx: heap instance state (mechanical ctx conversion) ---- */
 /* ctx-move from dec_lib.c:4356-4357 */
 #define DRC_MAXMODES 8
@@ -253,7 +257,125 @@ typedef struct ac4d_ctx {
     ac4e_sap_t xm_asq[4];
     asf_chan_t xm_ch[12];
     ac4e_sap_t xm_sap;
-    /* API members appended below (hand) */
+    /* ---- streaming API + H1 pipeline state (hand) ---- */
+    /* H1 ring sizes (absolute-indexed, fixed): skeleton/spill hold 4
+     * frames of 2048; compand raw holds 3 frames + flush margin. */
+/* Push-fed ring sizing (sk/tf/spill): worst-case occupancy is
+ * skew + (4+need)*spf — steady 4-frame emit lag (OLA-debt stall +
+ * h_need lookahead) plus bursty OLA pushes (telescoping window
+ * sizes: up to 3*spf in one frame on long->short changes; 5632
+ * observed). spf_max=2048, need=1: 10240 + skew (0 on corpus;
+ * 1-spf budget). Tripwires below fail loud past this. */
+#define AC4D_SKN (6 * 2048)
+#define AC4D_SPN (6 * 2048)
+#define AC4D_RAWN (5 * 2048 + 1024)
+#define AC4D_APFN 4
+    ac4d_opts ao;
+    int ao_open;
+    int h_fmt;           /* format latched from first feed */
+    int h_nch;           /* latched decode nch (1/2/6/8) */
+    int h_spf;           /* latched spf */
+    int h_bed_cm;        /* latched TOC bed_cm */
+    int h_pres_ver;      /* latched pres_ver0 */
+    int h_ims;           /* latched IMS class (gap-tolerant stereo) */
+    int h_imm_mode;      /* 714 latched mode (-1 = n/a yet) */
+    int h_rate;          /* latched fri row */
+    int h_sr;            /* output sample-rate label */
+    long h_fed;          /* frames fed */
+    long h_emit;         /* next emit ordinal */
+    long h_ready;        /* frames ready to emit (data-driven) */
+    int h_need;          /* analyze lookahead (1; 2 when spf < 577) */
+    long h_pp;           /* 7.1.4 frames post-passed (pump) */
+    int h_hard_err;      /* sticky hard error (0 = none) */
+    const char *h_hard_note;
+    const char *h_gap;   /* current gap note (NULL if none) */
+    int h_stub;          /* latched stub class (silence path) */
+    int h_gap_sticky;    /* whitelisted gap latched (suffix silence) */
+    long h_gap_start;    /* first silent ordinal (sticky) */
+    int h_flushing;      /* flush path entered */
+    int h_flushed;       /* pipeline fully drained */
+    unsigned h_dsprev;
+    int h_dshave;
+    int h_dn_tent;       /* DN latched from I-frame; re-latch on first P */
+    int h_dn_dirty;      /* frames emitted/analyzed under tentative gain */
+    int h_dn_ordirty;    /* an older epoch ended tentative+dirty (its gain
+                          * may still be superseded: batch latches scan
+                          * across later splices) */
+    double h_dn_org0;    /* that epoch's tentative triple (re-latch */
+    double h_dn_orgain;  /* comparison: a later P with a different DN */
+    unsigned h_dn_orbits; /* means batch used it: fail loud) */
+    double h_dn_pg0;     /* pre-epoch gain triple (re-latch-fail restore, */
+    double h_dn_pgain;   /* as batch: failed sample keeps prior gain) */
+    unsigned h_dn_pbits;
+    long h_oc[12];       /* absolute pushed samples per ch */
+    /* skeleton + mode-0 track FIFOs (absolute-indexed rings;
+     * write heads are h_oc / spill oc counters) */
+    double sk_fifo[8][AC4D_SKN]; /* pre-gain floats (gain at gather:
+                                   * DN re-latch on first P stays exact) */
+    double tf_fifo[12][AC4D_SKN];
+    int tf_used;         /* latched mode-0 path active */
+    /* spill FIFOs (post-pass mirror, absolute-indexed rings) */
+    double sp3[4][AC4D_SPN];
+    double sp5[2][AC4D_SPN];
+    /* apf param rings (tagged by frame ordinal) */
+    struct {
+        acpl_mod_t m[4];
+        double fold_div;
+        long fno;
+        int have;
+    } ap3[AC4D_APFN];
+    struct {
+        acpl_mod_t m[2];
+        long fno;
+        int have;
+    } ap5[AC4D_APFN];
+    /* per-frame parse-gap flags for in-flight frames */
+    long fr_fno[8];
+    int fr_gap[8];
+    const char *fr_gnote[8];
+    /* post-pass + acpl instance state */
+    acpl_state_t acpl;
+    acpl_imm_t pp_imm;
+    acpl_5x_t pp_5x;
+    int pp_imm_on, pp_5x_on;
+    double pp_blk[6][2048];
+    /* per-frame flags (batch names kept; elig/last_acpl moved by script) */
+    int e3_spill_on;
+    int e5_spill_on;
+    long e3_spill_oc[4];
+    long e5_spill_oc[2];
+    /* emit-stage frame + compand continuous state */
+    short fr_s16[8][2048];
+    double fr_flt[8][2048];      /* pre-gain staged frame (pp ring input;
+                                   * gain applies at emit for exact DN
+                                   * re-latch) */
+#define AC4D_PPN (5 * 2048)
+    short em_s16[8][2048];       /* emit scratch frame */
+    double pp_ring[8][AC4D_PPN]; /* pre-gain postpassed frames (nch6/8
+                                   * emit base; gain at emit) */
+    double mx_tmp[12][2048];     /* mode-0 mix gather scratch */
+    long h_an;                   /* frames analyzed (compand pump) */
+    qmf_state_t cmp_qs[8];
+    int cmp_qrun[8];
+    double cmp_held[8];
+    double cmp_folsm[8];
+    double cmp_slewsm[8];
+    double cmp_gfifo[8][16];
+    int cmp_gatefifo[8][16];
+    int cmp_gpos[8];
+    double complex cmp_Q[(8 * 32)][64];
+    double cmp_fp[2048];
+    double cmp_raw[8][AC4D_RAWN];
+    long cmp_w[8];       /* absolute raw write head per ch */
+    /* compand env snapshot (batch reads once per decode) */
+    int ce_nocmp, ce_unity, ce_inv, ce_census, ce_fullint, ce_avgall;
+    int ce_gainhold, ce_unshift, ce_useflat, ce_hotfill, ce_usofol;
+    int ce_onsetavg, ce_floorskip;
+    long ce_dumpf, ce_gdel, ce_prewarm, ce_frameoff, ce_frameof2;
+    long ce_unityf, ce_unityt0, ce_unityt1, ce_fade0;
+    double ce_fol_a, ce_fol_r, ce_slewrate, ce_dampf;
+    double ce_G, ce_ex, ce_trim, ce_pre;
+    int ce_slots, ce_on;
 } ac4d_ctx;
 
 static ac4d_ctx *_ac4d_self;
@@ -380,6 +502,11 @@ static ac4d_ctx *_ac4d_self;
 #define e_de_cur_mabs (_ac4d_self->e_de_cur_mabs)
 #define e_de_cur_cc (_ac4d_self->e_de_cur_cc)
 #define e_drc_dial (_ac4d_self->e_drc_dial)
+/* Hand-kept batch names (spill flags/counters; elig moved by script). */
+#define e3_spill_on (_ac4d_self->e3_spill_on)
+#define e5_spill_on (_ac4d_self->e5_spill_on)
+#define e3_spill_oc (_ac4d_self->e3_spill_oc)
+#define e5_spill_oc (_ac4d_self->e5_spill_oc)
 
 /* Nonzero static initializers, applied by ac4d_open after calloc. */
 static void ac4d_state_init(void) {
@@ -405,6 +532,46 @@ static void ac4d_state_init(void) {
     e_drc_dial = 27;
 }
 
+/* H1 absolute-indexed ring helpers (fixed-size; readers must stay within
+ * one ring length behind the write head — enforced by checks at emit). */
+static void ac4d_rput_d(double *ring, long ringn, long w, const double *src,
+                        int k) {
+    long o = w % ringn;
+    long first = ringn - o < k ? ringn - o : k;
+    if (first > 0)
+        memcpy(ring + o, src, (size_t)first * sizeof(double));
+    if (k > first)
+        memcpy(ring, src + first, (size_t)(k - first) * sizeof(double));
+}
+/* (deleted: belonged to removed DRC-apply/DE-drive legs) */
+static double ac4d_rget_d(const double *ring, long ringn, long pos) {
+    return ring[pos % ringn];
+}
+static short __attribute__((unused))
+ac4d_rget_s(const short *ring, long ringn, long pos) {
+    return ring[pos % ringn];
+}
+
+#ifdef AC4D_LIB_ONLY
+/* Lib build: route decode-core diagnostics to the log callback
+ * (default quiet). All lib-path fprintf targets are stderr. */
+static void ac4d_logf2(FILE *fp, const char *fmt, ...) {
+    ac4d_ctx *cx = _ac4d_self;
+    char msg[1024];
+    va_list ap;
+    if (fp != stderr)
+        return;
+    if (!cx || !cx->ao.log)
+        return;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof msg, fmt, ap);
+    va_end(ap);
+    cx->ao.log(5, msg, cx->ao.log_u);
+}
+#define fprintf(fp, ...) ac4d_logf2(fp, __VA_ARGS__)
+#endif
+
+#ifndef AC4D_LIB_ONLY
 static void usage(void) {
     printf("usage: ac4dec decode [options] [--in FILE] [--out FILE]\n"
            "  --in FILE        input path instead of stdin (- = stdin)\n"
@@ -438,6 +605,7 @@ static void usage(void) {
            "  --help           this text\n");
 
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* --wav (G-WAV/E4): RF64 container writer, DRP shape (CR-596: ds64
  * len 28, data -1 size). Chunks: RF64/ds64/fmt/data; mbwf/bext hook
@@ -459,6 +627,7 @@ static int e9_show(int lvl) {
 static int e9_debug(void) {
     return getenv("AC4DEC_DEBUG") != NULL || e_verb >= 5;
 }
+#ifndef AC4D_LIB_ONLY
 static int e9_parse_level(const char *s) {
     if (!s)
         return -1;
@@ -477,20 +646,24 @@ static int e9_parse_level(const char *s) {
         return 5;
     return -1;
 }
+#endif /* AC4D_LIB_ONLY */
 /* D26 provisional route (owner D1b re-sequence; turf 74; re-gate pipe4-C5).
  * Control plane only in v1: select + report; PCM render owed v2.
  * DRP names cited per A-60/A4; oarlib stays disabled. */
 /* ctx-member */
 /* ctx-member */
 /* ctx-member */
+#ifndef AC4D_LIB_ONLY
 static int e_cplx_valid(const char *s) {
     return s && (strcmp(s, "2.0") == 0 || strcmp(s, "2.0_L4") == 0 ||
                  strcmp(s, "5.1") == 0 || strcmp(s, "5.1.2") == 0 ||
                  strcmp(s, "5.1.4") == 0 || strcmp(s, "7.1.4") == 0 ||
                  strcmp(s, "objects") == 0);
 }
+#endif /* AC4D_LIB_ONLY */
 /* D26-v1 bed leg: report the provisional route AFTER FMT (FMT-first
  * convention: batteries parse stderr head -1 as FMT). */
+#ifndef AC4D_LIB_ONLY
 static void e_d26_bed_plan(const char *v, long seln, int bedch) {
     if (e_render_prov && e9_show(3))
         fprintf(stderr,
@@ -499,6 +672,7 @@ static void e_d26_bed_plan(const char *v, long seln, int bedch) {
                 "in D26-v1 (core decode owed v2, re-gate pipe4-C5)\n",
                 seln, e_ajoc_core ? "on" : "off", e_out_cplx, bedch, v);
 }
+#endif /* AC4D_LIB_ONLY */
 /* ctx-member */
 /* ctx-member */
 /* ctx-member */
@@ -531,37 +705,7 @@ static double drc_outref_eff(void) {
 /* ctx-member */
 /* ctx-member */
 
-static void wav_spool_reset(void) {
-    e_wav_sn = 0;
-    e_wav_serr = 0;
-}
-
-static void wav_spool_free(void) {
-    free(e_wav_sp);
-    e_wav_sp = NULL;
-    e_wav_sn = e_wav_scap = 0;
-    e_wav_serr = 0;
-}
-
-static void wav_spool(const void *p, size_t n) {
-    if (e_wav_serr)
-        return;
-    if (e_wav_sn + n > e_wav_scap) {
-        size_t nc = e_wav_scap ? e_wav_scap * 2 : 1 << 20;
-        while (nc < e_wav_sn + n)
-            nc *= 2;
-        uint8_t *nb = realloc(e_wav_sp, nc);
-        if (!nb) {
-            e_wav_serr = 1;
-            return;
-        }
-        e_wav_sp = nb;
-        e_wav_scap = nc;
-    }
-    memcpy(e_wav_sp + e_wav_sn, p, n);
-    e_wav_sn += n;
-}
-
+/* (wav spool deleted: shim spools itself; lib emits raw frames) */
 /* E3 writer-defined (no DRP ref per A-64/A4): s16 sample -> output
  * width. 24-bit = LE s16 + zero-pad byte (sign-preserving; full
  * 24-bit resolution would need float-stage plumbing — tracked). 32f
@@ -584,32 +728,34 @@ static int wav_s16_to_bytes(short v, int bps, uint8_t out[4]) {
     return 2;
 }
 
-static void wav_spool_s16(short v, int bps) {
-    uint8_t b[4];
-    wav_spool(b, (size_t)wav_s16_to_bytes(v, bps, b));
-}
-
+#ifndef AC4D_LIB_ONLY
 static void wav_u16(uint8_t *b, unsigned v) {
     b[0] = (uint8_t)(v & 0xff);
     b[1] = (uint8_t)((v >> 8) & 0xff);
 }
+#endif /* AC4D_LIB_ONLY */
 
+#ifndef AC4D_LIB_ONLY
 static void wav_u32(uint8_t *b, unsigned long v) {
     b[0] = (uint8_t)(v & 0xff);
     b[1] = (uint8_t)((v >> 8) & 0xff);
     b[2] = (uint8_t)((v >> 16) & 0xff);
     b[3] = (uint8_t)((v >> 24) & 0xff);
 }
+#endif /* AC4D_LIB_ONLY */
 
+#ifndef AC4D_LIB_ONLY
 static void wav_u64(uint8_t *b, unsigned long long v) {
     for (int i = 0; i < 8; i++)
         b[i] = (uint8_t)((v >> (8 * i)) & 0xff);
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* Emit RF64 header + pcm (pcmn bytes; NULL = zeros) + odd pad +
  * trailing LIST-INFO (Q-65 Q2 rule: DRP appends empty LIST-INFO
  * 12B after data, always; byte-exactness needs it). nframes =
  * sample frames (per-ch). Returns 0 ok, -1 write fail. */
+#ifndef AC4D_LIB_ONLY
 static int wav_emit(FILE *o, long sr, long ch, int bps, long nframes,
                     const uint8_t *pcm, size_t pcmn) {
     static const uint8_t list_info[12] = {'L', 'I', 'S', 'T', 4, 0, 0, 0,
@@ -708,6 +854,7 @@ static int wav_emit(FILE *o, long sr, long ch, int bps, long nframes,
         return -1;
     return 0;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* FMT: exactly one line to stderr per attempt. */
 /* CRC census (E8 CRC tag (sync word) + decode-verb crc_bad count (A-79
@@ -716,6 +863,7 @@ static int wav_emit(FILE *o, long sr, long ch, int bps, long nframes,
 /* ctx-member */
 /* ctx-member */
 
+#ifndef AC4D_LIB_ONLY
 static void fmt(const char *sr, const char *ch, const char *bits,
                 long frames, const char *status, const char *note) {
     if (!e9_show(1))
@@ -729,8 +877,10 @@ static void fmt(const char *sr, const char *ch, const char *bits,
         fprintf(stderr, "FMT sr=%s ch=%s bits=%s frames=%ld status=%s%s\n",
                 sr, ch, bits, frames, status, ct);
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* Success-note with crc_bad suffix (decode-verb count, A-79 Q5). */
+#ifndef AC4D_LIB_ONLY
 static const char *e3_ok_note(const char *base) {
     static char nb[48];
     if (e_crc_bad > 0) {
@@ -739,11 +889,14 @@ static const char *e3_ok_note(const char *base) {
     }
     return base;
 }
+#endif /* AC4D_LIB_ONLY */
 
+#ifndef AC4D_LIB_ONLY
 static void on_alarm(int sig) {
     (void)sig;
     _exit(124);
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* ---- sync framing (spec/sync-framing.md; accept rule = census.c) ---- */
 
@@ -809,6 +962,7 @@ typedef struct {
 
 /* CRC-blind head plausibility at a sync-word position: sized +
  * in-bounds. Out tot = full frame footprint. Returns 1 if plausible. */
+#ifndef AC4D_LIB_ONLY
 static int chain_plausible(const uint8_t *d, size_t n, size_t o,
                            size_t *tot) {
     if (o + 4 > n)
@@ -831,9 +985,11 @@ static int chain_plausible(const uint8_t *d, size_t n, size_t o,
     *tot = t;
     return 1;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* Chain-walk accept: >=2 chained frames, or 1 frame ending at EOF.
  * Returns malloc'd array (*n_out frames) or NULL with *n_out=0. */
+#ifndef AC4D_LIB_ONLY
 static syncframe_t *chain_walk(const uint8_t *d, size_t n, size_t *n_out) {
     syncframe_t *out = NULL;
     size_t on = 0, ocap = 0;
@@ -948,9 +1104,11 @@ static syncframe_t *chain_walk(const uint8_t *d, size_t n, size_t *n_out) {
     *n_out = on;
     return out;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* Longest contiguous run in a chain_walk list (offset order): out
  * start/count. Kills overlap re-walks (esc-class 2nd chains). */
+#ifndef AC4D_LIB_ONLY
 static void longest_run(const syncframe_t *fl, size_t n, size_t *bs,
                         size_t *bn) {
     size_t best_s = 0, best_n = 0, cur_s = 0, cur_n = 0;
@@ -975,20 +1133,26 @@ static void longest_run(const syncframe_t *fl, size_t n, size_t *bs,
     *bs = best_s;
     *bn = best_n;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* ---- MPEG-TS demux (e4; PAT/PMT/PES port of census.c) ---- */
 
+#ifndef AC4D_LIB_ONLY
 static uint32_t rd32be(const uint8_t *p) {
     return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
            ((uint32_t)p[2] << 8) | (uint32_t)p[3];
 }
+#endif /* AC4D_LIB_ONLY */
 
+#ifndef AC4D_LIB_ONLY
 static uint64_t rd64be(const uint8_t *p) {
     return ((uint64_t)rd32be(p) << 32) | rd32be(p + 4);
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* Strip prefix-class padding: first offset with 20x 188-stride
  * 0x47. Returns offset or (size_t)-1. (esc = 112.) */
+#ifndef AC4D_LIB_ONLY
 static size_t ts_strip(const uint8_t *d, size_t n) {
     size_t lim = n < 4096 ? n : 4096;
     for (size_t off = 0; off + 20 * 188 <= n && off < lim; off++) {
@@ -1004,12 +1168,14 @@ static size_t ts_strip(const uint8_t *d, size_t n) {
     }
     return (size_t)-1;
 }
+#endif /* AC4D_LIB_ONLY */
 
 typedef struct {
     uint8_t *v;
     size_t n, cap;
 } bytes_t;
 
+#ifndef AC4D_LIB_ONLY
 static int bytes_app(bytes_t *b, const uint8_t *p, size_t n) {
     if (b->n + n > b->cap) {
         size_t nc = b->cap ? b->cap : 65536;
@@ -1025,8 +1191,10 @@ static int bytes_app(bytes_t *b, const uint8_t *p, size_t n) {
     b->n += n;
     return 0;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* section body bounds inside a PUSI payload; -1 = bad */
+#ifndef AC4D_LIB_ONLY
 static int section_body(const uint8_t *pl, size_t n, size_t *bs, size_t *be) {
     if (n < 4)
         return -1;
@@ -1040,8 +1208,10 @@ static int section_body(const uint8_t *pl, size_t n, size_t *bs, size_t *be) {
     *be = o + 3 + seclen - 4;
     return 0;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* Collect ES pids (PMT order) from stripped TS base. Out count. */
+#ifndef AC4D_LIB_ONLY
 static int ts_es_pids(const uint8_t *d, size_t n, int *pids, int maxp) {
     size_t npkt = n / 188;
     int pmt_pids[64];
@@ -1105,8 +1275,10 @@ static int ts_es_pids(const uint8_t *d, size_t n, int *pids, int maxp) {
     }
     return nes;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* Reassemble PES payload for one pid. 0 ok (out owns bytes). */
+#ifndef AC4D_LIB_ONLY
 static int ts_pes(const uint8_t *d, size_t n, int epid, bytes_t *out) {
     size_t npkt = n / 188;
     bytes_t cur = {0, 0, 0};
@@ -1165,6 +1337,7 @@ static int ts_pes(const uint8_t *d, size_t n, int epid, bytes_t *out) {
     free(cur.v);
     return 0;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* ---- ISOBMFF sample tables (e4; port of census.c) ---- */
 
@@ -1178,6 +1351,7 @@ typedef struct {
     size_t n, cap;
 } boxlist_t;
 
+#ifndef AC4D_LIB_ONLY
 static int bl_push(boxlist_t *l, box_t b) {
     if (l->n == l->cap) {
         size_t nc = l->cap ? l->cap * 2 : 32;
@@ -1190,7 +1364,9 @@ static int bl_push(boxlist_t *l, box_t b) {
     l->v[l->n++] = b;
     return 0;
 }
+#endif /* AC4D_LIB_ONLY */
 
+#ifndef AC4D_LIB_ONLY
 static void read_boxes(const uint8_t *d, size_t base, size_t end,
                        boxlist_t *out) {
     size_t j = base;
@@ -1214,10 +1390,12 @@ static void read_boxes(const uint8_t *d, size_t base, size_t end,
         j += (size_t)size;
     }
 }
+#endif /* AC4D_LIB_ONLY */
 
 #define TYP(a, b, c, e) \
     (((uint32_t)(a) << 24) | ((uint32_t)(b) << 16) | ((uint32_t)(c) << 8) | (e))
 
+#ifndef AC4D_LIB_ONLY
 static int is_container(uint32_t t) {
     return t == TYP('m', 'o', 'o', 'v') || t == TYP('t', 'r', 'a', 'k') ||
            t == TYP('m', 'd', 'i', 'a') || t == TYP('m', 'i', 'n', 'f') ||
@@ -1226,7 +1404,9 @@ static int is_container(uint32_t t) {
            t == TYP('m', 'v', 'e', 'x') || t == TYP('m', 'f', 'r', 'a') ||
            t == TYP('s', 'k', 'i', 'p');
 }
+#endif /* AC4D_LIB_ONLY */
 
+#ifndef AC4D_LIB_ONLY
 static int find_box(const uint8_t *d, size_t base, size_t end, uint32_t want,
                     box_t *out) {
     boxlist_t l = {0, 0, 0};
@@ -1250,6 +1430,7 @@ static int find_box(const uint8_t *d, size_t base, size_t end, uint32_t want,
     free(l.v);
     return r;
 }
+#endif /* AC4D_LIB_ONLY */
 
 typedef struct {
     size_t off, size;
@@ -1262,6 +1443,7 @@ typedef struct {
     int elst_state; /* 1 applied-shape, -1 present-complex, 0 absent */
 } samplelist_t;
 
+#ifndef AC4D_LIB_ONLY
 static int sl_push(samplelist_t *l, sample_t s) {
     if (l->n == l->cap) {
         size_t nc = l->cap ? l->cap * 2 : 512;
@@ -1274,8 +1456,10 @@ static int sl_push(samplelist_t *l, sample_t s) {
     l->v[l->n++] = s;
     return 0;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* moof path: returns 1 if any trun runs found */
+#ifndef AC4D_LIB_ONLY
 static int moof_samples(const uint8_t *d, size_t n, samplelist_t *out) {
     boxlist_t top = {0, 0, 0};
     read_boxes(d, 0, n, &top);
@@ -1367,11 +1551,13 @@ static int moof_samples(const uint8_t *d, size_t n, samplelist_t *out) {
     free(top.v);
     return found;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* elst (edit list) trims for the selected moov trak. Out: head/tail trims
  * + media duration, all in MEDIA timescale units. Returns 1 on a supported
  * shape (v0/v1, leading empties + single media entry, rate 1), else 0 with
  * outs zeroed (absent/complex = untrimmed, honest scope). */
+#ifndef AC4D_LIB_ONLY
 static int moov_elst(const uint8_t *d, size_t n, size_t trak_off,
                      size_t trak_size, size_t moov_off, size_t moov_size,
                      uint64_t *head, uint64_t *tail, uint64_t *mdur) {
@@ -1474,8 +1660,10 @@ static int moov_elst(const uint8_t *d, size_t n, size_t trak_off,
     *mdur = mdurv;
     return 1;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* moov path: first audio trak sample table; 1 ok, 0 none */
+#ifndef AC4D_LIB_ONLY
 static int moov_samples(const uint8_t *d, size_t n, samplelist_t *out) {
     boxlist_t top = {0, 0, 0};
     read_boxes(d, 0, n, &top);
@@ -1601,13 +1789,16 @@ static int moov_samples(const uint8_t *d, size_t n, samplelist_t *out) {
     free(top.v);
     return r;
 }
+#endif /* AC4D_LIB_ONLY */
 
+#ifndef AC4D_LIB_ONLY
 static int is_mp4(const uint8_t *d, size_t n) {
     if (n < 12)
         return 0;
     uint32_t sz = rd32be(d);
     return memcmp(d + 4, "ftyp", 4) == 0 && sz >= 8 && (size_t)sz <= n;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* ---- bv2 TOC walk (e4; C port of tools/toc_census_d2.py bv2 path,
  * field order/widths per spec/toc-bitfields.md S1-S4) ---- */
@@ -2060,6 +2251,7 @@ static int e_splice_step(unsigned prev, unsigned cur) {
 
 /* F4: peek bitstream_version of a raw frame without a full parse.
  * Returns bv (extended form included) or -1 when unreadable. */
+#ifndef AC4D_LIB_ONLY
 static int toc_peek_bv(const uint8_t *raw, size_t rawlen) {
     br_t b = {raw, rawlen * 8, 0, 0};
     unsigned bv = br_u(&b, 2);
@@ -2069,6 +2261,7 @@ static int toc_peek_bv(const uint8_t *raw, size_t rawlen) {
         bv += br_var(&b, 2);
     return b.err ? -1 : (int)bv;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* Full bv2 TOC parse + structural-skip bound verify. 0 ok, -1 reject. */
 static int toc_parse_bv2(const uint8_t *raw, size_t rawlen, toc_t *t,
@@ -2315,29 +2508,16 @@ typedef struct {
  * (2 modules, not 4) + own L/R leg spill (disjoint from e3_spill,
  * no 714-path touch). */
 /* ctx-member */
-static struct {
-    acpl_mod_t m[2];
-} *e5_apf;
-static size_t e5_apf_n, e5_apf_cap;
+/* H1: e5_apf/n/cap -> ap5 ring in ctx */
 /* ctx-member */
-static double *e5_spill[2];
-static long e5_spill_oc[2];
-static int e5_spill_on;
+/* H1: e5_spill -> sp5 ring; oc/on are ctx members */
 /* ctx-member */
 /* ctx-member */
 /* Immersive post-pass spill + params (mode 3, all-long). Spill holds
  * pre-trim float pushed time for D,E,F,G (mirror of lr s16); apf
  * holds parsed (a,b) per kept frame. elig ANDs to 0 on any gap
  * (skeleton output stands). Freed + reset per decode. */
-static double *e3_spill[4];
-static long e3_spill_oc[4];
-static size_t e3_spill_cap;
-static int e3_spill_on;
-static struct {
-    acpl_mod_t m[4];
-    double fold_div;
-} *e3_apf;
-static size_t e3_apf_n, e3_apf_cap;
+/* H1: e3_spill/e3_apf -> sp3/ap3 rings; oc/on/elig are ctx members */
 /* ctx-member */
 /* NOTE: e3_t23ok removed with the spectral Table-23 path (stream-mix
  * era): mode-0 always mixes post-IMDCT over full streams now. */
@@ -2634,37 +2814,18 @@ static const char *e3_push_win(int c, const double *X, int n, int nn,
             fprintf(stderr, "%.17g%c", XX[i], i + 1 < n ? ',' : '\n');
     }
     if (e3_spill_on && c >= 4 && c < 8 && k > 0) {
-        /* Post-pass spill: pre-trim float mirror (mode-3 D/E/F/G). */
+        /* Post-pass spill: pre-trim float mirror (mode-3 D/E/F/G),
+         * absolute-indexed ring (H1: was whole-stream malloc). */
         int q = c - 4;
-        if (!e3_spill[q]) {
-            e3_spill[q] = malloc(e3_spill_cap * sizeof(double));
-            e3_spill_oc[q] = 0;
-        }
-        if (!e3_spill[q] ||
-            e3_spill_oc[q] + k > (long)e3_spill_cap) {
-            e3_imm_elig = 0;
-        } else {
-            memcpy(e3_spill[q] + e3_spill_oc[q], e3_pcmbuf,
-                   (size_t)k * sizeof(double));
-            e3_spill_oc[q] += k;
-        }
+        ac4d_rput_d(_ac4d_self->sp3[q], AC4D_SPN, e3_spill_oc[q],
+                    e3_pcmbuf, k);
+        e3_spill_oc[q] += k;
     }
     if (e5_spill_on && c >= 0 && c < 2 && k > 0) {
-        /* 5x post-pass spill: pre-trim float L/R legs. Disjoint
-         * branch (e5_spill_on set only for nch==6 5x-ACPL); the
-         * e3_spill_cap bound is shared read-only. */
-        if (!e5_spill[c]) {
-            e5_spill[c] = malloc(e3_spill_cap * sizeof(double));
-            e5_spill_oc[c] = 0;
-        }
-        if (!e5_spill[c] ||
-            e5_spill_oc[c] + k > (long)e3_spill_cap) {
-            e5_acpl_elig = 0;
-        } else {
-            memcpy(e5_spill[c] + e5_spill_oc[c], e3_pcmbuf,
-                   (size_t)k * sizeof(double));
-            e5_spill_oc[c] += k;
-        }
+        /* 5x post-pass spill: pre-trim float L/R legs (ring, H1). */
+        ac4d_rput_d(_ac4d_self->sp5[c], AC4D_SPN, e5_spill_oc[c],
+                    e3_pcmbuf, k);
+        e5_spill_oc[c] += k;
     }
     { /* PCMDUMP float pcm per push (KEPT per A-test-hygiene-1). */
         const char *pp = getenv("AC4DEC_PCMDUMP");
@@ -2712,13 +2873,14 @@ static const char *e3_push_win(int c, const double *X, int n, int nn,
     return NULL;
 }
 
-/* Mode-0 Table-23 + fold over full track streams. Mixes 12 float
- * track streams (s[c][base..base+n], Table-20 already applied
- * spectrally where grids match) into lr[0..7] at oc[0..7]:
+/* Mode-0 Table-23 + fold over track streams. Mixes 12 float track
+ * streams (s[c][base..base+n], Table-20 already applied spectrally
+ * where grids match) into fl[0..7] at oc[0..7]:
  * L = 2A, R = 2B, C = 2C, LFE, Ls = sq2(D+H'') + 2F (fold),
- * Rs = sq2(E+I'') + 2G, backs 0. Trim + d2s16 like the plain copy. */
-static void e3_mix12p(const double *s[12], long base, long n,
-                      short *lr[8], long oc[8]) {
+ * Rs = sq2(E+I'') + 2G, backs 0. Pre-gain (streaming: DN re-latch
+ * stays exact; the caller applies d2s16(x * e3_dngain) at consume). */
+static void e3_mix12p_f(const double *s[12], long base, long n,
+                        double *fl[8], long oc[8]) {
     const double sq2 = 1.4142135623730951;
     for (long j = 0; j < n; j++) {
         double o0 = 2.0 * s[0][base + j];
@@ -2729,14 +2891,14 @@ static void e3_mix12p(const double *s[12], long base, long n,
                     2.0 * s[6][base + j];
         double o5 = sq2 * (s[5][base + j] + s[9][base + j]) +
                     2.0 * s[7][base + j];
-        lr[0][oc[0] + j] = imdct_d2s16(o0 * e3_dngain);
-        lr[1][oc[1] + j] = imdct_d2s16(o1 * e3_dngain);
-        lr[2][oc[2] + j] = imdct_d2s16(o2 * e3_dngain);
-        lr[3][oc[3] + j] = imdct_d2s16(o3 * e3_dngain);
-        lr[4][oc[4] + j] = imdct_d2s16(o4 * e3_dngain);
-        lr[5][oc[5] + j] = imdct_d2s16(o5 * e3_dngain);
-        lr[6][oc[6] + j] = 0;
-        lr[7][oc[7] + j] = 0;
+        fl[0][oc[0] + j] = o0;
+        fl[1][oc[1] + j] = o1;
+        fl[2][oc[2] + j] = o2;
+        fl[3][oc[3] + j] = o3;
+        fl[4][oc[4] + j] = o4;
+        fl[5][oc[5] + j] = o5;
+        fl[6][oc[6] + j] = 0.0;
+        fl[7][oc[7] + j] = 0.0;
     }
     for (int c = 0; c < 8; c++)
         oc[c] += n;
@@ -4051,25 +4213,18 @@ static int e3_decode_5x(ac4_ebr_t *b, int spf, unsigned seq, int ig,
         for (int m = 0; m < 2 && ok5; m++) {
             const char *an5 = NULL;
             if (acpl_parse_1ch(b, e5_acpl_nbands, e5_acpl_fine, m,
-                               &pm5[m], &an5))
+                               &pm5[m], &an5, &_ac4d_self->acpl))
                 ok5 = 0;
         }
         if (ok5) {
-            if (e5_apf_n == e5_apf_cap) {
-                size_t nc5 = e5_apf_cap ? e5_apf_cap * 2 : 64;
-                void *np5 = realloc(e5_apf, nc5 * sizeof *e5_apf);
-                if (!np5)
-                    ok5 = 0;
-                else {
-                    e5_apf = np5;
-                    e5_apf_cap = nc5;
-                }
-            }
-        }
-        if (ok5) {
+            /* H1: record into the tagged apf ring (was whole-stream
+             * array). fno = kept-frame ordinal at step time. */
+            long fno = _ac4d_self->h_fed;
+            int slot = (int)(fno % AC4D_APFN);
             for (int m = 0; m < 2; m++)
-                e5_apf[e5_apf_n].m[m] = pm5[m];
-            e5_apf_n++;
+                _ac4d_self->ap5[slot].m[m] = pm5[m];
+            _ac4d_self->ap5[slot].fno = fno;
+            _ac4d_self->ap5[slot].have = 1;
             e5_last_acpl = 1;
         }
         if (getenv("AC4DEC_ACPLPROBE")) {
@@ -4546,26 +4701,18 @@ static int e3_decode_714(ac4_ebr_t *b, int spf, unsigned seq, int ig,
             for (int m = 0; m < 4 && ok; m++) {
                 const char *an = NULL;
                 if (acpl_parse_1ch(b, e3_acpl_nbands, e3_acpl_fine, m,
-                                   &pm[m], &an))
+                                   &pm[m], &an, &_ac4d_self->acpl))
                     ok = 0;
             }
             if (ok) {
-                if (e3_apf_n == e3_apf_cap) {
-                    size_t nc = e3_apf_cap ? e3_apf_cap * 2 : 64;
-                    void *np = realloc(e3_apf, nc * sizeof *e3_apf);
-                    if (!np)
-                        ok = 0;
-                    else {
-                        e3_apf = np;
-                        e3_apf_cap = nc;
-                    }
-                }
-            }
-            if (ok) {
+                /* H1: tagged apf ring (was whole-stream array). */
+                long fno = _ac4d_self->h_fed;
+                int slot = (int)(fno % AC4D_APFN);
                 for (int m = 0; m < 4; m++)
-                    e3_apf[e3_apf_n].m[m] = pm[m];
-                e3_apf[e3_apf_n].fold_div = e3_imm_fold_div;
-                e3_apf_n++;
+                    _ac4d_self->ap3[slot].m[m] = pm[m];
+                _ac4d_self->ap3[slot].fold_div = e3_imm_fold_div;
+                _ac4d_self->ap3[slot].fno = fno;
+                _ac4d_self->ap3[slot].have = 1;
             } else {
                 e3_imm_elig = 0;
             }
@@ -4685,23 +4832,23 @@ static int e3_decode_714(ac4_ebr_t *b, int spf, unsigned seq, int ig,
  * DEE order pres-audio, mp4 order audio-pres). Sets *db (byte0 low 7 =
  * dialnorm_bits, -4x law) and *g (linear trim at e3_reflevel).
  * Returns 1 when sampled, 0 when unavailable (caller keeps unity). */
-static int e3_dn_sample(raw_t *raws, toc_t *ts, size_t i, unsigned *db,
+static int e3_dn_sample(const raw_t *r, const toc_t *t, unsigned *db,
                         double *g) {
     int dn_si = -1;
-    for (int s = 0; s < ts[i].ns; s++) {
-        if (s != ts[i].bed_si) {
+    for (int s = 0; s < t->ns; s++) {
+        if (s != t->bed_si) {
             dn_si = s;
             break;
         }
     }
-    if (dn_si < 0 || ts[i].sizes[dn_si] < 2)
+    if (dn_si < 0 || t->sizes[dn_si] < 2)
         return 0;
-    size_t s0o = ts[i].tocB + ts[i].pbase;
+    size_t s0o = t->tocB + t->pbase;
     for (int s = 0; s < dn_si; s++)
-        s0o += ts[i].sizes[s];
-    if (s0o + 2 > raws[i].len)
+        s0o += t->sizes[s];
+    if (s0o + 2 > r->len)
         return 0;
-    *db = (unsigned)raws[i].p[s0o] & 0x7Fu;
+    *db = (unsigned)r->p[s0o] & 0x7Fu;
     double dn = -(double)*db / 4.0;
     *g = pow(10.0, (e3_reflevel - dn) / 20.0) / 32768.0;
     return 1;
@@ -4750,6 +4897,7 @@ static int e3_dn_sample(raw_t *raws, toc_t *ts, size_t i, unsigned *db,
 /* ---- E8 display rules (DRP-mirroring names; A-77/A-79/A-80) ---- */
 
 /* Table-160 eac3 profile names (A-77 Q1, verbatim). */
+#ifndef AC4D_LIB_ONLY
 static const char *e3_eac3_name(int e) {
     switch (e) {
     case 0:
@@ -4768,9 +4916,11 @@ static const char *e3_eac3_name(int e) {
         return "Reserved";
     }
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* Table-171 chanconfig display names (A-79 Q2; DRP spellings; 2/3/4/5/7
  * analogy-marked with "*" until DRP-observed (A-80 Q5)). */
+#ifndef AC4D_LIB_ONLY
 static const char *e3_chan_name(unsigned cc) {
     switch (cc) {
     case 0:
@@ -4793,9 +4943,11 @@ static const char *e3_chan_name(unsigned cc) {
         return "TBD(chan)";
     }
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* Transmitted-leg display name, f(nb) (A-80 Q1: KDAF 10/10->light,
  * WJCT/believer 0/5->standard; f-mid + eac3-rule dead). NULL = unmapped. */
+#ifndef AC4D_LIB_ONLY
 static const char *e3_trans_name(int nb_lo, int nb_hi) {
     if (nb_lo == 10 && nb_hi == 10)
         return "Film light";
@@ -4803,6 +4955,7 @@ static const char *e3_trans_name(int nb_lo, int nb_hi) {
         return "Film standard";
     return NULL;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* Displayed-config rule (A-80 Q2-proposed, 8/8; A-81 pending): gate AND
  * (eac3 != None OR any transmitted-curve leg). atsc3 (ea0+all-def) and
@@ -4824,6 +4977,7 @@ static int e3_shows_config(int gate, const drc_cfg_t *c) {
 /* Target-row name for a mode id (window->mid direct; repeat-resolved by
  * mid; sole-mode configs use the sole leg for every target). *tbd set
  * when the name is unmapped (unknown nb / gains / missing mid). */
+#ifndef AC4D_LIB_ONLY
 static const char *e3_target_name(const drc_cfg_t *c, int mid, int *tbd) {
     if (c->nmode == 1) {
         const drc_mode_t *m0 = &c->modes[0];
@@ -4871,11 +5025,14 @@ static const char *e3_target_name(const drc_cfg_t *c, int mid, int *tbd) {
     *tbd = 1;
     return "TBD(loop)";
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* Loudness display scale (Q-79 P1, proven x5+): dB = (raw-1024)/10. */
+#ifndef AC4D_LIB_ONLY
 static double e3_loud_db(unsigned raw) {
     return ((double)raw - 1024.0) / 10.0;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* Film-light default polyline, dB2 (A-63 A1 = Table-162 native dB2:
  * nullband [-10,+10]; boost (+6 @ -22, 0 sections); cut (-24 max,
@@ -4950,20 +5107,7 @@ static void drc_eval_curve(unsigned nblo, unsigned nbhi, unsigned mb,
 }
 
 /* Polyline lookup (dB2 in -> dB2 gain; clamp flat outside). */
-static double drc_curve_gain(double lrel, const double *pl, const double *pg,
-                             int npts) {
-    if (npts <= 0)
-        return 0.0;
-    if (lrel <= pl[0])
-        return pg[0];
-    for (int i = 1; i < npts; i++) {
-        if (lrel <= pl[i]) {
-            double t = (lrel - pl[i - 1]) / (pl[i] - pl[i - 1]);
-            return pg[i - 1] + t * (pg[i] - pg[i - 1]);
-        }
-    }
-    return pg[npts - 1];
-}
+/* (deleted: belonged to removed DRC-apply/DE-drive legs) */
 
 /* Fill default-profile legs ( transmitted curves already stored).
  * eac3=2 Film-light EXACT; else unity + note (gap, flagged). */
@@ -5271,9 +5415,7 @@ static void e3_ext_read(br_t *b, int cm, info_audmeta_t *o) {
 /* ctx-member */
 /* ctx-member */
 /* ctx-member */
-static unsigned char *e_de_actmap; /* per kept-ordinal: active<<7 | cc */
-static int *e_de_mabs; /* R2: per kept-ordinal max|par| (band-exit ref) */
-static size_t e_de_actcap;
+/* H1: DE whole-stream maps removed (DE-on unsupported in streaming v1) */
 
 static int e3_br_getbit(void *ctx) {
     br_t *b = ctx;
@@ -5649,27 +5791,28 @@ static int drc_decode_gains(br_t *b, int cfg, int nch, int nsf,
     return 0;
 }
 
-static void e3_drc_dump(raw_t *raws, toc_t *ts, size_t fi) {
+static void e3_drc_dump(const raw_t *r, const toc_t *t) {
+    size_t fi = (size_t)_ac4d_self->h_fed; /* kept ordinal */
     int psi = -1;
-    for (int s = 0; s < ts[fi].ns; s++) {
-        if (s != ts[fi].bed_si) {
+    for (int s = 0; s < t->ns; s++) {
+        if (s != t->bed_si) {
             psi = s;
             break;
         }
     }
-    if (psi < 0 || ts[fi].sizes[psi] < 2) {
+    if (psi < 0 || t->sizes[psi] < 2) {
         fprintf(stderr, "DRC i=%zu unavail\n", fi);
         return;
     }
-    size_t so = ts[fi].tocB + ts[fi].pbase;
+    size_t so = t->tocB + t->pbase;
     for (int s = 0; s < psi; s++)
-        so += ts[fi].sizes[s];
-    size_t plen = ts[fi].sizes[psi];
-    if (so + plen > raws[fi].len || so + 2 > raws[fi].len) {
+        so += t->sizes[s];
+    size_t plen = t->sizes[psi];
+    if (so + plen > r->len || so + 2 > r->len) {
         fprintf(stderr, "DRC i=%zu unavail\n", fi);
         return;
     }
-    br_t b = {raws[fi].p + so, plen * 8, 0, 0};
+    br_t b = {r->p + so, plen * 8, 0, 0};
     if (br_u(&b, 1)) {
         fprintf(stderr, "DRC i=%zu add-data\n", fi);
         return;
@@ -5687,7 +5830,7 @@ static void e3_drc_dump(raw_t *raws, toc_t *ts, size_t fi) {
         dz += br_var(&b, 3) << 5;
     size_t start = b.pos;
     unsigned gate = br_u(&b, 1);
-    int pndot = ts[fi].b_pres_ndot;
+    int pndot = t->b_pres_ndot;
     fprintf(stderr, "DRC i=%zu ndot=%d dial=%u loud=%d size=%u gate=%u",
             fi, pndot, dial, loud, dz, gate);
     if (b.err) {
@@ -5771,8 +5914,8 @@ static void e3_drc_dump(raw_t *raws, toc_t *ts, size_t fi) {
         if (ver == 0) {
             size_t pend = b.pos + (gz - 2);
             drc_mode_t gm;
-            int nch = ts[fi].bed_ch <= 2 ? 1 : 3;
-            int rate = ts[fi].rate;
+            int nch = t->bed_ch <= 2 ? 1 : 3;
+            int rate = t->rate;
             int nsf = (rate >= 0 && rate < 14) ?
                 drc_gain_nsub(e4_spf[rate]) : -1;
             memset(&gm, 0, sizeof gm);
@@ -5807,24 +5950,25 @@ static void e3_drc_dump(raw_t *raws, toc_t *ts, size_t fi) {
  * apply wires in). Beds: survey-drc-de.md S7. */
 /* ctx-member */
 
-static void drc_parse_cfg(raw_t *raws, toc_t *ts, size_t fi) {
+static void drc_parse_cfg(const raw_t *r, const toc_t *t) {
+    size_t fi = (size_t)_ac4d_self->h_fed; /* kept ordinal */
     drc_cfg_t *c = &e_drc;
     int psi = -1;
-    for (int s = 0; s < ts[fi].ns; s++) {
-        if (s != ts[fi].bed_si) {
+    for (int s = 0; s < t->ns; s++) {
+        if (s != t->bed_si) {
             psi = s;
             break;
         }
     }
-    if (psi < 0 || ts[fi].sizes[psi] < 2)
+    if (psi < 0 || t->sizes[psi] < 2)
         return; /* keep previous */
-    size_t so = ts[fi].tocB + ts[fi].pbase;
+    size_t so = t->tocB + t->pbase;
     for (int s = 0; s < psi; s++)
-        so += ts[fi].sizes[s];
-    size_t plen = ts[fi].sizes[psi];
-    if (so + plen > raws[fi].len || so + 2 > raws[fi].len)
+        so += t->sizes[s];
+    size_t plen = t->sizes[psi];
+    if (so + plen > r->len || so + 2 > r->len)
         return;
-    br_t b = {raws[fi].p + so, plen * 8, 0, 0};
+    br_t b = {r->p + so, plen * 8, 0, 0};
     e_dn_saw_pres = 1;
     if (br_u(&b, 1))
         return; /* add-data: keep previous */
@@ -5860,7 +6004,7 @@ static void drc_parse_cfg(raw_t *raws, toc_t *ts, size_t fi) {
         e_f0_gate = (int)gate;
         e_f0_have_gate = 1;
     }
-    if (!gate || !ts[fi].b_pres_ndot)
+    if (!gate || !t->b_pres_ndot)
         return; /* carried: keep previous */
     /* ndot gate=1: fresh config. Explicit-init (no zero reliance). */
     c->valid = 0;
@@ -5976,8 +6120,8 @@ static void drc_parse_cfg(raw_t *raws, toc_t *ts, size_t fi) {
             if (ver == 0) {
                 /* SET-A: decode Table-75 gainset, skip pad to gz end. */
                 size_t pend = b.pos + (gz - 2);
-                int nch = ts[fi].bed_ch <= 2 ? 1 : 3;
-                int rate = ts[fi].rate;
+                int nch = t->bed_ch <= 2 ? 1 : 3;
+                int rate = t->rate;
                 int nsf = (rate >= 0 && rate < 14) ?
                     drc_gain_nsub(e4_spf[rate]) : -1;
                 if (drc_decode_gains(&b, c->modes[k].gains_cfg, nch,
@@ -6021,64 +6165,22 @@ static void drc_parse_cfg(raw_t *raws, toc_t *ts, size_t fi) {
 /* D10 P2 laws (A-85 EXACT pins; piecewise-lin between; caller caps
  * a at 9 = R3 both-signs cap). duck: bg-ch (sd=0.00). boost/cut: P2
  * compromise single laws (content-split residuals → P3). */
-static double de_duck_db(double a) {
-    if (a <= 3.0)
-        return -0.75 * (a / 3.0);
-    if (a <= 6.0)
-        return -0.75 - 2.76 * ((a - 3.0) / 3.0);
-    return -3.51 - 2.74 * ((a - 6.0) / 3.0);
-}
+/* (deleted: belonged to removed DRC-apply/DE-drive legs) */
 
-static double de_boost_db(double a) {
-    if (a <= 3.0)
-        return 2.2 * (a / 3.0);
-    if (a <= 6.0)
-        return 2.2 + 0.3 * ((a - 3.0) / 3.0);
-    return 2.5 + 0.15 * ((a - 6.0) / 3.0);
-}
+/* (deleted: belonged to removed DRC-apply/DE-drive legs) */
 
-static double de_cut_db(double a) {
-    if (a <= 3.0)
-        return -3.3 * (a / 3.0);
-    if (a <= 6.0)
-        return -3.3 - 3.8 * ((a - 3.0) / 3.0);
-    return -7.1 - 5.9 * ((a - 6.0) / 3.0);
-}
+/* (deleted: belonged to removed DRC-apply/DE-drive legs) */
 
 /* Per-frame settled target (dB) for channel c. act_db/inact_db =
  * dialogue active/inactive (boost/duck or cut/unity); bg_db = bg. */
-static int de_is_dialogue(int c, int nch, unsigned cc);
-static double de_targ_db(int act, unsigned cc, int c, int nch, int neg,
-                         double act_db, double inact_db, double bg_db) {
-    if (de_is_dialogue(c, nch, cc))
-        return neg ? (act ? act_db : 0.0) : (act ? act_db : inact_db);
-    return bg_db;
-}
+/* (de_is_dialogue deleted with DE-drive leg) */
+/* (deleted: belonged to removed DRC-apply/DE-drive legs) */
 
 /* Table-171 dialogue bits (A-79 names + A-82 confirm 1=C 6=L,R):
  * bit0=C bit1=R bit2=L. Output slots: 5.1 = L R C LFE Ls Rs;
  * stereo = L R. 1 = dialogue target (P2: boost/cut-if-active,
  * duck/unity-if-inactive, per-frame cc from activity map). */
-static int de_is_dialogue(int c, int nch, unsigned cc) {
-    int isC = (cc & 1) != 0, isR = (cc & 2) != 0, isL = (cc & 4) != 0;
-    if (nch == 6) {
-        if (c == 0)
-            return isL;
-        if (c == 1)
-            return isR;
-        if (c == 2)
-            return isC;
-        return 0;
-    }
-    if (nch == 2) {
-        if (c == 0)
-            return isL;
-        if (c == 1)
-            return isR;
-        return 0;
-    }
-    return 0; /* mono/other: no dialogue target (P1 documented) */
-}
+/* (deleted: belonged to removed DE-drive leg) */
 
 /* D47: drop de_data walk context (prior-frame decode state, §4.1).
  * Called per-stream at decode head and per-splice mid-stream. */
@@ -6092,58 +6194,112 @@ static void e_dewalk_reset(void) {
     }
 }
 
-/* D47 §4.5: dialnorm trim latch from a start frame. duet3-dec-writerB
- * IMS dn rule: I-frame si0 on pres_ver-2 streams carries a config
- * head (byte0 != dn; the P-frame byte0 IS dn), dn is file-global, so
- * latch from the first P-frame at/after start; fall back to the
- * first kept frame when none. Post-splice gain must come from
- * post-splice frames (silence-until-info). */
-static void e3_dn_latch_from(raw_t *raws, toc_t *ts, uint8_t *keep,
-                             size_t start, size_t nraw) {
-    size_t dn_i = nraw;
-    for (size_t i = start; i < nraw; i++) {
-        if (keep[i] && !ts[i].ig) {
-            dn_i = i;
-            break;
-        }
-    }
-    if (dn_i == nraw) {
-        for (size_t i = start; i < nraw; i++) {
-            if (keep[i]) {
-                dn_i = i;
-                break;
-            }
-        }
-    }
-    if (dn_i != nraw) {
-        unsigned dnb = 0;
-        double dng = 0.0;
-        if (e3_dn_sample(raws, ts, dn_i, &dnb, &dng)) {
-            e3_dngain_g0 = dng;
-            e3_dn_bits = dnb;
-            e3_dngain = dng * (1.0 + e3_trim_ppm(dnb) / 1e6);
-            /* EXPERIMENTAL wave11 e3-gainfloor knob (same as head). */
-            const char *gp = getenv("AC4DEC_GAINPPM");
-            if (gp)
-                e3_dngain *= 1.0 + strtod(gp, NULL) / 1e6;
-        }
-    }
+/* ================= streaming decode core (H1) =================
+ * Batch e3_decode_frames (whole-stream lr[]/actmap/spill/apf arrays +
+ * buffer-all-then-fallback) is split into: ac4d_open (one-shot inits),
+ * ac4d_step (bounded per-frame decode into FIFOs), drain + emit
+ * pipeline (post-pass/compand incremental at a fixed frame delay),
+ * ac4d_flush. No whole-stream malloc; no rewind; sticky latches from
+ * the first fed frame. Gap frames in the tolerant classes (5.1 / IMS /
+ * 7.1.4) latch sticky silence (batch would rewind to full stub). */
+
+/* Gap-fallback whitelist (batch gapfb[] in main; lib scope: frame-gap
+ * classification for the tolerant classes). */
+static const char *const ac4d_gapfb[] = {
+    "5x-acpl-unimpl", "5x-codec-reserved", "5x-cc1-unimpl",
+    "5x-cc2-unimpl", "5x-cc3-unimpl", "5x-lfe-width", "snf-unimpl",
+    "ssf-unimpl", "aspx-unimpl", "aspx-acpl-unimpl",
+    "8ch-unimpl", "714-mode-unimpl", "714-grp-unimpl",
+    "714-addch-unimpl", "714-lfe-width", NULL};
+static int ac4d_note_is_gap(const char *note) {
+    int q;
+    if (!note)
+        return 0;
+    for (q = 0; ac4d_gapfb[q]; q++)
+        if (strcmp(note, ac4d_gapfb[q]) == 0)
+            return 1;
+    return 0;
 }
 
-/* D47 §4.1/§4.4-§4.6: splice flush. Retire every latched decode
- * CONFIG group at a marked/jump frame (fresh-source rule): walk +
- * ext/aspx config (stale highs must not leak past an off-I cut) +
- * companding + DRC + dialog-enhancement + dialnorm re-latch.
- * Info-path latches (frame-0 gate, loud/audmeta, DN, census) are
- * kept: TAGs describe the stream head. The sample pipeline
- * (e3_chst overlap, e3_pendn/pendco/prevn delay line) is kept by
- * §4.3: overlap-add continuity is structural — re-priming it
- * mid-stream breaks the frames*spf length contract (first-hand:
- * length-mismatch), so the one-window crossfade at the cut is the
- * accepted convergence cost per §3. Fires on splice only, so clean
- * streams are bit-neutral. */
-static void e_splice_flush(raw_t *raws, toc_t *ts, uint8_t *keep,
-                           size_t at, size_t nraw) {
+/* Forward declarations (defined below the step body). */
+static int ac4d_step(const uint8_t *pkt, size_t pkt_len, const toc_t *toc,
+                     const char **note);
+static int ac4d_drain(const char **note);
+static void ac4d_cmp_snapshot(void);
+static int ac4d_cmp_sb1(long f, int xs);
+static void ac4d_cmp_analyze(long f);
+static void ac4d_cmp_flush(void);
+static int ac4d_cmp_emit(long e, short (*dst)[2048]);
+static int ac4d_pp_imm_emit(long e, double (*dst)[2048]);
+static int ac4d_pp_5x_emit(long e, double (*dst)[2048], int *gap);
+static int ac4d_latch(const toc_t *toc, const char **note);
+static int ac4d_emit_one(int *is_gap);
+static int ac4d_pump(void);
+static int ac4d_gather(long f, short (*dst)[2048]);
+static int ac4d_length_check(const char **note);
+
+/* Bounded DN latch (batch e3_dn_latch_from: first kept P-frame (!ig)
+ * at/after start, else first kept frame; a failed sample keeps the
+ * prior gain). Streaming: latch the epoch-first fed frame, tentative
+ * when it is I (h_dn_tent); the first fed P re-latches via
+ * ac4d_dn_relatch; flush with no P keeps the tentative (= batch
+ * first-kept fallback). Skeleton/pp stay pre-gain floats (gain at
+ * emit), so eager analyze is exact; ready freezes while tentative
+ * (no emits under a superseded gain) and analyze additionally
+ * stalls when compand is engaged (its QMF state bakes the gain). */
+static void ac4d_dn_latch_single(const raw_t *r, const toc_t *t) {
+    ac4d_ctx *cx = _ac4d_self;
+    unsigned dnb = 0;
+    double dng = 0.0;
+    if (cx->h_dn_tent && cx->h_dn_dirty) {
+        /* Older epoch ended tentative+dirty: record its gain; a
+         * later P with a different DN means batch (whose latches
+         * scan across splices) used that P for the old epoch. */
+        cx->h_dn_ordirty = 1;
+        cx->h_dn_org0 = e3_dngain_g0;
+        cx->h_dn_orgain = e3_dngain;
+        cx->h_dn_orbits = e3_dn_bits;
+    }
+    cx->h_dn_pg0 = e3_dngain_g0;
+    cx->h_dn_pgain = e3_dngain;
+    cx->h_dn_pbits = e3_dn_bits;
+    cx->h_dn_dirty = 0; /* new epoch: prior tentative use is settled */
+    if (e3_dn_sample(r, t, &dnb, &dng)) {
+        e3_dngain_g0 = dng;
+        e3_dn_bits = dnb;
+        e3_dngain = dng * (1.0 + e3_trim_ppm(dnb) / 1e6);
+        /* EXPERIMENTAL wave11 e3-gainfloor knob (same as batch). */
+        const char *gp = getenv("AC4DEC_GAINPPM");
+        if (gp)
+            e3_dngain *= 1.0 + strtod(gp, NULL) / 1e6;
+    }
+    cx->h_dn_tent = t->ig ? 1 : 0;
+}
+
+/* First-P re-latch while tentative (batch: first !ig wins; a failed
+ * sample restores the pre-epoch gain, as batch's keep-prior rule). */
+static void ac4d_dn_relatch(const raw_t *r, const toc_t *t) {
+    ac4d_ctx *cx = _ac4d_self;
+    unsigned dnb = 0;
+    double dng = 0.0;
+    if (e3_dn_sample(r, t, &dnb, &dng)) {
+        e3_dngain_g0 = dng;
+        e3_dn_bits = dnb;
+        e3_dngain = dng * (1.0 + e3_trim_ppm(dnb) / 1e6);
+        const char *gp = getenv("AC4DEC_GAINPPM");
+        if (gp)
+            e3_dngain *= 1.0 + strtod(gp, NULL) / 1e6;
+    } else {
+        e3_dngain_g0 = cx->h_dn_pg0;
+        e3_dngain = cx->h_dn_pgain;
+        e3_dn_bits = cx->h_dn_pbits;
+    }
+    cx->h_dn_tent = 0;
+}
+
+/* D47 splice flush, bounded (batch rescanned raws/ts; here the current
+ * frame only; sample pipeline kept per §4.3). */
+static void ac4d_splice_flush_single(const raw_t *r, const toc_t *t) {
     e_dewalk_reset();
     e_ax_have_cfg = 0;
     for (int q = 0; q < 4; q++)
@@ -6164,20 +6320,92 @@ static void e_splice_flush(raw_t *raws, toc_t *ts, uint8_t *keep,
     e_decfg_have = 0;
     e_decfg_frame = 0;
     e_decfg_chan = e_decfg_tools = e_decfg_maxgain = e_decfg_method = 0;
-    e3_dn_latch_from(raws, ts, keep, at, nraw);
+    ac4d_dn_latch_single(r, t);
 }
 
-static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
-                             size_t estart, size_t nraw, int nch, int spf,
-                             int fam, FILE *o, const char **note,
-                             uint64_t eeh, uint64_t eet, uint64_t eemdur) {
-    if (nch > 8) {
-        *note = "nch-unimpl";
-        return -1;
+/* ---- public API ---- */
+const char *ac4d_strerror(int rc) {
+    switch (rc) {
+    case AC4D_OK:
+        return "ok";
+    case AC4D_NEED_MORE:
+        return "need more input";
+    case AC4D_GAP:
+        return "gap frame (silence emitted)";
+    case AC4D_NO_MEM:
+        return "out of memory";
+    case AC4D_BAD_PACKET:
+        return "bad packet";
+    case AC4D_CONFIG_CHANGE:
+        return "mid-stream config change";
+    case AC4D_BITSTREAM:
+        return "bitstream error";
+    case AC4D_UNSUPPORTED:
+        return "unsupported option (DRC/DE need whole-stream legs)";
+    default:
+        return "decode failure";
     }
+}
+
+int ac4d_open(ac4d_ctx **cp, const ac4d_opts *o) {
+    ac4d_ctx *c;
+    int q, ch;
+    if (!cp)
+        return AC4D_ERR;
+    *cp = NULL;
+    c = calloc(1, sizeof *c);
+    if (!c)
+        return AC4D_NO_MEM;
+    _ac4d_self = c;
+    ac4d_state_init();
+    if (o)
+        c->ao = *o;
+    else {
+        memset(&c->ao, 0, sizeof c->ao);
+        c->ao.pres_sel = -1;
+    }
+    if (c->ao.bits == 0)
+        c->ao.bits = 16;
+    if (c->ao.bits != 16 && c->ao.bits != 24 && c->ao.bits != 32) {
+        free(c);
+        if (_ac4d_self == c)
+            _ac4d_self = NULL;
+        return AC4D_ERR;
+    }
+    if (c->ao.drc_boost_pct == 0)
+        c->ao.drc_boost_pct = 100;
+    if (c->ao.drc_cut_pct == 0)
+        c->ao.drc_cut_pct = 100;
+    /* Whole-stream legs unsupported in streaming v1 (H1). */
+    {
+        const char *dp = getenv("AC4DEC_DRC");
+        if (c->ao.drc_on || (dp && dp[0] == '1')) {
+            free(c);
+            if (_ac4d_self == c)
+                _ac4d_self = NULL;
+            return AC4D_UNSUPPORTED;
+        }
+    }
+    if (c->ao.de_given && c->ao.de_level != 0.0) {
+        free(c);
+        if (_ac4d_self == c)
+            _ac4d_self = NULL;
+        return AC4D_UNSUPPORTED;
+    }
+    /* CLI-mirror globals from opts. */
+    e_drc_cli = c->ao.drc_on;
+    e_drc_or_given = c->ao.drc_ref_given;
+    e_drc_or_cli = (double)c->ao.drc_out_ref;
+    e_drc_boost = (double)c->ao.drc_boost_pct;
+    e_drc_cut = (double)c->ao.drc_cut_pct;
+    e_de_given = c->ao.de_given;
+    e_de_cli = c->ao.de_level;
+    e_ajoc_core = c->ao.ajoc_core;
+    e_wav_bps = c->ao.bits == 24 ? 3 : c->ao.bits == 32 ? 4 : 2;
+    /* One-shot stream inits (batch e3_decode_frames head). */
     e_ax_have_cfg = 0;
     e3_cmp_reset();
-    e_drc.valid = 0; /* G-DRC step 4: fresh config per stream */
+    e_drc.valid = 0;
     e_drc_noted = 0;
     e_drc_dial = 27;
     memset(&e_loud, 0, sizeof e_loud);
@@ -6199,126 +6427,346 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
     e_decfg_have = 0;
     e_decfg_frame = 0;
     e_decfg_chan = e_decfg_tools = e_decfg_maxgain = e_decfg_method = 0;
-    e_dewalk_reset(); /* D47: fresh walk context per stream */
+    e_dewalk_reset();
     e_ncfg = 0;
     e_icfg0 = e_icfg1 = -1;
-    for (int q = 0; q < 4; q++)
+    for (q = 0; q < 4; q++)
         e_ax_xover[q] = 0;
-    for (int q = 0; q < 7; q++) {
+    for (q = 0; q < 7; q++) {
         e_ax_have_prev[q] = 0;
         e_ax_prev_stop[q] = 0;
     }
-    for (int c = 0; c < 12; c++) {
-        imdct_set_max(&e3_chst[c], fam);
-        e3_pendn[c] = 0;
-        e3_prevn[c] = 0;
+    for (ch = 0; ch < 12; ch++) {
+        /* imdct_set_max deferred to latch (needs spf). */
+        e3_pendn[ch] = 0;
+        e3_prevn[ch] = 0;
     }
-    short *lr[8] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
-    for (int c = 0; c < nch; c++) {
-        lr[c] = malloc(nraw * (size_t)spf * sizeof(short));
-        if (!lr[c]) {
-            for (int q = 0; q < c; q++)
-                free(lr[q]);
-            *note = "no-mem";
-            return -1;
-        }
-    }
-    /* P2 DE activity map (process-lifetime buffer, zeroed per file). */
-    if (e_de_actcap < nraw) {
-        unsigned char *nm = realloc(e_de_actmap, nraw * sizeof *nm);
-        if (!nm) {
-            for (int q = 0; q < nch; q++)
-                free(lr[q]);
-            *note = "no-mem";
-            return -1;
-        }
-        e_de_actmap = nm;
-        e_de_mabs = realloc(e_de_mabs, nraw * sizeof *e_de_mabs);
-        if (!e_de_mabs) {
-            for (int q = 0; q < nch; q++)
-                free(lr[q]);
-            *note = "no-mem";
-            return -1;
-        }
-        e_de_actcap = nraw;
-    }
-    memset(e_de_actmap, 0, nraw * sizeof *e_de_actmap);
-    memset(e_de_mabs, 0, nraw * sizeof *e_de_mabs);
-    long frames = 0, oc[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-    /* Mode-0 stream-mix buffers (lazy: first mode-0 frame). */
-    double *tf[12] = {NULL, NULL, NULL, NULL, NULL, NULL,
-                      NULL, NULL, NULL, NULL, NULL, NULL};
-    long tf_oc[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-    size_t tf_cap = 0;
     e3_dngain = 1.0;
     e3_imm_mode = -1;
     e3_acpl_have = 0;
-    acpl_reset();
-    for (int q = 0; q < 4; q++) {
-        free(e3_spill[q]);
-        e3_spill[q] = NULL;
+    acpl_reset(&c->acpl);
+    for (q = 0; q < 4; q++)
         e3_spill_oc[q] = 0;
-    }
-    free(e3_apf);
-    e3_apf = NULL;
-    e3_apf_n = e3_apf_cap = 0;
     e3_imm_fold_div = 1.4142135623730951;
-    e5_apf = NULL;
-    e5_apf_n = e5_apf_cap = 0;
     e5_acpl_nbands = 15;
     e5_acpl_fine = 1;
     e5_acpl_have = 0;
     e5_need_postpass = 0;
-    for (int q = 0; q < 2; q++) {
-        free(e5_spill[q]);
-        e5_spill[q] = NULL;
+    for (q = 0; q < 2; q++)
         e5_spill_oc[q] = 0;
-    }
     e5_spill_on = 0;
     e5_last_acpl = 0;
     e5_acpl_elig = 1;
-    e3_spill_cap = nraw * (size_t)spf;
     e3_spill_on = 0;
     e3_imm_elig = 1;
-    /* EXPERIMENTAL wave11 e3-gainfloor: ref-level override to match
-     * DRP truth argv (--ref-level); default -31 canonical. */
-    { const char *rp = getenv("AC4DEC_REFLEVEL");
-      if (rp)
-          e3_reflevel = strtod(rp, NULL); }
-    /* Dialnorm trim latch, hoisted pre-loop (frame 0 must push with
-     * trim). Same P-frame rule as before, via helper (D47 reuses it
-     * for splice re-latch). */
-    e3_dn_latch_from(raws, ts, keep, estart, nraw);
-    unsigned dsprev = 0; /* D47: prev kept seq (splice detect) */
-    int dshave = 0;
-    for (size_t i = estart; i < nraw; i++) {
-        if (!keep[i])
-            continue;
-        if (dshave) {
-            int dsk = e_splice_step(dsprev, ts[i].seq);
+    for (q = 0; q < 8; q++)
+        c->fr_fno[q] = -1;
+    acpl_imm_init(&c->pp_imm);
+    acpl_5x_init(&c->pp_5x);
+    for (ch = 0; ch < 8; ch++) {
+        qmf_init(&c->cmp_qs[ch]);
+        c->cmp_held[ch] = 1.0;
+        for (q = 0; q < 16; q++)
+            c->cmp_gfifo[ch][q] = 1.0;
+    }
+    ac4d_cmp_snapshot();
+    /* EXPERIMENTAL wave11 e3-gainfloor (same as batch head). */
+    {
+        const char *rp = getenv("AC4DEC_REFLEVEL");
+        if (rp)
+            e3_reflevel = strtod(rp, NULL);
+    }
+    c->ao_open = 1;
+    *cp = c;
+    return AC4D_OK;
+}
+
+void ac4d_close(ac4d_ctx *c) {
+    if (!c)
+        return;
+    if (_ac4d_self == c)
+        _ac4d_self = NULL;
+    free(c);
+}
+
+const char *ac4d_gap_note(const ac4d_ctx *c) {
+    if (!c)
+        return "no-ctx";
+    if (c->h_gap)
+        return c->h_gap;
+    if (c->h_hard_note)
+        return c->h_hard_note;
+    return "ok";
+}
+
+static uint64_t ac4d_layout_mask(int nch) {
+    /* ffmpeg AV_CH_* bit values (stable ABI). */
+    switch (nch) {
+    case 1:
+        return 0x4; /* FRONT_CENTER */
+    case 2:
+        return 0x1 | 0x2; /* FL|FR */
+    case 6:
+        return 0x3F; /* 5.1 */
+    case 8:
+        return 0x63F; /* 7.1 */
+    default:
+        return 0;
+    }
+}
+
+int ac4d_get_info(const ac4d_ctx *c, ac4d_info *i) {
+    int wch;
+    if (!c || !i)
+        return AC4D_ERR;
+    if (!c->h_fmt)
+        return AC4D_NEED_MORE;
+    /* (zeroext is 6 iff cm120-IMS w/o override, else 0: latch rule) */
+    wch = (c->h_bed_cm == 120 && c->h_ims && c->ao.ch_override == 0)
+        ? 6
+        : c->h_nch;
+    if (c->ao.ch_override > 0)
+        wch = c->ao.ch_override;
+    i->sample_rate = c->h_sr;
+    i->channels = c->h_stub ? (c->ao.ch_override > 0 ? c->ao.ch_override
+                                                    : c->h_nch)
+                            : wch;
+    i->bits = c->ao.bits;
+    i->spf = c->h_spf;
+    i->bed_cm = c->h_bed_cm;
+    i->ch_layout_mask = ac4d_layout_mask(i->channels);
+    i->real = !c->h_stub;
+    return AC4D_OK;
+}
+
+/* Sticky format latch from the first fed frame. Returns AC4D_OK, or a
+ * hard error code with *note set. */
+static int ac4d_latch(const toc_t *toc, const char **note) {
+    ac4d_ctx *c = _ac4d_self;
+    int nch = 0, ims = 0, stub = 0;
+    const char *snote = "stub-class";
+    long out_sr;
+    int ch;
+    if (toc->bed_ch == 0) {
+        stub = 1;
+        snote = "no-bed";
+        nch = 0;
+    } else if (toc->bed_cm == 0) {
+        nch = 1;
+    } else if (toc->bed_cm == 2) {
+        nch = 2;
+    } else if (toc->bed_cm == 14) {
+        nch = 6;
+    } else if ((toc->bed_cm == 120 || toc->bed_cm == 121) &&
+               toc->pres_ver0 == 2) {
+        nch = 2;
+        ims = 1;
+    } else if (toc->bed_cm == 253) {
+        nch = 8;
+    } else {
+        stub = 1;
+        nch = toc->bed_ch > 8 ? 8 : toc->bed_ch;
+    }
+    if (toc->rate < 0 || toc->rate > 13) {
+        *note = "rate-unimpl";
+        return AC4D_BAD_PACKET;
+    }
+    c->h_spf = e4_spf[toc->rate];
+    c->h_rate = toc->rate;
+    c->h_nch = nch;
+    c->h_bed_cm = toc->bed_cm;
+    c->h_pres_ver = toc->pres_ver0;
+    c->h_ims = ims;
+    c->h_stub = stub;
+    if (stub)
+        c->h_gap = snote;
+    /* Sample-rate label (batch main rule incl --sr override). */
+    if (c->ao.sr_override > 0) {
+        out_sr = c->ao.sr_override;
+    } else if (toc->rate == 13) {
+        out_sr = toc->fs == 0 ? 44100 : 48000;
+    } else {
+        out_sr = e4_sr[toc->rate];
+    }
+    c->h_sr = (int)out_sr;
+    /* Channel override (batch want_real clash rule: mismatch = stub). */
+    if (!stub && c->ao.ch_override > 0) {
+        int ok = (c->ao.ch_override == nch);
+        if (toc->bed_cm == 120 && ims && c->ao.ch_override == 6)
+            ok = 1;
+        if (toc->bed_cm == 253 && ims == 0 && c->ao.ch_override == 8)
+            ok = 1;
+        if (!ok) {
+            c->h_stub = 1;
+            c->h_gap = "ch-override-clash";
+        }
+    }
+    /* cm120-IMS presents as 6ch (batch probe rule). */
+    if (toc->bed_cm == 120 && ims && c->ao.ch_override == 0)
+        e3_zeroext = 6;
+    else
+        e3_zeroext = 0;
+    for (ch = 0; ch < 12; ch++)
+        imdct_set_max(&e3_chst[ch], c->h_spf);
+    /* Readiness is data-driven (h_ready); priming pushes make fixed
+     * frame delays wrong (ims-class lag ~2.5 frames). Writeback reads
+     * raw through (e+1)*spf+576, so emits need analyze 1 frame ahead
+     * (2 when spf < 577: the +577 sample falls two frames out). */
+    c->h_need = c->h_spf < 577 ? 2 : 1;
+    /* Compand derived constants (batch post-pass head). */
+    c->ce_slots = qmf_slots(c->h_spf);
+    c->ce_G = pow(2.0, 1.0 / 0.65);
+    c->ce_ex = (1.0 - 0.65) / 0.65;
+    c->ce_on = (!c->ce_nocmp && (nch == 1 || nch == 2 || nch == 6) &&
+                c->ce_slots > 0 && c->ce_slots <= 32 &&
+                (long)c->ce_slots * 64 == (long)c->h_spf)
+        ? 1
+        : 0;
+    c->h_imm_mode = -1;
+    c->h_fmt = 1;
+    return AC4D_OK;
+}
+
+int ac4d_feed(ac4d_ctx *c, const uint8_t *pkt, size_t len) {
+    size_t hl = 0, rl = 0;
+    int has_crc = 0;
+    toc_t toc;
+    const uint8_t *pay;
+    const char *note = "ok";
+    int rc, sel;
+    raw_t r1;
+    if (!c || !c->ao_open || !pkt || len == 0)
+        return AC4D_ERR;
+    _ac4d_self = c;
+    if (c->h_hard_err)
+        return c->h_hard_err;
+    if (c->h_flushing)
+        return AC4D_ERR;
+    /* Sync + length + AC41 CRC (batch parse_sync rule, exact fit). */
+    if (parse_sync(pkt, len, 0, &hl, &rl, &has_crc) != 0)
+        return AC4D_BAD_PACKET;
+    if (hl + rl + (has_crc ? (size_t)2 : (size_t)0) != len)
+        return AC4D_BAD_PACKET;
+    pay = pkt + hl;
+    sel = c->ao.pres_sel < 0 ? 0 : c->ao.pres_sel;
+    if (toc_parse_bv2(pay, rl, &toc, sel) != 0)
+        return AC4D_BAD_PACKET;
+    r1.p = pay;
+    r1.len = rl;
+    if (!c->h_fmt) {
+        rc = ac4d_latch(&toc, &note);
+        if (rc != AC4D_OK) {
+            c->h_hard_err = rc;
+            c->h_hard_note = note;
+            return rc;
+        }
+        ac4d_dn_latch_single(&r1, &toc);
+    } else {
+        /* Config constancy (batch: geometry constancy rejects). */
+        if (toc.bed_cm != c->h_bed_cm || toc.rate != c->h_rate ||
+            toc.pres_ver0 != c->h_pres_ver) {
+            c->h_hard_err = AC4D_CONFIG_CHANGE;
+            c->h_hard_note = "config-change";
+            return AC4D_CONFIG_CHANGE;
+        }
+        if (c->h_dn_tent && !toc.ig) {
+            double tg0 = e3_dngain_g0, tg = e3_dngain;
+            unsigned tb = e3_dn_bits;
+            ac4d_dn_relatch(&r1, &toc);
+            if ((c->h_dn_dirty &&
+                 (e3_dngain_g0 != tg0 || e3_dngain != tg ||
+                  e3_dn_bits != tb)) ||
+                (c->h_dn_ordirty &&
+                 (e3_dngain_g0 != c->h_dn_org0 ||
+                  e3_dngain != c->h_dn_orgain ||
+                  e3_dn_bits != c->h_dn_orbits))) {
+                /* Frames went out under a superseded gain (long
+                 * leading-I run + DN change, possibly across a
+                 * splice): loud, never silent. */
+                c->h_hard_err = AC4D_ERR;
+                c->h_hard_note = "dn-relatch-dirty";
+                return AC4D_ERR;
+            }
+        }
+    }
+    if (c->h_stub || c->h_gap_sticky) {
+        /* Silence path: consume the ordinal, emit zeros at emit. */
+        c->h_fed++;
+        c->h_ready = c->h_fed;
+        return AC4D_OK;
+    }
+    rc = ac4d_step(pay, rl, &toc, &note);
+    if (rc == 0) {
+        c->h_fed++;
+        return AC4D_OK;
+    }
+    /* Step failed: tolerant class + whitelisted note = sticky gap
+     * (batch would rewind to full stub); else sticky hard error. */
+    {
+        int tolerant =
+            (c->h_nch == 6 || c->h_ims || c->h_bed_cm == 253) ? 1 : 0;
+        if (tolerant && ac4d_note_is_gap(note)) {
+            c->h_gap = note;
+            c->h_gap_sticky = 1;
+            c->h_gap_start = c->h_fed;
+            c->h_fed++;
+            return AC4D_OK;
+        }
+        if (strcmp(note, "config-change") == 0)
+            rc = AC4D_CONFIG_CHANGE;
+        else if (strcmp(note, "ring-overrun") == 0)
+            rc = AC4D_ERR;
+        else if (strcmp(note, "no-mem") == 0)
+            rc = AC4D_NO_MEM;
+        else
+            rc = AC4D_BITSTREAM;
+        c->h_hard_err = rc;
+        c->h_hard_note = note;
+        return rc;
+    }
+}
+
+/* Bounded per-frame decode step. pkt = header-stripped payload (batch
+ * raws[i]), toc = parsed TOC. Returns 0 ok / -1 (note set). */
+static int ac4d_step(const uint8_t *pkt, size_t pkt_len, const toc_t *toc,
+                     const char **note) {
+    ac4d_ctx *cx = _ac4d_self;
+    long fno = cx->h_fed;
+    size_t i = (size_t)fno; /* batch-ism compat (debug prints, ordinals) */
+    int nch = cx->h_nch;
+    int spf = cx->h_spf;
+    int fam = spf;
+    raw_t r1;
+    (void)fam;
+    r1.p = pkt;
+    r1.len = pkt_len;
+        /* (batch keep-gate dropped: shim feeds kept cx->h_fed only) */
+
+        if (cx->h_dshave) {
+            int dsk = e_splice_step(cx->h_dsprev, toc->seq);
             if (dsk == SPL_MARKED || dsk == SPL_JUMP) {
-                e_splice_flush(raws, ts, keep, i, nraw); /* §4.1/4.4-4.6 */
+                ac4d_splice_flush_single(&r1, toc); /* §4.1/4.4-4.6 */
                 if (e9_debug())
                     fprintf(stderr, "SPLF i=%zu seq=%u kind=%s\n", i,
-                            ts[i].seq,
+                            toc->seq,
                             dsk == SPL_MARKED ? "marked" : "jump");
             }
         }
-        dsprev = ts[i].seq;
-        dshave = 1;
+        cx->h_dsprev = toc->seq;
+        cx->h_dshave = 1;
         /* Dialnorm constancy asserted in DEBUG (latched pre-loop). */
         if (e9_debug()) {
             unsigned db = 0;
             double g = 0.0;
-            if (e3_dn_sample(raws, ts, i, &db, &g))
+            if (e3_dn_sample(&r1, toc, &db, &g))
                 fprintf(stderr, "DN i=%zu bits=%u g=%.8f%s\n", i, db,
                         g, g == e3_dngain_g0 ? "" : " (VAR!)");
         }
         /* DRC-config census (G-DRC step 1, parse-only, PCM-neutral). */
         int had_drc = e_drc.valid;
-        drc_parse_cfg(raws, ts, i); /* step 4: store (PCM-neutral) */
+        drc_parse_cfg(&r1, toc); /* step 4: store (PCM-neutral) */
         if (getenv("AC4DEC_DRCDBG")) {
-            e3_drc_dump(raws, ts, i);
+            e3_drc_dump(&r1, toc);
             /* Would-select witness (mpa20 discriminant: stub path
              * skips the apply leg, so selection is observed here
              * through the REAL select + REAL carried config). */
@@ -6333,20 +6781,20 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                         wmi >= 0 ? e_drc.modes[wmi].is_curve : -1);
             }
         }
-        size_t so = ts[i].tocB + ts[i].pbase;
-        for (int s = 0; s < ts[i].bed_si; s++)
-            so += ts[i].sizes[s];
-        size_t sl = ts[i].sizes[ts[i].bed_si];
-        if (so + sl > raws[i].len) {
+        size_t so = toc->tocB + toc->pbase;
+        for (int s = 0; s < toc->bed_si; s++)
+            so += toc->sizes[s];
+        size_t sl = toc->sizes[toc->bed_si];
+        if (so + sl > pkt_len) {
             *note = "substream-bounds";
             return -1;
         }
         { /* Bed audio-metadata keep (E8 stage-2; first-frame latch
            * for --print-info; PCM-neutral). */
             info_audmeta_t am;
-            e3_audmeta_read(raws[i].p + so, sl,
-                            e3_cm_map(ts[i].bed_cm),
-                            ts[i].bif, &am);
+            e3_audmeta_read(pkt + so, sl,
+                            e3_cm_map(toc->bed_cm),
+                            toc->bif, &am);
             if (i == 0 && !e_audmeta_latched && am.present) {
                 e_audmeta = am;
                 e_audmeta_latched = 1;
@@ -6365,7 +6813,7 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                         "asz=%u mat=%zu bdialog=%d tools=%u "
                         "de_gate=%d de_cfg=%d "
                         "method=%u maxgain=%u chan=%u\n",
-                        i, ts[i].bed_cm, e3_cm_map(ts[i].bed_cm),
+                        i, toc->bed_cm, e3_cm_map(toc->bed_cm),
                         am.present, am.endok, am.audio_size,
                         am.meta_at, am.b_dialog, am.tools,
                         am.de_gate, am.has_de_cfg, am.de_method,
@@ -6405,7 +6853,7 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                 fprintf(stderr,
                         "DEDATA i=%zu bif=%d gate=%d cfg=%d nch=%d "
                         "keep=%d dbits=%u\n",
-                        i, ts[i].bif, am.de_gate, am.has_de_cfg,
+                        i, toc->bif, am.de_gate, am.has_de_cfg,
                         de_nch, am.de_keep, am.de_region_bits);
                 if (am.de_gate) {
                     fprintf(stderr,
@@ -6428,30 +6876,30 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
            * gated, was unconditional TEMP-TUPDUMP store). */
             if (getenv("AC4DEC_SAPDUMP")) {
                 extern long ac4e_frame_no;
-                ac4e_frame_no = frames;
+                ac4e_frame_no = cx->h_fed;
             }
         }
         ac4_ebr_t b;
-        ebr_init(&b, raws[i].p + so, sl);
-        if (e9_debug() && frames < 1000000 &&
-            ts[i].ns >= 1 && ts[i].bed_si > 0) {
+        ebr_init(&b, pkt + so, sl);
+        if (e9_debug() && cx->h_fed < 1000000 &&
+            toc->ns >= 1 && toc->bed_si > 0) {
             /* S0 bytes (KEPT per A-test-hygiene-1: stage-0 visibility). */
-            size_t s0o = ts[i].tocB + ts[i].pbase;
-            size_t s0l = ts[i].sizes[0] < 16 ? ts[i].sizes[0] : 16;
+            size_t s0o = toc->tocB + toc->pbase;
+            size_t s0l = toc->sizes[0] < 16 ? toc->sizes[0] : 16;
             fprintf(stderr, "S0 i=%zu s0o=%zu s0l=%zu hex=", i, s0o, s0l);
             for (size_t q = 0; q < s0l; q++)
-                fprintf(stderr, "%02x", raws[i].p[s0o + q]);
+                fprintf(stderr, "%02x", pkt[s0o + q]);
             fprintf(stderr, "\n");
         }
         /* NOTE: wave9 AC4DEC_TUPDUMP/TUPBYTES + AC4DEC_SI1DUMP
          * stripped per A-test-hygiene-1 (probe residue). */
         { /* Height-gain index (SI0 byte 15 top-2-bits, long
-             * form >= 19B; LATCHED across short-SI0 frames;
+             * form >= 19B; LATCHED across short-SI0 cx->h_fed;
              * decode-init sqrt(2) covers short-form vectors).
              * duet6-dec-writerB Finding 12/13 ladder. */
-            if (ts[i].ns >= 1 && ts[i].sizes[0] >= 19) {
-                size_t gb = ts[i].tocB + ts[i].pbase;
-                unsigned gidx = (raws[i].p[gb + 15] >> 6) & 3;
+            if (toc->ns >= 1 && toc->sizes[0] >= 19) {
+                size_t gb = toc->tocB + toc->pbase;
+                unsigned gidx = (pkt[gb + 15] >> 6) & 3;
                 e3_imm_fold_div = 1.4142135623730951;
                 if (gidx == 0)
                     e3_imm_fold_div = 1.0;
@@ -6462,19 +6910,19 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                             i, gidx, e3_imm_fold_div);
             }
         }
-        if (getenv("AC4DEC_SI02DUMP") && ts[i].ns >= 1) {
-            size_t b0 = ts[i].tocB + ts[i].pbase;
+        if (getenv("AC4DEC_SI02DUMP") && toc->ns >= 1) {
+            size_t b0 = toc->tocB + toc->pbase;
             fprintf(stderr, "SI0 i=%zu n=%zu hex=", i,
-                    ts[i].sizes[0]);
-            for (size_t q = 0; q < ts[i].sizes[0]; q++)
-                fprintf(stderr, "%02x", raws[i].p[b0 + q]);
+                    toc->sizes[0]);
+            for (size_t q = 0; q < toc->sizes[0]; q++)
+                fprintf(stderr, "%02x", pkt[b0 + q]);
             fprintf(stderr, "\n");
-            if (ts[i].ns > 2) {
-                size_t o2 = b0 + ts[i].sizes[0] + ts[i].sizes[1];
+            if (toc->ns > 2) {
+                size_t o2 = b0 + toc->sizes[0] + toc->sizes[1];
                 fprintf(stderr, "SI2 i=%zu n=%zu hex=", i,
-                        ts[i].sizes[2]);
-                for (size_t q = 0; q < ts[i].sizes[2]; q++)
-                    fprintf(stderr, "%02x", raws[i].p[o2 + q]);
+                        toc->sizes[2]);
+                for (size_t q = 0; q < toc->sizes[2]; q++)
+                    fprintf(stderr, "%02x", pkt[o2 + q]);
                 fprintf(stderr, "\n");
             }
         }
@@ -6482,13 +6930,13 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
         if (ebr_u(&b, 1))
             asz += e3_var7(&b) << 15;
         ebr_align(&b);
-        if (e9_debug() && frames < 1000000)
+        if (e9_debug() && cx->h_fed < 1000000)
             fprintf(stderr,
                     "FRM i=%zu seq=%u so=%zu sl=%zu asz=%u alpos=%zu "
                     "tocB=%zu pbase=%zu ns=%d s0=%zu s1=%zu\n",
-                    i, ts[i].seq, so, sl, asz, b.pos, ts[i].tocB,
-                    ts[i].pbase, ts[i].ns, ts[i].sizes[0],
-                    ts[i].ns > 1 ? ts[i].sizes[1] : 0);
+                    i, toc->seq, so, sl, asz, b.pos, toc->tocB,
+                    toc->pbase, toc->ns, toc->sizes[0],
+                    toc->ns > 1 ? toc->sizes[1] : 0);
         if (b.err) {
             *note = "lead-trunc";
             return -1;
@@ -6498,17 +6946,17 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
         if (nch <= 2 || nch == 6)
             e3_cmp_begin(); /* per-frame compand slot (mono/stereo/5x) */
         if (nch == 6) { /* 5.1 bed: e3_decode_5x fills out slots */
-            int r5 = e3_decode_5x(&b, spf, ts[i].seq, ts[i].bif, asz,
+            int r5 = e3_decode_5x(&b, spf, toc->seq, toc->bif, asz,
                                       (_ac4d_self->xm_ch), info, note);
             if (r5 != 0)
                 return -1;
         } else if (nch == 8) { /* 7.1 mains of a 7.1.4 bed (writerB 714:
                                 * heights never consumed) */
-            if (ts[i].bed_cm != 253) {
+            if (toc->bed_cm != 253) {
                 *note = "8ch-unimpl";
                 return -1;
             }
-            int r7 = e3_decode_714(&b, spf, ts[i].seq, ts[i].ig, (_ac4d_self->xm_ch),
+            int r7 = e3_decode_714(&b, spf, toc->seq, toc->ig, (_ac4d_self->xm_ch),
                                    info, note);
             if (r7 < 0)
                 return -1;
@@ -6520,7 +6968,7 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
             int m_aspx = 0;
             if (mcm == 1) {
                 m_aspx = 1;
-                if (e_ax_head(&b, ts[i].bif, 1, note))
+                if (e_ax_head(&b, toc->bif, 1, note))
                     return -1;
             } else if (mcm != 0) {
                 *note = "aspx-unimpl";
@@ -6535,7 +6983,7 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                 *note = "sfinfo-fail";
                 return -1;
             }
-            r = asf_chan_decode(&b, &info[0], spf, ts[i].seq, &(_ac4d_self->xm_ch)[0]);
+            r = asf_chan_decode(&b, &info[0], spf, toc->seq, &(_ac4d_self->xm_ch)[0]);
             if (r == AC4E_SNF) {
                 *note = "snf-unimpl";
                 return -1;
@@ -6553,7 +7001,7 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                     *note = "aspx-noflb";
                     return -1;
                 }
-                if (e_ax_data_1ch(&b, ts[i].bif, ax_ts, 0, 0, axst,
+                if (e_ax_data_1ch(&b, toc->bif, ax_ts, 0, 0, axst,
                                   sizeof axst, note))
                     return -1;
                 e3_cmp_endxov();
@@ -6562,18 +7010,18 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                     *note = "aspx-endpos";
                     return -1;
                 }
-                if (e9_debug() && frames < 1000000)
+                if (e9_debug() && cx->h_fed < 1000000)
                     fprintf(stderr, "ASPX1 i=%zu ig=%d %s gap=%zu\n", i,
-                            ts[i].bif, axst, ax_end - b.pos);
+                            toc->bif, axst, ax_end - b.pos);
             }
         } else {
             unsigned scm = ebr_u(&b, 2); /* stereo_codec_mode */
-            if (e9_debug() && frames < 3)
+            if (e9_debug() && cx->h_fed < 3)
                 fprintf(stderr, "SCM i=%zu scm=%u\n", i, scm);
             int is_aspx = 0;
             if (scm == 1) {
                 is_aspx = 1;
-                if (e_ax_head(&b, ts[i].bif, 2, note))
+                if (e_ax_head(&b, toc->bif, 2, note))
                     return -1;
             } else if (scm != 0) {
                 *note = "aspx-acpl-unimpl";
@@ -6596,7 +7044,7 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                     return -1;
                 }
                 for (int c = 0; c < 2; c++) {
-                    r = asf_chan_decode(&b, &info[0], spf, ts[i].seq,
+                    r = asf_chan_decode(&b, &info[0], spf, toc->seq,
                                         &(_ac4d_self->xm_ch)[c]);
                     if (r == AC4E_SNF) {
                         *note = "snf-unimpl";
@@ -6621,7 +7069,7 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                     }
                 }
                 for (int c = 0; c < 2; c++) {
-                    int r = asf_chan_decode(&b, &info[c], spf, ts[i].seq,
+                    int r = asf_chan_decode(&b, &info[c], spf, toc->seq,
                                             &(_ac4d_self->xm_ch)[c]);
                     if (r == AC4E_SNF) {
                         *note = "snf-unimpl";
@@ -6642,7 +7090,7 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                     *note = "aspx-noflb";
                     return -1;
                 }
-                if (e_ax_data_2ch(&b, ts[i].bif, ax_ts, 0, 0, axst,
+                if (e_ax_data_2ch(&b, toc->bif, ax_ts, 0, 0, axst,
                                   sizeof axst, note))
                     return -1;
                 e3_cmp_endxov();
@@ -6651,20 +7099,20 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                     *note = "aspx-endpos";
                     return -1;
                 }
-                if (e9_debug() && frames < 1000000 &&
-                    ts[i].bif)
+                if (e9_debug() && cx->h_fed < 1000000 &&
+                    toc->bif)
                     fprintf(stderr,
                             "ASPXCFG i=%zu q%d st%d/sp%d m%d nb%d eb%d fr%d\n",
                             i, e_ax_cfg.qmode, e_ax_cfg.start,
                             e_ax_cfg.stop, e_ax_cfg.mfscale,
                             e_ax_cfg.noisesbg, e_ax_cfg.envbits,
                             e_ax_cfg.freqres);
-                if (e9_debug() && frames < 1000000)
+                if (e9_debug() && cx->h_fed < 1000000)
                     fprintf(stderr, "ASPX i=%zu ig=%d %s gap=%zu\n", i,
-                            ts[i].bif, axst, ax_end - b.pos);
+                            toc->bif, axst, ax_end - b.pos);
             }
         }
-        if (e9_debug() && frames < 1000000) {
+        if (e9_debug() && cx->h_fed < 1000000) {
             /* DNPEEK dialnorm 7b @ audio end (KEPT per A-test-hygiene-1). */
             size_t sv = b.pos;
             int sv_e = b.err;
@@ -6716,18 +7164,9 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
             /* Stream-mix path: every mode-0 frame pushes all 12 tracks
              * natively to float streams; the Table-23 + fold mix runs
              * once over full streams post-drain (e3_mix12p). */
-            if (!tf[0]) {
-                tf_cap = nraw * (size_t)spf;
-                for (int c = 0; c < 12; c++) {
-                    tf[c] = malloc(tf_cap * sizeof(double));
-                    if (!tf[c]) {
-                        for (int q = 0; q < c; q++)
-                            free(tf[q]);
-                        *note = "no-mem";
-                        return -1;
-                    }
-                }
-            }
+            /* H1: tf FIFO always present (fixed ring, was lazy
+             * whole-stream malloc). */
+            cx->tf_used = 1;
             for (int c = 0; c < 12; c++) {
                 int advances = 0;
                 for (int w = 0; w < (_ac4d_self->xm_ch)[c].nwin; w++) {
@@ -6741,13 +7180,9 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                             *note = e;
                             return -1;
                         }
-                        if (tf_oc[c] + k > (long)tf_cap) {
-                            *note = "stream-ovf";
-                            return -1;
-                        }
-                        memcpy(tf[c] + tf_oc[c], e3_pcmbuf,
-                               (size_t)k * sizeof(double));
-                        tf_oc[c] += k;
+                        ac4d_rput_d(cx->tf_fifo[c], AC4D_SKN, cx->h_oc[c],
+                                    e3_pcmbuf, k);
+                        cx->h_oc[c] += k;
                     }
                     e3_pendn[c] = nn;
                     memcpy(e3_pendco[c], (_ac4d_self->xm_ch)[c].co[w],
@@ -6772,12 +7207,14 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                             *note = e;
                             return -1;
                         }
-                        for (int j = 0; j < k; j++)
-                            lr[c][oc[c] + j] =
+                        for (int j = 0; j < k; j++) {
+                            double v =
                                 (nch == 8 && e3_imm_mode >= 0 && c >= 6 && !getenv("AC4DEC_KEEP67"))
-                                    ? 0
-                                    : e3_s16[j];
-                        oc[c] += k;
+                                    ? 0.0
+                                    : e3_pcmbuf[j];
+                            cx->sk_fifo[c][(cx->h_oc[c] + j) % AC4D_SKN] = v;
+                        }
+                        cx->h_oc[c] += k;
                     }
                     e3_pendn[c] = nn;
                     memcpy(e3_pendco[c], (_ac4d_self->xm_ch)[c].co[w],
@@ -6790,19 +7227,28 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                 }
             }
         }
-        /* P2 DE activity record (bridge holds this frame's values:
-         * metadata runs every kept iteration before its emit). */
-        if ((size_t)frames < e_de_actcap) {
-            e_de_actmap[frames] = (unsigned char)
-                ((e_de_cur_active ? 0x80 : 0) | (e_de_cur_cc & 0x7f));
-            e_de_mabs[frames] = e_de_cur_mabs;
-        }
-        frames++;
+        /* (P2 DE activity record deleted: DE-on unsupported in v1;
+         * the per-frame walk still runs above, PCM-neutral.) */
         /* NOTE: wave9 AC4DEC_STOP_AFTER truncation stripped per
          * A-test-hygiene-1 (behavior-altering probe residue). */
+    if (ac4d_pump() != 0) {
+        *note = "ring-overrun";
+        return -1;
     }
+    return 0;
+}
+
+/* Skeleton drain at flush (batch end-of-decode drain; pushes pendings
+ * + OLA-ring flush into the FIFOs, same order/values). */
+static int ac4d_drain(const char **note) {
+    ac4d_ctx *cx = _ac4d_self;
+    int nch = cx->h_nch;
+    int spf = cx->h_spf;
+    int fam = spf;
+    (void)fam;
+    (void)spf;
     /* end: push pendings with nn=n, flush, drain all */
-    if (tf[0]) {
+    if (cx->tf_used) {
         /* Stream-mix drain: pending + flush to float streams. */
         for (int c = 0; c < 12; c++) {
             if (e3_pendn[c] > 0) {
@@ -6813,24 +7259,16 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                     *note = e;
                     return -1;
                 }
-                if (tf_oc[c] + k > (long)tf_cap) {
-                    *note = "stream-ovf";
-                    return -1;
-                }
-                memcpy(tf[c] + tf_oc[c], e3_pcmbuf,
-                       (size_t)k * sizeof(double));
-                tf_oc[c] += k;
+                ac4d_rput_d(cx->tf_fifo[c], AC4D_SKN, cx->h_oc[c],
+                                e3_pcmbuf, k);
+                cx->h_oc[c] += k;
                 e3_pendn[c] = 0;
             }
             int k = imdct_flush(&e3_chst[c], e3_pcmbuf);
             if (k > 0) {
-                if (tf_oc[c] + k > (long)tf_cap) {
-                    *note = "stream-ovf";
-                    return -1;
-                }
-                memcpy(tf[c] + tf_oc[c], e3_pcmbuf,
-                       (size_t)k * sizeof(double));
-                tf_oc[c] += k;
+                ac4d_rput_d(cx->tf_fifo[c], AC4D_SKN, cx->h_oc[c],
+                                e3_pcmbuf, k);
+                cx->h_oc[c] += k;
             }
         }
     } else {
@@ -6843,12 +7281,14 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                     *note = e;
                     return -1;
                 }
-                for (int j = 0; j < k; j++)
-                    lr[c][oc[c] + j] =
+                for (int j = 0; j < k; j++) {
+                    double v =
                         (nch == 8 && e3_imm_mode >= 0 && c >= 6 && !getenv("AC4DEC_KEEP67"))
-                            ? 0
-                            : e3_s16[j];
-                oc[c] += k;
+                            ? 0.0
+                            : e3_pcmbuf[j];
+                    cx->sk_fifo[c][(cx->h_oc[c] + j) % AC4D_SKN] = v;
+                }
+                cx->h_oc[c] += k;
                 e3_pendn[c] = 0;
             }
             int k = imdct_flush(&e3_chst[c], e3_pcmbuf);
@@ -6870,589 +7310,350 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
             if (e3_spill_on && c >= 4 && c < 8 && k > 0) {
                 /* Drain-tail spill (post-pass mirror). */
                 int q = c - 4;
-                if (!e3_spill[q]) {
-                    e3_spill[q] = malloc(e3_spill_cap * sizeof(double));
-                    e3_spill_oc[q] = 0;
-                }
-                if (!e3_spill[q] ||
-                    e3_spill_oc[q] + k > (long)e3_spill_cap) {
-                    e3_imm_elig = 0;
-                } else {
-                    memcpy(e3_spill[q] + e3_spill_oc[q], e3_pcmbuf,
-                           (size_t)k * sizeof(double));
-                    e3_spill_oc[q] += k;
-                }
+                ac4d_rput_d(cx->sp3[q], AC4D_SPN, e3_spill_oc[q],
+                                e3_pcmbuf, k);
+                e3_spill_oc[q] += k;
             }
             if (e5_spill_on && c >= 0 && c < 2 && k > 0) {
                 /* 5x drain-tail spill (mirror). */
-                if (!e5_spill[c]) {
-                    e5_spill[c] = malloc(e3_spill_cap * sizeof(double));
-                    e5_spill_oc[c] = 0;
-                }
-                if (!e5_spill[c] ||
-                    e5_spill_oc[c] + k > (long)e3_spill_cap) {
-                    e5_acpl_elig = 0;
-                } else {
-                    memcpy(e5_spill[c] + e5_spill_oc[c], e3_pcmbuf,
-                           (size_t)k * sizeof(double));
-                    e5_spill_oc[c] += k;
-                }
+                ac4d_rput_d(cx->sp5[c], AC4D_SPN, e5_spill_oc[c],
+                                e3_pcmbuf, k);
+                e5_spill_oc[c] += k;
             }
-            for (int j = 0; j < k; j++)
-                lr[c][oc[c] + j] =
+            for (int j = 0; j < k; j++) {
+                double v =
                     (nch == 8 && e3_imm_mode >= 0 && c >= 6 && !getenv("AC4DEC_KEEP67"))
-                        ? 0
-                        : imdct_d2s16(e3_pcmbuf[j] * e3_dngain);
-            oc[c] += k;
+                        ? 0.0
+                        : e3_pcmbuf[j];
+                cx->sk_fifo[c][(cx->h_oc[c] + j) % AC4D_SKN] = v;
+            }
+            cx->h_oc[c] += k;
         }
     }
-    if (tf[0]) {
-        /* Stream-mix: verify uniform stream lengths, mix to lr. */
-        long outs = tf_oc[0];
+    if (cx->tf_used) {
+        /* Stream-mix uniformity (mix itself runs per-frame at
+         * consume; total-length check happens at flush end). */
+        long outs = cx->h_oc[0];
         for (int c = 1; c < 12; c++) {
-            if (tf_oc[c] != outs) {
-                for (int q = 0; q < nch; q++)
-                    free(lr[q]);
-                for (int q = 0; q < 12; q++)
-                    free(tf[q]);
+            if (cx->h_oc[c] != outs) {
                 *note = "streamlen-mismatch";
                 return -1;
             }
         }
-        if (outs > (long)(nraw * (size_t)spf)) {
-            for (int q = 0; q < nch; q++)
-                free(lr[q]);
-            for (int q = 0; q < 12; q++)
-                free(tf[q]);
-            *note = "stream-ovf";
-            return -1;
-        }
-        const double *s[12];
-        for (int c = 0; c < 12; c++)
-            s[c] = tf[c];
-        e3_mix12p(s, 0, outs, lr, oc);
-        for (int c = 0; c < 12; c++) {
-            free(tf[c]);
-            tf[c] = NULL;
-        }
+        (void)outs;
     }
-    /* counts must equal frames*spf; write interleaved */
-    long outsamp = oc[0];
-    for (int c = 1; c < nch; c++) {
-        if (oc[c] != outsamp) {
-            for (int q = 0; q < nch; q++)
-                free(lr[q]);
+    return 0;
+}
+
+/* Length-contract check at flush end (batch: end-of-decode check).
+ * Skipped under sticky silence (batch emitted no skeleton then). */
+static int ac4d_length_check(const char **note) {
+    ac4d_ctx *cx = _ac4d_self;
+    int nch = cx->tf_used ? 12 : cx->h_nch;
+    long outsamp, expect;
+    int c;
+    if (cx->h_gap_sticky)
+        return 0;
+    outsamp = cx->h_oc[0];
+    for (c = 1; c < nch; c++) {
+        if (cx->h_oc[c] != outsamp) {
             *note = "ch-length-mismatch";
             return -1;
         }
     }
-    if (outsamp != frames * (long)spf) {
-        for (int q = 0; q < nch; q++)
-            free(lr[q]);
+    expect = cx->h_fed * (long)cx->h_spf;
+    if (outsamp != expect) {
         *note = "length-mismatch";
         return -1;
     }
-    if (e3_imm_elig && nch == 8 && e3_apf_n == (size_t)frames &&
-        frames > 0) {
-        /* Immersive mode-3 post-pass: module surrounds overwrite the
-         * skeleton Ls/Rs. Spill (skeleton-scaled float) unscales by
-         * the same 2*sqrt(2), reframes to spf blocks, runs the QMF
-         * chain + fold, trims + overwrites lr[4..5]. Calibration
-         * (IN/HOLD/OUT offsets): all 0 (V1, measured next). */
-        int ok = 1;
-        for (int q = 0; q < 4 && ok; q++)
-            if (!e3_spill[q] || e3_spill_oc[q] < outsamp)
-                ok = 0;
-        if (ok) {
-            static const double UNSC = 2.0 * 1.4142135623730951;
-            acpl_imm_t imm;
-            acpl_imm_init(&imm);
-            double *blkD = malloc((size_t)spf * sizeof(double));
-            double *blkE = malloc((size_t)spf * sizeof(double));
-            double *blkF = malloc((size_t)spf * sizeof(double));
-            double *blkG = malloc((size_t)spf * sizeof(double));
-            double *blkL = malloc((size_t)spf * sizeof(double));
-            double *blkR = malloc((size_t)spf * sizeof(double));
-            if (!blkD || !blkE || !blkF || !blkG || !blkL || !blkR)
-                ok = 0;
-            /* AB-20 heights artifact (env-gated; mains unaffected by
-             * height failures): Tfl Tfr Tbl Tbr via the H out-block,
-             * same trim/dngain chain, separate 4ch s16 file. */
-            const char *hpath = getenv("AC4DEC_HEIGHTS");
-            double *blkH = NULL;
-            short *hr[4] = {NULL, NULL, NULL, NULL};
-            int hok = hpath ? 1 : 0;
-            if (hok) {
-                blkH = malloc((size_t)spf * 4 * sizeof(double));
-                for (int q = 0; q < 4; q++)
-                    hr[q] = malloc((size_t)outsamp * sizeof(short));
-                if (!blkH || !hr[0] || !hr[1] || !hr[2] || !hr[3])
-                    hok = 0;
-            }
-            /* IN_OFF = +577 (BANK_DELAY): SMP-frame boundaries sit 577
-             * past the streaming block grid (forced first-hand: module
-             * output aligns at 1791 = 2368 - 577). Last block zero-pads
-             * past spill end. */
-            for (long f = 0; f < frames && ok; f++) {
-                long base = f * (long)spf;
-                for (int j = 0; j < spf; j++) {
-                    long s = base + j + 577;
-                    double d = 0, e = 0, ff = 0, g = 0;
-                    if (s < outsamp) {
-                        d = e3_spill[0][s] / UNSC;
-                        e = e3_spill[1][s] / UNSC;
-                        ff = e3_spill[2][s];
-                        g = e3_spill[3][s];
-                    }
-                    blkD[j] = d;
-                    blkE[j] = e;
-                    blkF[j] = ff;
-                    blkG[j] = g;
-                }
-                acpl_imm_frame(&imm, blkD, blkE, blkF, blkG,
-                               e3_apf[f].m, spf, e3_apf[f].fold_div,
-                               blkL, blkR, hok ? blkH : NULL);
-                for (int j = 0; j < spf; j++) {
-                    lr[4][base + j] =
-                        imdct_d2s16(blkL[j] * e3_dngain);
-                    lr[5][base + j] =
-                        imdct_d2s16(blkR[j] * e3_dngain);
-                    if (hok)
-                        for (int q = 0; q < 4; q++)
-                            hr[q][base + j] = imdct_d2s16(
-                                blkH[q * spf + j] * e3_dngain);
-                }
-            }
-            free(blkD);
-            free(blkE);
-            free(blkF);
-            free(blkG);
-            free(blkL);
-            free(blkR);
-            if (hok) {
-                FILE *ho = fopen(hpath, "wb");
-                if (ho) {
-                    for (long t = 0; t < outsamp && hok; t++)
-                        for (int q = 0; q < 4; q++) {
-                            uint8_t le[2];
-                            le[0] = (uint8_t)(hr[q][t] & 0xff);
-                            le[1] =
-                                (uint8_t)((hr[q][t] >> 8) & 0xff);
-                            if (fwrite(le, 1, 2, ho) != 2)
-                                hok = 0;
-                        }
-                    fclose(ho);
-                } else {
-                    hok = 0;
-                }
-                for (int q = 0; q < 4; q++)
-                    free(hr[q]);
-                free(blkH);
-            }
-            if (e9_debug())
-                fprintf(stderr, "IMMPOST frames=%ld %s oc=%ld/%ld%s\n",
-                        frames, ok ? "applied" : "skipped",
-                        e3_spill_oc[0], e3_spill_oc[1],
-                        hpath ? (hok ? " heights-ok" : " heights-fail")
-                              : "");
-        } else if (e9_debug()) {
-            fprintf(stderr, "IMMPOST frames=%ld skipped-spill oc=%ld/%ld\n",
-                    frames, e3_spill_oc[0], e3_spill_oc[1]);
-        }
+    return 0;
+}
+
+/* Immersive mode-3 post-pass for ONE emit frame e (batch: whole-stream
+ * loop). dst = emit-stage s16 frame (skeleton in, surrounds overwritten).
+ * Runs the identical QMF chain in the identical frame order; spill reads
+ * use the current absolute oc as the zero-pad bound (batch outsamp).
+ * Heights artifact (AC4DEC_HEIGHTS) dropped in streaming (side file). */
+static int ac4d_pp_imm_emit(long e, double (*dst)[2048]) {
+    ac4d_ctx *cx = _ac4d_self;
+    static const double UNSC = 2.0 * 1.4142135623730951;
+    int spf = cx->h_spf;
+    int slot = (int)(e % AC4D_APFN);
+    long base = e * (long)spf;
+    double *blkD = cx->pp_blk[0], *blkE = cx->pp_blk[1];
+    double *blkF = cx->pp_blk[2], *blkG = cx->pp_blk[3];
+    double *blkL = cx->pp_blk[4], *blkR = cx->pp_blk[5];
+    int j;
+    if (!e3_imm_elig)
+        return 0; /* skeleton stands (batch: global skip) */
+    if (!cx->ap3[slot].have || cx->ap3[slot].fno != e)
+        return 0; /* no params this frame: skeleton stands */
+    for (int q = 0; q < 4; q++)
+        if (e3_spill_oc[q] < (e + 1) * (long)spf)
+            return 0; /* spill short: skeleton stands (batch-ward) */
+    /* Spill overwrite tripwire (oldest actually-read sample). */
+    for (int q = 0; q < 4; q++)
+        if (base + 577 < e3_spill_oc[q] &&
+            e3_spill_oc[q] - (base + 577) > AC4D_SPN)
+            return -1;
+    /* IN_OFF = +577 (BANK_DELAY, same as batch). */
+    for (j = 0; j < spf; j++) {
+        long s = base + j + 577;
+        double d = 0, ee = 0, ff = 0, g = 0;
+        if (s < e3_spill_oc[0])
+            d = ac4d_rget_d(cx->sp3[0], AC4D_SPN, s) / UNSC;
+        if (s < e3_spill_oc[1])
+            ee = ac4d_rget_d(cx->sp3[1], AC4D_SPN, s) / UNSC;
+        if (s < e3_spill_oc[2])
+            ff = ac4d_rget_d(cx->sp3[2], AC4D_SPN, s);
+        if (s < e3_spill_oc[3])
+            g = ac4d_rget_d(cx->sp3[3], AC4D_SPN, s);
+        blkD[j] = d;
+        blkE[j] = ee;
+        blkF[j] = ff;
+        blkG[j] = g;
     }
-    if (nch == 6 && e5_need_postpass && e5_acpl_elig &&
-        e5_apf_n == (size_t)frames && frames > 0) {
-        /* 5x mode-3 post-pass (AB-12 straight map, NO fold): module
-         * outputs overwrite skeleton L/R/Ls/Rs. Spill (L/R leg
-         * float) reframes to spf blocks, runs the QMF chain, and
-         * overwrites lr[0,1,4,5]; C/LFE (slots 2,3) pass through.
-         * IN_OFF = +577 (BANK_DELAY, same QMF roundtrip as 714:
-         * forced first-hand, 51-2s xcorr D=577 all of L/R/Ls/Rs).
-         * Success clears e5_need_postpass (real output falls
-         * through). */
-        int ok5x = 1;
-        for (int q = 0; q < 2 && ok5x; q++)
-            if (!e5_spill[q] || e5_spill_oc[q] < outsamp)
-                ok5x = 0;
-        if (ok5x) {
-            acpl_5x_t st5;
-            acpl_5x_init(&st5);
-            double *bL = malloc((size_t)spf * sizeof(double));
-            double *bR = malloc((size_t)spf * sizeof(double));
-            double *bOL = malloc((size_t)spf * sizeof(double));
-            double *bOR = malloc((size_t)spf * sizeof(double));
-            double *bOLs = malloc((size_t)spf * sizeof(double));
-            double *bORs = malloc((size_t)spf * sizeof(double));
-            if (!bL || !bR || !bOL || !bOR || !bOLs || !bORs)
-                ok5x = 0;
-            for (long f = 0; f < frames && ok5x; f++) {
-                long base = f * (long)spf;
-                for (int j = 0; j < spf; j++) {
-                    long s = base + j + 577;
-                    bL[j] = s < outsamp ? e5_spill[0][s] : 0.0;
-                    bR[j] = s < outsamp ? e5_spill[1][s] : 0.0;
-                }
-                acpl_5x_frame(&st5, bL, bR, e5_apf[f].m, spf, bOL,
-                              bOR, bOLs, bORs);
-                for (int j = 0; j < spf; j++) {
-                    lr[0][base + j] =
-                        imdct_d2s16(bOL[j] * e3_dngain);
-                    lr[1][base + j] =
-                        imdct_d2s16(bOR[j] * e3_dngain);
-                    lr[4][base + j] =
-                        imdct_d2s16(bOLs[j] * e3_dngain);
-                    lr[5][base + j] =
-                        imdct_d2s16(bORs[j] * e3_dngain);
-                }
-            }
-            free(bL);
-            free(bR);
-            free(bOL);
-            free(bOR);
-            free(bOLs);
-            free(bORs);
-            if (e9_debug())
-                fprintf(stderr, "5XPOST frames=%ld %s\n", frames,
-                        ok5x ? "applied" : "skipped");
-        } else if (e9_debug()) {
-            fprintf(stderr,
-                    "5XPOST frames=%ld skipped-spill oc=%ld/%ld apf=%zu\n",
-                    frames, e5_spill_oc[0], e5_spill_oc[1], e5_apf_n);
-        }
-        if (ok5x)
-            e5_need_postpass = 0;
+    acpl_imm_frame(&cx->pp_imm, blkD, blkE, blkF, blkG, cx->ap3[slot].m,
+                   spf, cx->ap3[slot].fold_div, blkL, blkR, NULL,
+                   &cx->acpl);
+    for (j = 0; j < spf; j++) {
+        dst[4][j] = blkL[j]; /* pre-gain: gain at emit */
+        dst[5][j] = blkR[j];
     }
-    /* Companding post-pass v2 (5.7.5.2, mono/stereo/5x ASPX core-PCM):
-     * per-frame gated QMF analysis -> per-slot adaptive gains over
-     * [0,sbx) -> QMF synthesis, with 577-sample delay compensation
-     * (zero net delay). Gains apply on ASPX-interval slots only.
-     * Off-channels with b_compand_avg take the avg-held gain (A-13:
-     * G*(mean interval L)^ex; sync variant G*mean(means)); pure-off
-     * channels (avg=0) keep bit-exact lr. QMF state runs continuously
-     * from frame 0. 5x map Table-212 (A-18b): compand(5)->[L,R,C,Ls,
-     * Rs], compand(3)->[L,R,C]; LFE never. Gated AC4DEC_NOCMP=1 off.
-     * Probes: CMPUNITY (m=1, forces the run, writes all companded
-     * slots = QMF-roundtrip check; must reproduce NOCMP bit-exact),
-     * CMPINV (m=1/gG on on-frames), CMPCENSUS (per-frame record dump),
-     * CMPDUMP=f (per-slot L/g/m + avg triples), CMPFULLINT=1 (force
-     * full-frame interval [0,slots), interval-edge probe), CMPAVGALL=1
-     * (avg-held mavg applies all slots, on-path interval-kept),
-     * CMPGAINHOLD=1 (off-interval slots hold last applied gain;
-     * pure-off resets hold to 1.0), CMPFOL=a,r (one-pole attack/
-     * release follower on L; 1.0,1.0 = off), CMPGDEL=k (apply
-     * m[ts-k] to Q[ts], per-channel FIFO, 0..16; 0 = off),
-     * CMPUNSHIFT=1 (writeback +0, lagging; map absorbs +577),
-     * CMPPREWARM=1/2/3 (bank pre-roll: 1 = own frame f0 only,
-     * 2 = own frame every frame; 3 = own 640-tail every frame;
-     * 4 = mirror-head attack-gated every frame; 0 = off),
-     * CMPONSETAVG=1 (attack-gated uniform hot-mean on chon frames),
-     * CMPFLOORSKIP=1 (attack-gated skip of sub-unity m).
-     * REVERTED to probe-gated (duet18 2b, closej23/forx23 B1): FLAT —
-     * gap-chon + unity-tail + dip-head + flat-peak (maxm < 1.2) —
-     * heals s2s-f1-ch0 ([9,6,4,3]) but destroys ch1 (2-4x; m-twins
-     * opposite-effect = content-geometry beyond m-gating). s2s-attack
-     * routes core-lane (pointer: f1-off bed + for18 forensics).
-     * CMPFLAT=1 re-enables (diagnostic); default OFF (zero regress). */
-    {
+    if (e9_debug())
+        fprintf(stderr, "IMMPOST f=%ld applied oc=%ld/%ld\n", e,
+                e3_spill_oc[0], e3_spill_oc[1]);
+    return 0;
+}
+
+/* 5x mode-3 post-pass for ONE emit frame e. Skeleton L/R/Ls/Rs
+ * overwritten on success. Sets *gap when batch would fail the whole
+ * decode (elig killed with params present) so the caller latches
+ * sticky silence (batch: rewind to full stub). */
+static int ac4d_pp_5x_emit(long e, double (*dst)[2048], int *gap) {
+    ac4d_ctx *cx = _ac4d_self;
+    int spf = cx->h_spf;
+    int slot = (int)(e % AC4D_APFN);
+    long base = e * (long)spf;
+    double *bL = cx->pp_blk[0], *bR = cx->pp_blk[1];
+    double *bOL = cx->pp_blk[2], *bOR = cx->pp_blk[3];
+    double *bOLs = cx->pp_blk[4], *bORs = cx->pp_blk[5];
+    int j;
+    *gap = 0;
+    if (!cx->ap5[slot].have || cx->ap5[slot].fno != e)
+        return 0; /* no params this frame: skeleton stands */
+    if (!e5_acpl_elig) {
+        *gap = 1; /* batch: -1 5x-acpl-unimpl -> full stub */
+        return 0;
+    }
+    for (int q = 0; q < 2; q++)
+        if (e5_spill_oc[q] < (e + 1) * (long)spf) {
+            *gap = 1; /* batch: spill-short -> -1 -> full stub */
+            return 0;
+        }
+    /* Spill overwrite tripwire (oldest actually-read sample). */
+    for (int q = 0; q < 2; q++)
+        if (base + 577 < e5_spill_oc[q] &&
+            e5_spill_oc[q] - (base + 577) > AC4D_SPN)
+            return -1;
+    for (j = 0; j < spf; j++) {
+        long s = base + j + 577;
+        bL[j] = s < e5_spill_oc[0]
+            ? ac4d_rget_d(cx->sp5[0], AC4D_SPN, s)
+            : 0.0;
+        bR[j] = s < e5_spill_oc[1]
+            ? ac4d_rget_d(cx->sp5[1], AC4D_SPN, s)
+            : 0.0;
+    }
+    acpl_5x_frame(&cx->pp_5x, bL, bR, cx->ap5[slot].m, spf, bOL, bOR,
+                  bOLs, bORs, &cx->acpl);
+    for (j = 0; j < spf; j++) {
+        dst[0][j] = bOL[j]; /* pre-gain: gain at emit */
+        dst[1][j] = bOR[j];
+        dst[4][j] = bOLs[j];
+        dst[5][j] = bORs[j];
+    }
+    if (e9_debug())
+        fprintf(stderr, "5XPOST f=%ld applied\n", e);
+    return 0;
+}
+/* Compand env snapshot (batch read once per decode; CMPLEAD
+ * dropped: whole-stream pre-pass has no streaming form). */
+static void ac4d_cmp_snapshot(void) {
+    ac4d_ctx *cx = _ac4d_self;
         const char *ncp = getenv("AC4DEC_NOCMP");
-        int nocmp = ncp && ncp[0] == '1';
+        cx->ce_nocmp = ncp && ncp[0] == '1';
         const char *ucp = getenv("AC4DEC_CMPUNITY");
-        int unity = ucp && ucp[0] == '1';
+        cx->ce_unity = ucp && ucp[0] == '1';
         const char *icp = getenv("AC4DEC_CMPINV");
-        int inv = icp && icp[0] == '1';
+        cx->ce_inv = icp && icp[0] == '1';
         const char *ccp = getenv("AC4DEC_CMPCENSUS");
-        int census = ccp && ccp[0] == '1';
+        cx->ce_census = ccp && ccp[0] == '1';
         const char *dcp = getenv("AC4DEC_CMPDUMP");
-        long dumpf = dcp ? strtol(dcp, NULL, 10) : -1;
+        cx->ce_dumpf = dcp ? strtol(dcp, NULL, 10) : -1;
         const char *fip = getenv("AC4DEC_CMPFULLINT");
-        int fullint = fip && fip[0] == '1';
+        cx->ce_fullint = fip && fip[0] == '1';
         const char *aap = getenv("AC4DEC_CMPAVGALL");
-        int avgall = aap && aap[0] == '1';
+        cx->ce_avgall = aap && aap[0] == '1';
         const char *ghp = getenv("AC4DEC_CMPGAINHOLD");
-        int gainhold = ghp && ghp[0] == '1';
+        cx->ce_gainhold = ghp && ghp[0] == '1';
         const char *gdp = getenv("AC4DEC_CMPGDEL");
-        long gdel = gdp ? strtol(gdp, NULL, 10) : 0;
-        if (gdel < 0 || gdel > 16)
-            gdel = 0;
+        cx->ce_gdel = gdp ? strtol(gdp, NULL, 10) : 0;
+        if (cx->ce_gdel < 0 || cx->ce_gdel > 16)
+            cx->ce_gdel = 0;
         const char *usp = getenv("AC4DEC_CMPUNSHIFT");
-        int unshift = usp && usp[0] == '1';
+        cx->ce_unshift = usp && usp[0] == '1';
         const char *pwp = getenv("AC4DEC_CMPPREWARM");
-        long prewarm = pwp ? strtol(pwp, NULL, 10) : 0;
-        if (prewarm < 0 || prewarm > 4)
-            prewarm = 0;
+        cx->ce_prewarm = pwp ? strtol(pwp, NULL, 10) : 0;
+        if (cx->ce_prewarm < 0 || cx->ce_prewarm > 4)
+            cx->ce_prewarm = 0;
         const char *oap = getenv("AC4DEC_CMPONSETAVG");
-        int onsetavg = oap && oap[0] == '1';
+        cx->ce_onsetavg = oap && oap[0] == '1';
         const char *skp = getenv("AC4DEC_CMPFLOORSKIP");
-        int floorskip = skp && skp[0] == '1';
+        cx->ce_floorskip = skp && skp[0] == '1';
         const char *nfp = getenv("AC4DEC_CMPFLAT");
-        int useflat = nfp && nfp[0] == '1';
+        cx->ce_useflat = nfp && nfp[0] == '1';
         const char *fop = getenv("AC4DEC_CMPFRAMEOFF");
-        long frameoff = fop ? strtol(fop, NULL, 10) : -1;
+        cx->ce_frameoff = fop ? strtol(fop, NULL, 10) : -1;
         const char *fo2 = getenv("AC4DEC_CMPFRAMEOF2");
-        long frameof2 = fo2 ? strtol(fo2, NULL, 10) : -1;
+        cx->ce_frameof2 = fo2 ? strtol(fo2, NULL, 10) : -1;
         const char *flp = getenv("AC4DEC_CMPFOL");
-        double fol_a = 1.0, fol_r = 1.0;
-        int usofol = 0;
+        cx->ce_fol_a = 1.0;
+        cx->ce_fol_r = 1.0;
+        cx->ce_usofol = 0;
         if (flp && flp[0]) {
             double a = 1.0, r = 1.0;
             if (sscanf(flp, "%lf,%lf", &a, &r) == 2 && a > 0.0 &&
                 a <= 1.0 && r > 0.0 && r <= 1.0) {
-                fol_a = a;
-                fol_r = r;
-                usofol = (a < 1.0 || r < 1.0);
+                cx->ce_fol_a = a;
+                cx->ce_fol_r = r;
+                cx->ce_usofol = (a < 1.0 || r < 1.0);
             }
         }
-        const char *ldp = getenv("AC4DEC_CMPLEAD");
-        long leadk = ldp ? strtol(ldp, NULL, 10) : -1;
-        if (leadk < 0 || leadk > 64)
-            leadk = -1;
         const char *dmp = getenv("AC4DEC_CMPDAMP");
-        double dampf = dmp ? strtod(dmp, NULL) : -1.0;
-        if (dampf < 0.0 || dampf > 1.0)
-            dampf = -1.0;
+        cx->ce_dampf = dmp ? strtod(dmp, NULL) : -1.0;
+        if (cx->ce_dampf < 0.0 || cx->ce_dampf > 1.0)
+            cx->ce_dampf = -1.0;
         /* Hot-gap-fill (duet26 Track-G LANDING, P1g/A-46):
          * default ON (kill-switch AC4DEC_CMPHOTFILL=0).
          * Gap slots take computed-m/mavg iff >= 1.0. Heals
          * M2-notch + M2/M7-trail to DRP-exact (M2 15.5->2.4,
          * M7 11.7->2.5), keeps s2s-cliff (f48 cold-kept). */
         const char *hfp = getenv("AC4DEC_CMPHOTFILL");
-        int hotfill = !(hfp && hfp[0] == '0');
+        cx->ce_hotfill = !(hfp && hfp[0] == '0');
         const char *slp = getenv("AC4DEC_CMPSLEW");
-        double slewrate = slp ? strtod(slp, NULL) : -1.0;
-        if (slewrate < 0.0)
-            slewrate = -1.0;
+        cx->ce_slewrate = slp ? strtod(slp, NULL) : -1.0;
+        if (cx->ce_slewrate < 0.0)
+            cx->ce_slewrate = -1.0;
         /* CMPUNITYF=f[,ts0,ts1] (duet26 atomic fork-(i), v2 range):
          * frame-f (slots [ts0,ts1), default whole frame) post-pass
          * OFF (Q passthrough, bank-transparent NOCMP). Default
          * unset = untouched. */
         const char *ufp = getenv("AC4DEC_CMPUNITYF");
-        long unityf = -1, unityt0 = 0, unityt1 = 32;
+        cx->ce_unityf = -1;
+        cx->ce_unityt0 = 0;
+        cx->ce_unityt1 = 32;
         if (ufp && ufp[0]) {
             long a = -1, b = 0, c = 32;
             int nn = sscanf(ufp, "%ld,%ld,%ld", &a, &b, &c);
             if (nn >= 1 && a >= 0) {
-                unityf = a;
+                cx->ce_unityf = a;
                 if (nn == 3 && b >= 0 && c > b) {
-                    unityt0 = b;
-                    unityt1 = c;
+                    cx->ce_unityt0 = b;
+                    cx->ce_unityt1 = c;
                 }
             }
         }
-        int any_on = 0;
-        for (int c = 0; c < nch && c < 8; c++)
-            if (e3_cmp_on[c]) any_on = 1;
-        if (census)
-            for (long f = 0; f < frames && f < e3_cmp_n; f++)
-                fprintf(stderr,
-                        "CMPC f=%ld on=%u avg=%u syn=%u xov=%d/%d/%d "
-                        "cfg=%d/%d/%d codec=%d m2=%d\n",
-                        f, e3_cmp_onm[f], e3_cmp_avg[f], e3_cmp_syn[f],
-                        e3_cmp_xov[0][f], e3_cmp_xov[1][f],
-                        e3_cmp_xov[2][f], e3_cmp_mfs[f], e3_cmp_sta[f],
-                        e3_cmp_sto[f], e3_cmp_codec[f], e3_cmp_m2[f]);
-        if (!nocmp && (any_on || unity) &&
-            (nch == 1 || nch == 2 || nch == 6)) {
-            int slots = qmf_slots(spf);
-            if (slots > 0 && slots <= 32 &&
-                (long)slots * 64 == (long)spf && frames > 0) {
-                static qmf_state_t qs[8];
-                for (int c = 0; c < 8; c++)
-                    qmf_init(&qs[c]);
-                /* per-frame-per-xslot sbx from recorded SBG config
-                 * + xover index (A-11: e_ax_xover is an index into
-                 * the sbg_master grid, not a subband). -1 = bypass. */
-                int (*sb1x)[3] =
-                    malloc((size_t)frames * 3 * sizeof(int));
-                double G = pow(2.0, 1.0 / 0.65);
-                double ex = (1.0 - 0.65) / 0.65;
-                if (sb1x) {
-                    for (long f = 0; f < frames; f++) {
-                        for (int xs = 0; xs < 3; xs++) {
-                            int sb1 = -1;
-                            if (f < e3_cmp_n && e3_cmp_xov[xs][f] >= 0) {
-                                e_ax_cfg_t cf;
-                                int tab[23], num = 0, sbz = 0;
-                                memset(&cf, 0, sizeof cf);
-                                cf.mfscale = e3_cmp_mfs[f];
-                                cf.start = e3_cmp_sta[f];
-                                cf.stop = e3_cmp_sto[f];
-                                if (e_ax_master(&cf, tab, &num, &sbz) == 0 &&
-                                    e3_cmp_xov[xs][f] <= num)
-                                    sb1 = tab[e3_cmp_xov[xs][f]];
-                            }
-                            if (sb1 < 1 || sb1 > 64)
-                                sb1 = -1;
-                            sb1x[f][xs] = sb1;
-                        }
-                    }
-                }
-                long N = frames * (long)spf;
-                double *fp = malloc((size_t)spf * sizeof(double));
-                double complex (*Q)[64] =
-                    malloc((size_t)8 * (size_t)slots * 64 *
-                           sizeof(double complex));
-                /* raw[c][t]: synthesis output per channel incl.
-                 * 640-sample zero flush for delay compensation. */
-                double *raw = malloc((size_t)nch * (size_t)(N + 640) *
-                                     sizeof(double));
-                /* Pre-DN NORMALIZED float: e3_dngain carries the S16
-                 * norm (measured dn = trim/32768, Q-14), so true trim
-                 * T = dn*32768 and normalized fp = lr/(32768*T).
-                 * (A-11's 1b6811d blessing assumed dn==trim; the
-                 * ba8eb99 scale was the normalized one all along.) */
-                double trim = e3_dngain * 32768.0;
-                double pre = trim != 0.0 ? 1.0 / trim / 32768.0
-                                         : 1.0 / 32768.0;
-                if (sb1x && fp && Q && raw) {
-                    int qrun[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-                    double held[8] = {1.0, 1.0, 1.0, 1.0,
-                                      1.0, 1.0, 1.0, 1.0};
-                    double folsm[8] = {0.0, 0.0, 0.0, 0.0,
-                                       0.0, 0.0, 0.0, 0.0};
-                    double slewsm[8] = {0.0, 0.0, 0.0, 0.0,
-                                        0.0, 0.0, 0.0, 0.0};
-                    double gfifo[8][16];
-                    int gatefifo[8][16];
-                    int gpos[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-                    for (int c = 0; c < 8; c++)
-                        for (int i = 0; i < 16; i++) {
-                            gfifo[c][i] = 1.0;
-                            gatefifo[c][i] = 0;
-                        }
-                    /* CMPLEAD pre-pass (duet26 P1h discriminant):
-                     * analysis+L over ALL frames into ggall, on a
-                     * SEPARATE bank state (main loop untouched). The
-                     * apply then reads g at global slot s+k. k=0
-                     * MUST be bit-identical to base (validates this
-                     * mirror). mavg/flat-gate/dumps stay on the main
-                     * loop's un-led gg/LL by design. */
-                    double (*ggall)[8][32] = NULL;
-                    if (leadk >= 0 && frames > 0) {
-                        ggall = calloc((size_t)frames, sizeof *ggall);
-                    }
-                    if (ggall) {
-                        static qmf_state_t qsa[8];
-                        double folsmp[8] = {0.0, 0.0, 0.0, 0.0,
-                                            0.0, 0.0, 0.0, 0.0};
-                        double complex (*Qp)[64] =
-                            malloc((size_t)8 * (size_t)slots * 64 *
-                                   sizeof(double complex));
-                        for (int c = 0; c < 8; c++)
-                            qmf_init(&qsa[c]);
-                        if (Qp) {
-                            for (long pf = 0; pf < frames; pf++) {
-                                int pcodec = (pf < e3_cmp_n)
-                                    ? e3_cmp_codec[pf]
-                                    : 0;
-                                int pm2v = (pf < e3_cmp_n)
-                                    ? e3_cmp_m2[pf]
-                                    : -1;
-                                int pci[8], pw[8], pxs[8];
-                                for (int c = 0; c < nch; c++)
-                                    pci[c] = e3_cmp_slotmap(
-                                        nch, pcodec, pm2v, c, &pw[c],
-                                        &pxs[c]);
-                                for (int c = 0; c < nch; c++) {
-                                    if (pci[c] < 0)
-                                        continue;
-                                    int psb1 = sb1x[pf][pxs[c]];
-                                    for (long j = 0; j < spf; j++)
-                                        fp[j] = (double)lr[c][pf * spf +
-                                                              j] *
-                                                pre;
-                                    if (prewarm == 2 ||
-                                        (prewarm == 1 && pf == 0))
-                                        qmf_analysis(fp, slots, &qsa[c],
-                                                     &Qp[c * slots]);
-                                    if (prewarm == 3 && spf >= 640) {
-                                        double ptail[640];
-                                        for (long j = 0; j < 640; j++)
-                                            ptail[j] =
-                                                (double)lr[c][pf * spf +
-                                                             spf - 640 +
-                                                             j] *
-                                                pre;
-                                        qmf_analysis(ptail, 10, &qsa[c],
-                                                     &Qp[c * slots]);
-                                    }
-                                    if (prewarm == 4 && spf >= 640 &&
-                                        pre > 0.0) {
-                                        double phe = 0.0, pse = 0.0;
-                                        for (long j = 0; j < 640; j++) {
-                                            double h =
-                                                (double)lr[c][pf * spf +
-                                                             j];
-                                            phe += h * h;
-                                            pse += qsa[c].afilt[j] *
-                                                   qsa[c].afilt[j];
-                                        }
-                                        phe = sqrt(phe / 640.0);
-                                        pse = sqrt(pse / 640.0) / pre;
-                                        if (phe > 50.0 &&
-                                            phe > 10.0 * pse) {
-                                            double pmir[640];
-                                            for (long j = 0; j < 640;
-                                                 j++)
-                                                pmir[j] =
-                                                    (double)lr[c]
-                                                           [pf * spf +
-                                                            639 - j] *
-                                                    pre;
-                                            qmf_analysis(pmir, 10,
-                                                         &qsa[c],
-                                                         &Qp[c * slots]);
-                                        }
-                                    }
-                                    qmf_analysis(fp, slots, &qsa[c],
-                                                 &Qp[c * slots]);
-                                    for (int ts = 0; ts < slots; ts++) {
-                                        double pL = 0.0;
-                                        if (psb1 > 0) {
-                                            for (int sb = 0; sb < psb1;
-                                                 sb++) {
-                                                double complex v =
-                                                    Qp[c * slots +
-                                                       ts][sb];
-                                                double re = creal(v);
-                                                double im = cimag(v);
-                                                double ar =
-                                                    re < 0 ? -re : re;
-                                                double ai =
-                                                    im < 0 ? -im : im;
-                                                double mx =
-                                                    ar > ai ? ar : ai;
-                                                double mn =
-                                                    ar > ai ? ai : ar;
-                                                pL += mx + 0.5 * mn;
-                                            }
-                                            pL = 0.9105 * pL /
-                                                 (double)psb1;
-                                        }
-                                        if (usofol) {
-                                            double pk =
-                                                pL > folsmp[c] ? fol_a
-                                                               : fol_r;
-                                            folsmp[c] +=
-                                                pk * (pL - folsmp[c]);
-                                            pL = folsmp[c];
-                                        }
-                                        ggall[pf][c][ts] =
-                                            pL > 1e-12 ? pow(pL, ex)
-                                                       : 0.0;
-                                    }
-                                }
-                            }
-                        }
-                        free(Qp);
-                        if (!Qp) {
-                            free(ggall);
-                            ggall = NULL;
-                        }
-                    }
-                    /* frame loop, channels in lockstep (sync-mean
-                     * needs all channels' g per slot). Slots that
-                     * never compand (LFE, parked) skip the bank. */
-                    for (long f = 0; f < frames; f++) {
+    /* FADE0 (batch: once per decode; applied per emit frame). */
+    {
+        const char *fp = getenv("AC4DEC_FADE0");
+        cx->ce_fade0 = fp ? strtol(fp, NULL, 10) : 0;
+    }
+}
+
+/* sb1 for one (frame, xslot) (batch: precomputed table). */
+static int ac4d_cmp_sb1(long f, int xs) {
+    int sb1 = -1;
+    if (f < e3_cmp_n && e3_cmp_xov[xs][f] >= 0) {
+        e_ax_cfg_t cf;
+        int tab[23], num = 0, sbz = 0;
+        memset(&cf, 0, sizeof cf);
+        cf.mfscale = e3_cmp_mfs[f];
+        cf.start = e3_cmp_sta[f];
+        cf.stop = e3_cmp_sto[f];
+        if (e_ax_master(&cf, tab, &num, &sbz) == 0 &&
+            e3_cmp_xov[xs][f] <= num)
+            sb1 = tab[e3_cmp_xov[xs][f]];
+    }
+    if (sb1 < 1 || sb1 > 64)
+        sb1 = -1;
+    return sb1;
+}
+/* Scoped short names for the compand bodies (batch locals kept
+ * verbatim; continuous state + env snapshot live in the ctx). */
+#define cmp_fp (cx->cmp_fp)
+#define cmp_Q (cx->cmp_Q)
+#define fp cmp_fp
+#define Q cmp_Q
+#define qrun (cx->cmp_qrun)
+#define held (cx->cmp_held)
+#define folsm (cx->cmp_folsm)
+#define slewsm (cx->cmp_slewsm)
+#define gfifo (cx->cmp_gfifo)
+#define gatefifo (cx->cmp_gatefifo)
+#define gpos (cx->cmp_gpos)
+#define cmpG (cx->ce_G)
+#define cmpex (cx->ce_ex)
+#define G cmpG
+#define ex cmpex
+#define slots (cx->ce_slots)
+#define unity (cx->ce_unity)
+#define inv (cx->ce_inv)
+#define census (cx->ce_census)
+#define dumpf (cx->ce_dumpf)
+#define fullint (cx->ce_fullint)
+#define avgall (cx->ce_avgall)
+#define gainhold (cx->ce_gainhold)
+#define gdel (cx->ce_gdel)
+#define unshift (cx->ce_unshift)
+#define prewarm (cx->ce_prewarm)
+#define onsetavg (cx->ce_onsetavg)
+#define floorskip (cx->ce_floorskip)
+#define useflat (cx->ce_useflat)
+#define frameoff (cx->ce_frameoff)
+#define frameof2 (cx->ce_frameof2)
+#define fol_a (cx->ce_fol_a)
+#define fol_r (cx->ce_fol_r)
+#define usofol (cx->ce_usofol)
+#define dampf (cx->ce_dampf)
+#define hotfill (cx->ce_hotfill)
+#define slewrate (cx->ce_slewrate)
+#define unityf (cx->ce_unityf)
+#define unityt0 (cx->ce_unityt0)
+#define unityt1 (cx->ce_unityt1)
+
+/* Compand analyze for ONE frame f (batch: per-f iteration of the
+ * apply loop). Input = staged frame in fr_s16 (postpassed for 5x);
+ * the QMF bank runs continuously from frame 0 exactly as in batch.
+ * Always-run when eligible (ce_on): off-frames take no writeback so
+ * bytes match the batch whole-stream OR gate. */
+static void ac4d_cmp_analyze(long f) {
+    ac4d_ctx *cx = _ac4d_self;
+    int nch = cx->h_nch;
+    int spf = cx->h_spf;
+    double trim = e3_dngain * 32768.0;
+    double pre = trim != 0.0 ? 1.0 / trim / 32768.0 : 1.0 / 32768.0;
+    (void)trim;
+    if (!cx->ce_on)
+        return;
+    if (census && f < e3_cmp_n)
+        fprintf(stderr,
+                "CMPC f=%ld on=%u avg=%u syn=%u xov=%d/%d/%d "
+                "cfg=%d/%d/%d codec=%d m2=%d\n",
+                f, e3_cmp_onm[f], e3_cmp_avg[f], e3_cmp_syn[f],
+                e3_cmp_xov[0][f], e3_cmp_xov[1][f],
+                e3_cmp_xov[2][f], e3_cmp_mfs[f], e3_cmp_sta[f],
+                e3_cmp_sto[f], e3_cmp_codec[f], e3_cmp_m2[f]);
                         int syn = (f < e3_cmp_n) ? e3_cmp_syn[f] : 0;
                         int codec = (f < e3_cmp_n) ? e3_cmp_codec[f] : 0;
                         int m2v = (f < e3_cmp_n) ? e3_cmp_m2[f] : -1;
@@ -7479,7 +7680,7 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                                 if (fullint) {
                                     st0[c] = 0;
                                     st1[c] = slots;
-                                } else if (sb1x && f < e3_cmp_n &&
+                                } else if (f < e3_cmp_n &&
                                            wire >= 0 && wire < 5) {
                                     int axt = e_ax_timeslots(spf);
                                     int nnta =
@@ -7509,27 +7710,26 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                             if (ci_of[c] < 0)
                                 continue;
                             qrun[c] = 1;
-                            int sb1 = sb1x[f][xs_of[c]];
+                            int sb1 = ac4d_cmp_sb1(f, xs_of[c]);
                             for (long j = 0; j < spf; j++)
-                                fp[j] = (double)lr[c][f * spf + j] * pre;
+                                fp[j] = (double)cx->fr_s16[c][j] * pre;
                             if (prewarm == 2 || (prewarm == 1 && f == 0))
-                                qmf_analysis(fp, slots, &qs[c],
+                                qmf_analysis(fp, slots, &(cx->cmp_qs)[c],
                                              &Q[c * slots]);
                             if (prewarm == 3 && spf >= 640) {
                                 double tail[640];
                                 for (long j = 0; j < 640; j++)
-                                    tail[j] = (double)lr[c][f * spf + spf -
-                                                           640 + j] *
+                                    tail[j] = (double)cx->fr_s16[c][spf - 640 + j] *
                                               pre;
-                                qmf_analysis(tail, 10, &qs[c],
+                                qmf_analysis(tail, 10, &(cx->cmp_qs)[c],
                                              &Q[c * slots]);
                             }
                             if (prewarm == 4 && spf >= 640 && pre > 0.0) {
                                 double he = 0.0, se = 0.0;
                                 for (long j = 0; j < 640; j++) {
-                                    double h = (double)lr[c][f * spf + j];
+                                    double h = (double)cx->fr_s16[c][j];
                                     he += h * h;
-                                    se += qs[c].afilt[j] * qs[c].afilt[j];
+                                    se += (cx->cmp_qs)[c].afilt[j] * (cx->cmp_qs)[c].afilt[j];
                                 }
                                 he = sqrt(he / 640.0);
                                 se = sqrt(se / 640.0) / pre;
@@ -7537,10 +7737,9 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                                     double mir[640];
                                     for (long j = 0; j < 640; j++)
                                         mir[j] =
-                                            (double)lr[c][f * spf + 639 -
-                                                           j] *
+                                            (double)cx->fr_s16[c][639 - j] *
                                             pre;
-                                    qmf_analysis(mir, 10, &qs[c],
+                                    qmf_analysis(mir, 10, &(cx->cmp_qs)[c],
                                                  &Q[c * slots]);
                                 }
                             }
@@ -7556,10 +7755,10 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                                     char eb[256];
                                     snprintf(eb, sizeof eb, ",%s,", rp);
                                     if (strstr(eb, nb))
-                                        qmf_init(&qs[c]);
+                                        qmf_init(&(cx->cmp_qs)[c]);
                                 }
                             }
-                            qmf_analysis(fp, slots, &qs[c],
+                            qmf_analysis(fp, slots, &(cx->cmp_qs)[c],
                                          &Q[c * slots]);
                             /* QMFDUMP-PRE (duet34 divergence-localizer,
                              * temporary): post-analysis Q (pre-m). */
@@ -7694,7 +7893,7 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                         for (int c = 0; c < nch; c++) {
                             if (ci_of[c] < 0)
                                 continue;
-                            int sb1 = sb1x[f][xs_of[c]];
+                            int sb1 = ac4d_cmp_sb1(f, xs_of[c]);
                             int wire = w_of[c];
                             int chon = syn ? (onm & 1)
                                            : ((onm >> ci_of[c]) & 1);
@@ -7858,32 +8057,16 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                                 if (f == unityf && ts >= unityt0 &&
                                     ts < unityt1)
                                     continue;
-                                /* CMPLEAD: g from global slot s+k
-                                 * (ggall mirror; clamped at tail).
-                                 * k=0 MUST equal gg[c][ts]. */
+                                /* (CMPLEAD removed: no future
+                                 * frames in streaming.) */
                                 double g = gg[c][ts];
-                                long lsf = f, lsts = ts;
-                                if (ggall) {
-                                    long src =
-                                        f * (long)slots + ts + leadk;
-                                    long maxs =
-                                        frames * (long)slots - 1;
-                                    if (src > maxs)
-                                        src = maxs;
-                                    if (src >= 0) {
-                                        lsf = src / slots;
-                                        lsts = (int)(src % slots);
-                                        g = ggall[lsf][c][lsts];
-                                    }
-                                }
                                 if (syn) {
                                     double s = 0.0;
                                     int nn = 0;
                                     for (int d = 0; d < nch; d++) {
                                         if (ci_of[d] < 0)
                                             continue;
-                                        s += ggall ? ggall[lsf][d][lsts]
-                                                   : gg[d][ts];
+                                        s += gg[d][ts];
                                         nn++;
                                     }
                                     g = nn > 0 ? s / (double)nn : 0.0;
@@ -7934,22 +8117,7 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                                     int dn = 0;
                                     for (int dts = t0; dts < t1; dts++) {
                                         double dg;
-                                        if (ggall) {
-                                            long dsrc =
-                                                f * (long)slots + dts +
-                                                leadk;
-                                            long dmax =
-                                                frames * (long)slots - 1;
-                                            if (dsrc > dmax)
-                                                dsrc = dmax;
-                                            dg = dsrc >= 0
-                                                ? ggall[dsrc / slots]
-                                                       [c][(int)(dsrc %
-                                                                slots)]
-                                                : gg[c][dts];
-                                        } else {
-                                            dg = gg[c][dts];
-                                        }
+                                        dg = gg[c][dts];
                                         if (syn) {
                                             double ds = 0.0;
                                             int dnn = 0;
@@ -7957,26 +8125,7 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                                                  dd++) {
                                                 if (ci_of[dd] < 0)
                                                     continue;
-                                                if (ggall) {
-                                                    long dsrc =
-                                                        f * (long)slots +
-                                                        dts + leadk;
-                                                    long dmax =
-                                                        frames *
-                                                            (long)slots -
-                                                        1;
-                                                    if (dsrc > dmax)
-                                                        dsrc = dmax;
-                                                    ds += dsrc >= 0
-                                                        ? ggall[dsrc /
-                                                                slots]
-                                                               [dd][(int)
-                                                                    (dsrc %
-                                                                     slots)]
-                                                        : gg[dd][dts];
-                                                } else {
-                                                    ds += gg[dd][dts];
-                                                }
+                                                ds += gg[dd][dts];
                                                 dnn++;
                                             }
                                             dg = dnn > 0
@@ -8125,13 +8274,22 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                                                 dsb + 1 < 64 ? ',' : '\n');
                                 }
                             }
-                            qmf_synthesis(&Q[c * slots], slots, &qs[c],
+                            qmf_synthesis(&Q[c * slots], slots, &(cx->cmp_qs)[c],
                                           fp);
                             for (long j = 0; j < spf; j++)
-                                raw[(size_t)c * (size_t)(N + 640) +
-                                    (size_t)(f * spf + j)] = fp[j];
+                                cx->cmp_raw[c][(f * spf + j) % AC4D_RAWN] =
+                                    fp[j];
+                            cx->cmp_w[c] = (f + 1) * (long)spf;
                         }
-                    }
+}
+
+/* Compand 640-zero flush (batch: post-loop bank flush). */
+static void ac4d_cmp_flush(void) {
+    ac4d_ctx *cx = _ac4d_self;
+    int nch = cx->h_nch;
+    int spf = cx->h_spf;
+    if (!cx->ce_on)
+        return;
                     /* Flush: 640 zero samples (10 slots, m = 1)
                      * advance the 577-delayed tail out of the bank. */
                     for (long j = 0; j < spf; j++)
@@ -8147,641 +8305,457 @@ static long e3_decode_frames(raw_t *raws, toc_t *ts, uint8_t *keep,
                             int nsl = fsl / 64;
                             if (nsl <= 0 || nsl > slots)
                                 break;
-                            qmf_analysis(fp, nsl, &qs[c], Qf);
-                            qmf_synthesis(Qf, nsl, &qs[c], fp);
+                            qmf_analysis(fp, nsl, &(cx->cmp_qs)[c], Qf);
+                            qmf_synthesis(Qf, nsl, &(cx->cmp_qs)[c], fp);
                             for (int j = 0; j < fsl; j++)
-                                raw[(size_t)c * (size_t)(N + 640) +
-                                    (size_t)(N + rep * spf + j)] = fp[j];
+                                cx->cmp_raw[c][(cx->cmp_w[c] + rep * spf + j) %
+                                                  AC4D_RAWN] = fp[j];
                             for (long j = 0; j < spf; j++)
                                 fp[j] = 0.0;
                         }
                     }
-                    /* Writeback with 577-sample delay compensation
-                     * (zero net delay): out[t] = raw[t + 577].
-                     * On-slots take companded PCM; pure-off slots
-                     * keep bit-exact lr (UNITY probe writes all). */
-                    for (long f = 0; f < frames; f++) {
-                        int onm = (f < e3_cmp_n) ? e3_cmp_onm[f] : 0;
-                        int syn = (f < e3_cmp_n) ? e3_cmp_syn[f] : 0;
-                        int avgf = (f < e3_cmp_n) ? e3_cmp_avg[f] : 0;
-                        int codec = (f < e3_cmp_n) ? e3_cmp_codec[f] : 0;
-                        int m2v = (f < e3_cmp_n) ? e3_cmp_m2[f] : -1;
+    for (int c = 0; c < 8; c++)
+        if (cx->cmp_qrun[c])
+            cx->cmp_w[c] += 640;
+}
+
+/* Compand writeback for ONE emit frame e (batch: per-f iteration
+ * of the writeback loop; out[t] = raw[t+577]). dst starts as the
+ * postpassed/skeleton base; take-channels are overwritten. */
+static int ac4d_cmp_emit(long e, short (*dst)[2048]) {
+    ac4d_ctx *cx = _ac4d_self;
+    int nch = cx->h_nch;
+    int spf = cx->h_spf;
+    double trim = e3_dngain * 32768.0;
+    if (!cx->ce_on)
+        return 0;
+                        int onm = (e < e3_cmp_n) ? e3_cmp_onm[e] : 0;
+                        int syn = (e < e3_cmp_n) ? e3_cmp_syn[e] : 0;
+                        int avgf = (e < e3_cmp_n) ? e3_cmp_avg[e] : 0;
+                        int codec = (e < e3_cmp_n) ? e3_cmp_codec[e] : 0;
+                        int m2v = (e < e3_cmp_n) ? e3_cmp_m2[e] : -1;
                         for (int c = 0; c < nch; c++) {
                             int wire = 0, xslot = 0;
                             int ci = e3_cmp_slotmap(nch, codec, m2v, c,
                                                     &wire, &xslot);
                             if (ci < 0)
                                 continue;
-                            int sb1 = sb1x[f][xslot];
+                            int sb1 = ac4d_cmp_sb1(e, xslot);
                             int chon = syn ? (onm & 1) : ((onm >> ci) & 1);
                             int take = chon || unity || (!chon && avgf);
                             if (!take || sb1 <= 0)
                                 continue;
                             for (long j = 0; j < spf; j++) {
-                                long t = f * spf + j + (unshift ? 0 : 577);
+                                long t = e * spf + j + (unshift ? 0 : 577);
+                                if (t > cx->cmp_w[c] ||
+                                    cx->cmp_w[c] - t > AC4D_RAWN)
+                                    return -1; /* raw ring overrun */
                                 double v =
-                                    raw[(size_t)c * (size_t)(N + 640) +
-                                        (size_t)t] *
+                                    ac4d_rget_d(cx->cmp_raw[c], AC4D_RAWN,
+                                                t) *
                                     trim;
-                                lr[c][f * spf + j] = imdct_d2s16(v);
+                                dst[c][j] = imdct_d2s16(v);
                             }
                         }
                         if (census)
                             fprintf(stderr,
                                     "CMPW f=%ld sb1=%d/%d/%d on=%u avg=%u "
                                     "codec=%d\n",
-                                    f, sb1x[f][0], sb1x[f][1], sb1x[f][2],
+                                    e, ac4d_cmp_sb1(e, 0), ac4d_cmp_sb1(e, 1), ac4d_cmp_sb1(e, 2),
                                     onm, avgf,
-                                    f < e3_cmp_n ? e3_cmp_codec[f] : -9);
-                    }
-                    free(ggall);
-                }
-                free(sb1x);
-                free(fp);
-                free(Q);
-                free(raw);
-            }
-        }
-    }
-    /* AC4DEC_FADE0=N (duet26 IMS-cold-start discriminant): scale
-     * lr[][t<N] by raised-cosine ramp 0.5*(1-cos(pi*t/N)) (all (_ac4d_self->xm_ch)).
-     * Default unset/0 = untouched. */
-    {
-        const char *fp = getenv("AC4DEC_FADE0");
-        long fn = fp ? strtol(fp, NULL, 10) : 0;
-        if (fn > 0 && fn < outsamp) {
-            for (long t = 0; t < fn; t++) {
-                double r =
-                    0.5 * (1.0 - cos(3.141592653589793 * (double)t /
-                                     (double)fn));
-                for (int c = 0; c < nch; c++)
-                    lr[c][t] = (short)lrint((double)lr[c][t] * r);
-            }
-        }
-    }
-    /* AC4DEC_DRC=1 (G-DRC step 4: wire-curve apply leg, default off).
-     * BS.1770-style summed-energy sidechain (L/R/C=1, Ls/Rs=1.41,
-     * LFE excluded; +2dB residual cal) + level ballistics (2ms/31ms)
-     * + WIRE curve (carried ndot config, Table-166; fallback =
-     * step-3 film-light, noted once) + gain ballistics
-     * (attack 167ms / fast 20ms / release 0.93s, adaptive
-     * 1.1dB, residual offset -0.5dB, G0 1.039) + gain-distance-
-     * SCHEDULED tail (slow 468ms when within 0.015 of target) +
-     * per-(_ac4d_self->xm_ch) peak-scale/floor (A1). 64-sample sub-blocks (EXACT
-     * fitter grid). Params: drc_fit.py --tmode=sched native-grid
-     * joint fit (D-side inputs, anchor 64,64; rmse 0.0087/0.0063;
-     * held-out G3 rmse 0.0019 GENERALIZES). Single pole + sched;
-     * cascade/lead/multiband all REFUTED first-hand. Post-pass on
-     * s16 lr[] (FADE0 pattern); pre-quant = step-N. */
-    {
-        const char *dp = getenv("AC4DEC_DRC");
-        if ((e_drc_cli || (dp && dp[0] == '1')) && outsamp > 0 &&
-            nch > 0) {
-            /* SET-A (duet74 t273): transmitted-gains apply, 5.7.9.3.3
-             * config-0. Static wideband gain 2^(G/6) x all channels;
-             * the dialnorm->outref map already rides e3_dngain on
-             * both legs (pre-trim), so no second map here (P1b = x1
-             * unity vs off). Bypasses the curve follower (transmitted
-             * gains are the answer, not a target). cfg>0 (multiband)
-             * falls through to the curve/fallback leg (SET-A scope;
-             * values still decoded + stored). */
-            int ga_mi = e_drc.valid ?
-                drc_select_mode(&e_drc, drc_outref_eff()) : -1;
-            if (ga_mi >= 0 && e_drc.modes[ga_mi].has_gains &&
-                e_drc.modes[ga_mi].gains_cfg == 0) {
-                double ga_g = pow(2.0, (double)e_drc.modes[ga_mi]
-                                            .gains_db2[0][0][0] / 6.0);
-                for (long t = 0; t < outsamp; t++) {
-                    for (int c = 0; c < nch; c++) {
-                        double v = (double)lr[c][t] * ga_g;
-                        long q = lrint(v);
-                        if (q > 32767)
-                            q = 32767;
-                        else if (q < -32768)
-                            q = -32768;
-                        lr[c][t] = (short)q;
-                    }
-                }
-                if (e9_debug())
-                    fprintf(stderr,
-                            "DRCGAINS mi=%d mid=%d g0=%d g=%.6f\n",
-                            ga_mi, e_drc.modes[ga_mi].mid,
-                            e_drc.modes[ga_mi].gains_db2[0][0][0],
-                            ga_g);
-            } else {
-            static const double drc_floor[8] = {1.0002, 1.0004,
-                                                1.0039, 1.0, 1.0042,
-                                                1.0078, 1.0, 1.0};
-            static const double drc_scale[8] = {1.0, 1.2514, 1.3840,
-                                                1.0, 1.4891, 1.5342,
-                                                1.0, 1.0};
-            /* BS.1770 (_ac4d_self->xm_ch) weights (power): stereo L/R; 5.1 +C/SLs/Rs. */
-            static const double drc_chw[8] = {1.0, 1.0, 1.0, 0.0,
-                                              1.41, 1.41, 1.0, 1.0};
-            const double drc_sub_t = 64.0 / 48000.0;
-            double drc_taua = 0.167; /* fitted slow-attack */
-            {
-                const char *tp = getenv("AC4DEC_DRC_TA");
-                if (tp && *tp)
-                    drc_taua = strtod(tp, NULL);
-            }
-            const double drc_kla = 1.0 - exp(-drc_sub_t / 0.004);
-            const double drc_klr = 1.0 - exp(-drc_sub_t / 8.2);
-            const double drc_ka = 1.0 - exp(-drc_sub_t / drc_taua);
-            const double drc_kr = 1.0 - exp(-drc_sub_t / 0.93);
-            const double drc_kaf = 1.0 - exp(-drc_sub_t / 0.020);
-            const double drc_krf = 1.0 - exp(-drc_sub_t / 0.19);
-            const double drc_knear = 1.0 - exp(-drc_sub_t / 0.468);
-            double drc_dn = -(double)e3_dn_bits / 4.0;
-            /* A-67 Q1 SPLIT REFS (normative): mode select runs on
-             * the decoder OUTPUT ref (default -31, Table-161
-             * windows); the CURVE stays relative to dialnorm
-             * (lrel = L - drc_dn, H1 rmse-confirmed). */
-            double drc_outref = drc_outref_eff();
-            const int usefit = (nch == 6);
-            long nsub = (outsamp + 63) / 64;
-            double L = 1e9; /* init to first inst (causal) */
-            /* Closure-trimmed defaults (signal-space minimax over
-             * 51-2s+G3 B-pins: worst ±1.4% transient, ±0.2% steady;
-             * fitter gain-space optima were 1.039/0.015 -- the gap
-             * is grid/meter second-order (hb62-70)). */
-            double G = 1.08;
-            /* Step 4: flat-0 wire curve (unity profile) inits G=1
-             * (no onset race: tgt==1 throughout). Curve legs keep
-             * the fitted 1.08 (env override wins, as before). */
-            {
-                int umi = e_drc.valid
-                                 ? drc_select_mode(&e_drc, drc_outref)
-                                 : -1;
-                if (umi >= 0 && e_drc.modes[umi].is_curve) {
-                    int flat = 1;
-                    for (int qi = 0;
-                         qi < e_drc.modes[umi].npts; qi++)
-                        if (fabs(e_drc.modes[umi].pg[qi]) > 1e-9)
-                            flat = 0;
-                    if (flat)
-                        G = 1.0;
-                }
-            }
-            double drc_d0 = 0.027;
-            {
-                /* AC4DEC_DRC_G0=x / AC4DEC_DRC_D0=x: onset-race init
-                 * + near-zone overrides (tuning/verification hooks). */
-                const char *gp = getenv("AC4DEC_DRC_G0");
-                if (gp && *gp)
-                    G = strtod(gp, NULL);
-                gp = getenv("AC4DEC_DRC_D0");
-                if (gp && *gp)
-                    drc_d0 = strtod(gp, NULL);
-            }
-            int dbg = e9_debug() ? 1 : 0;
-            for (long b = 0; b < nsub; b++) {
-                long bs = b * 64;
-                long be = bs + 64;
-                if (be > outsamp)
-                    be = outsamp;
-                double ms[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-                for (long t = bs; t < be; t++) {
-                    for (int c = 0; c < nch; c++) {
-                        double v = (double)lr[c][t];
-                        ms[c] += v * v;
-                    }
-                }
-                double nn = (double)(be - bs);
-                double z = 0.0;
-                for (int c = 0; c < nch; c++) {
-                    double w = (nch == 2 && c < 2) ? 1.0 : drc_chw[c];
-                    z += (ms[c] / nn) * w * w;
-                }
-                if (z < 1e-9)
-                    z = 1e-9;
-                /* BS.1770-sum level - 0.5dB residual cal (fit).
-                 * NOTE: priming-junk silence gate TESTED + REVERTED
-                 * (closure onset 0.97 -> 0.89-0.93 WORSE -- fitted
-                 * params already compensate junk; gate broke C/fit
-                 * input parity; hb62-70). */
-                double inst =
-                    10.0 * log10(z / (32768.0 * 32768.0)) - 0.5;
-                if (L > 1e8)
-                    L = inst;
-                if (inst > L)
-                    L += (inst - L) * drc_kla;
-                else
-                    L += (inst - L) * drc_klr;
-                /* Step 4: wire curve (mode select + polyline
-                 * lookup, dB rel dialnorm). Fallback = step-3
-                 * film-light when no carried config (noted once). */
-                double lrel = L - drc_dn;
-                double gdb;
-                {
-                    int mi = e_drc.valid
-                                 ? drc_select_mode(&e_drc, drc_outref)
-                                 : -1;
-                    if (dbg && b == 0)
-                        fprintf(stderr,
-                                "DRCSEL outref=%.1f mi=%d mid=%d "
-                                "curve=%d npts=%d\n",
-                                drc_outref, mi,
-                                mi >= 0 ? e_drc.modes[mi].mid : -1,
-                                mi >= 0 ? e_drc.modes[mi].is_curve
-                                        : -1,
-                                mi >= 0 ? e_drc.modes[mi].npts : -1);
-                    if (mi >= 0 && e_drc.modes[mi].is_curve) {
-                        gdb = drc_curve_gain(
-                            lrel, e_drc.modes[mi].pl,
-                            e_drc.modes[mi].pg, e_drc.modes[mi].npts);
-                    } else {
-                        if (!e_drc_noted) {
-                            e_drc_noted = 1;
-                            fprintf(stderr,
-                                    "DRC curve=fallback-filmlight\n");
-                        }
-                        if (lrel <= -22.0)
-                            gdb = 6.0;
-                        else if (lrel <= -10.0)
-                            gdb = 6.0 * (-10.0 - lrel) / 12.0;
-                        else if (lrel <= 10.0)
-                            gdb = 0.0;
-                        else if (lrel <= 20.0)
-                            gdb = -5.0 * (lrel - 10.0) / 10.0;
-                        else if (lrel <= 40.0)
-                            gdb = -5.0 - 19.0 * (lrel - 20.0) / 20.0;
-                        else
-                            gdb = -24.0;
-                    }
-                }
-                /* A-76 sibling-percent scales (writer-defined: no AC-4
-                 * mirror; AC-3/TrueHD def-100/0-100 convention):
-                 * multipliers on the SELECTED mode's leg gains,
-                 * post-select pre-ballistics (scales the target
-                 * the follower chases). */
-                if (gdb > 0.0)
-                    gdb *= e_drc_boost * 0.01;
-                else if (gdb < 0.0)
-                    gdb *= e_drc_cut * 0.01;
-                double tgt = pow(10.0, gdb / 20.0);
-                int fast = fabs(inst - L) > 1.1;
-                if (tgt < G) {
-                    double kk = fast ? drc_kaf : drc_ka;
-                    if ((G - tgt) < drc_d0)
-                        kk = drc_knear; /* scheduled slow tail */
-                    G += (tgt - G) * kk;
-                } else if (tgt > G)
-                    G += (tgt - G) * (fast ? drc_krf : drc_kr);
-                if (dbg && (b % 32) == 0)
-                    fprintf(stderr,
-                            "DRCBLK s=%ld inst=%.1f L=%.1f tgt=%.4f "
-                            "G=%.4f%s\n",
-                            b, inst, L, tgt, G, fast ? " FAST" : "");
-                for (int c = 0; c < nch; c++) {
-                    double fl = usefit ? drc_floor[c] : 1.0;
-                    double sc = usefit ? drc_scale[c] : 1.0;
-                    double g = fl + sc * (G - 1.0);
-                    for (long t = bs; t < be; t++) {
-                        double v = (double)lr[c][t] * g;
-                        long q = lrint(v);
-                        if (q > 32767)
-                            q = 32767;
-                        else if (q < -32768)
-                            q = -32768;
-                        lr[c][t] = (short)q;
-                    }
-                }
-            }
-            } /* end SET-A else (curve/follower leg) */
-        }
-    }
-    int wch = (e3_zeroext > nch && e3_zeroext <= 8) ? e3_zeroext : nch;
-    /* elst PCM post-trim (mp4 edit lists; estart==0 only — pre-I + edit
-     * interaction is follow-up scope). Media units scale to emitted PCM. */
-    long t0 = 0, t1 = outsamp;
-    if (estart == 0 && eemdur > 0 && outsamp > 0 && (eeh > 0 || eet > 0)) {
-        long th = (long)(eeh * (uint64_t)outsamp / eemdur);
-        long tt = (long)(eet * (uint64_t)outsamp / eemdur);
-        if (th >= 0 && tt >= 0 && th + tt < outsamp) {
-            t0 = th;
-            t1 = outsamp - tt;
-        }
-        if (e9_debug())
-            fprintf(stderr,
-                    "ELST eh=%llu et=%llu emdur=%llu outs=%ld t0=%ld t1=%ld\n",
-                    (unsigned long long)eeh, (unsigned long long)eet,
-                    (unsigned long long)eemdur, outsamp, t0, t1);
-    }
-    e_wav_ch = wch;
-    e_wav_frames = t1 - t0;
-    /* D10 P2 DE drive, magnitude-final (A-85 + SUPP2 + SUPP-B):
-     * wire gate (T=2) + EXACT laws + dB-follower fades (attack 3f +
-     * delay 1.5f, release 20f R2, linear-in-dB) + primer (N=D+onset×spf
-     * unity + duck-step + 1800sa dialogue ramp user>0; instant
-     * elsewhere). user<0 = provisional mirror (SUPP S2). P3 open:
-     * plateau/sag/stagger/split/α-tracking. */
-    if (e_de_given && e_de_cli != 0.0 && e_decfg_have &&
-        frames > 0 && t1 > t0) {
-        /* R2 (b') band-exit off-detection (NOTE-R2-refit-74, A-88):
-         * T=2 collapse lags wire-off ~4f through decaying tail pars;
-         * move each 1->0 flip back to band exit (last frame at/above
-         * trailing settled median - 3). 0->1 edges untouched; blips
-         * never collapse so never rewrite. Calibrated 0/0/-1/-2kf vs
-         * DRP wire+1 on kdaf 318/413/667 + wjct 59 (hb74-131);
-         * PROVISO: bed onset pins battery-verify per edge. */
-        {
-            long locked = 0;
-            for (long c = 1; c < frames; c++) {
-                int a0 = (e_de_actmap[c - 1] & 0x80) != 0;
-                int a1 = (e_de_actmap[c] & 0x80) != 0;
-                if (!a0 || a1)
-                    continue;
-                if (c < 9)
-                    continue;
-                long w0 = c - 14 < 0 ? 0 : c - 14, w1 = c - 8;
-                int win[14], nw = 0;
-                for (long q = w0; q <= w1; q++)
-                    win[nw++] = e_de_mabs[q];
-                if (nw < 4)
-                    continue;
-                for (int q = 1; q < nw; q++) {
-                    int t = win[q], r = q - 1;
-                    while (r >= 0 && win[r] > t) {
-                        win[r + 1] = win[r];
-                        r--;
-                    }
-                    win[r + 1] = t;
-                }
-                int ref = win[nw / 2];
-                if (ref < 5)
-                    continue;
-                int th = ref - 3, j = (int)c - 1;
-                long bound = c - 14 < 0 ? 0 : c - 14;
-                while (j > bound && e_de_mabs[j] < th)
-                    j--;
-                long flip = (long)j + 1;
-                if (flip < locked)
-                    flip = locked;
-                if (flip >= c)
-                    continue;
-                for (long q = flip; q < c; q++)
-                    e_de_actmap[q] &= (unsigned char)~0x80;
-                locked = c;
-                if (e9_debug())
-                    fprintf(stderr,
-                            "DEBEXIT collapse=%ld flip=%ld ref=%d n=%ld\n",
-                            c, flip, ref, c - flip);
-            }
-        }
-        double a = e_de_cli < 0.0 ? -e_de_cli : e_de_cli;
-        if (a > 9.0)
-            a = 9.0;
-        double duckdb = de_duck_db(a);
-        double boostdb = de_boost_db(a);
-        double cutdb = de_cut_db(a);
-        int neg = e_de_cli < 0.0;
-        double act_db = neg ? cutdb : boostdb;
-        double inact_db = neg ? 0.0 : duckdb;
-        double bg_db = neg ? 0.0 : duckdb;
-        /* Primer N (A-85-SUPP-B rule + A-85-SUPP3 clock-map):
-         * N = D_ours((_ac4d_self->xm_ch),spf) + onset×spf, onset-term EXACT (our
-         * frame grid, no conversion). D_ours = round(D_drp ×
-         * sr_native/48000): (6,1536)->1585 (kdaf + wjct-rule;
-         * wjct-1680 ⟺ 1611 = jitter shelf, preserved across
-         * clocks); (6,2048)->2412 (g5), (2,2048)->4191/4074
-         * frames-split (g4/s2s: frames = IDENTIFIER, determinant
-         * open, CMP-presence lead hypothesis — P3 discriminant).
-         * Late-onset class EMPTY on corpus (every vector onset-0
-         * incl atsc3/mpa20-kept; mpa20 naive-literal 30ms moot —
-         * N applies to silence). Unlisted ((_ac4d_self->xm_ch),spf) -> spf fallback
-         * + viewer-D on demand.
-         * onset = first NON-ISOLATED T2-active frame (1f blips
-         * skipped per protocol, flagged under debug). */
-        long onset = -1;
-        for (long k = 0; k < frames; k++) {
-            int a0 = e_de_actcap > (size_t)k &&
-                (e_de_actmap[k] & 0x80);
-            if (!a0)
-                continue;
-            int aprev = k > 0 && e_de_actcap > (size_t)(k - 1) &&
-                (e_de_actmap[k - 1] & 0x80);
-            int anext = k + 1 < frames &&
-                e_de_actcap > (size_t)(k + 1) &&
-                (e_de_actmap[k + 1] & 0x80);
-            if (aprev || anext) {
-                onset = k;
-                break;
-            }
-            if (e9_debug())
-                fprintf(stderr, "DEONSET skip isolated blip k=%ld\n",
-                        k);
-        }
-        long D;
-        if (nch == 6 && spf == 1536)
-            D = 1585;   /* rescaled (A-85-SUPP3 C1a) */
-        else if (nch == 6 && spf == 2048)
-            D = 2412;   /* G5 */
-        else if (nch == 2 && spf == 2048)
-            D = (frames == 237) ? 4191 : 4074;  /* G4 / s2s */
-        else
-            D = spf;    /* triage fallback (viewer-D on demand) */
-        long nid = D + (onset >= 0 ? onset * (long)spf : 0);
-        if (nid >= t1)
-            nid = t1;     /* degenerate: whole file unity */
-        long dly = (long)spf + (long)spf / 2;
-        /* Release 20f linear-in-dB R2 (NOTE-R2-refit-74: N=20
-         * interior-min same-n SS 3.739 vs P2 5.755, per-edge 18-20
-         * all four, DUAL-REVIEWED vR2refit-113 + vR2refit-110; N=8
-         * REJECTED +54%. A-85-SUPP2 verdict (d): 1f REFUTED —
-         * plateau −4.8>K forces slow release (α-independent proof);
-         * blip-floor = α≈0.06 content (report-only).
-         * Front-loaded-vs-linear → P3 α-tracking. Start = band-exit
-         * flip ((b') post-pass above); PROVISO onset pins in bed. */
-        long atkn = 3L * (long)spf, reln = 20L * (long)spf;
-        long pramp = 1800;
-        for (int c = 0; c < nch; c++) {
-            /* unity-skip: neg + never dialogue = identity exact */
-            if (neg) {
-                int ever = 0;
-                for (long k = 0; k < frames; k++) {
-                    unsigned cc = e_de_actcap > (size_t)k ?
-                        (unsigned)(e_de_actmap[k] & 0x7f) : 0;
-                    if (de_is_dialogue(c, nch, cc)) {
-                        ever = 1;
-                        break;
-                    }
-                }
-                if (!ever)
-                    continue;
-            }
-            /* primer-frame state (routing/wire at nid) */
-            long nk = nid / (long)spf;
-            if (nk >= frames)
-                nk = frames - 1;
-            unsigned ncc = e_de_actcap > (size_t)nk ?
-                (unsigned)(e_de_actmap[nk] & 0x7f) : 0;
-            int nact = e_de_actcap > (size_t)nk ?
-                (int)((e_de_actmap[nk] >> 7) & 1) : 0;
-            int pris_dial = de_is_dialogue(c, nch, ncc);
-            double ntarg = de_targ_db(nact, ncc, c, nch, neg,
-                                      act_db, inact_db, bg_db);
-            int rampcase = (!neg && pris_dial);
-            double ramp_to = rampcase ?
-                (nact ? boostdb : duckdb) : ntarg;
-            long pend = rampcase ? nid + pramp : nid;
-            /* follower state at pend (primer-end value settled) */
-            double settled_db = rampcase ? ramp_to : ntarg;
-            double hold_db = settled_db;
-            long hold_end = -1, r_s = 0, r_e = -1;
-            double r_from = settled_db, r_to = settled_db;
-            long kp = pend / (long)spf;
-            if (kp >= frames)
-                kp = frames - 1;
-            unsigned kcc = e_de_actcap > (size_t)kp ?
-                (unsigned)(e_de_actmap[kp] & 0x7f) : 0;
-            int kact = e_de_actcap > (size_t)kp ?
-                (int)((e_de_actmap[kp] >> 7) & 1) : 0;
-            double ktarg = de_targ_db(kact, kcc, c, nch, neg,
-                                      act_db, inact_db, bg_db);
-            /* primer-internal net flip? exact edge at pend */
-            if (kact != nact || ktarg != ntarg) {
-                hold_db = settled_db;
-                if (kact && !nact) {
-                    hold_end = pend + dly;
-                    r_s = hold_end; r_e = hold_end + atkn;
-                } else if (!kact && nact) {
-                    hold_end = -1;
-                    r_s = pend; r_e = pend + reln;
-                } else if (ktarg > hold_db) {
-                    hold_end = pend + dly;
-                    r_s = hold_end; r_e = hold_end + atkn;
-                } else {
-                    hold_end = -1;
-                    r_s = pend; r_e = pend + reln;
-                }
-                r_from = hold_db; r_to = ktarg;
-                settled_db = ktarg;
-            }
-            int p_act = kact;
-            double p_targ = ktarg;
-            double last_db = 1e300, last_g = 1.0;
-            for (long k = 0; k < frames; k++) {
-                long s0 = k * (long)spf;
-                if (s0 >= t1)
-                    break;
-                if (k > kp) {
-                    unsigned cc = e_de_actcap > (size_t)k ?
-                        (unsigned)(e_de_actmap[k] & 0x7f) : 0;
-                    int act = e_de_actcap > (size_t)k ?
-                        (int)((e_de_actmap[k] >> 7) & 1) : 0;
-                    double tg = de_targ_db(act, cc, c, nch, neg,
-                                           act_db, inact_db,
-                                           bg_db);
-                    if (act != p_act || tg != p_targ) {
-                        double cur;
-                        if (hold_end >= 0 && s0 < hold_end)
-                            cur = hold_db;
-                        else if (r_e >= 0 && s0 < r_e)
-                            cur = r_from + (r_to - r_from) *
-                                (double)(s0 - r_s) /
-                                (double)(r_e - r_s);
-                        else
-                            cur = settled_db;
-                        hold_db = cur;
-                        if (act && !p_act) {
-                            hold_end = s0 + dly;
-                            r_s = hold_end; r_e = hold_end + atkn;
-                        } else if (!act && p_act) {
-                            hold_end = -1;
-                            r_s = s0; r_e = s0 + reln;
-                        } else if (tg > cur) {
-                            hold_end = s0 + dly;
-                            r_s = hold_end; r_e = hold_end + atkn;
-                        } else {
-                            hold_end = -1;
-                            r_s = s0; r_e = s0 + reln;
-                        }
-                        r_from = cur; r_to = tg;
-                        settled_db = tg;
-                        p_act = act; p_targ = tg;
-                    }
-                }
-                long s1 = s0 + (long)spf;
-                if (s1 > t1)
-                    s1 = t1;
-                long lo = s0 < t0 ? t0 : s0;
-                for (long t = lo; t < s1; t++) {
-                    double db;
-                    if (t < nid)
-                        continue;
-                    if (rampcase && t < pend)
-                        db = duckdb + (ramp_to - duckdb) *
-                            (double)(t - nid) / (double)pramp;
-                    else if (hold_end >= 0 && t < hold_end)
-                        db = hold_db;
-                    else if (r_e >= 0 && t < r_e)
-                        db = r_from + (r_to - r_from) *
-                            (double)(t - r_s) / (double)(r_e - r_s);
-                    else
-                        db = settled_db;
-                    double g;
-                    if (db == last_db)
-                        g = last_g;
-                    else {
-                        g = pow(10.0, db / 20.0);
-                        last_db = db;
-                        last_g = g;
-                    }
-                    long q = lrint((double)lr[c][t] * g);
-                    if (q > 32767)
-                        q = 32767;
-                    else if (q < -32768)
-                        q = -32768;
-                    lr[c][t] = (short)q;
-                }
-            }
-        }
-        if (e9_debug())
-            fprintf(stderr,
-                    "DEDRV user=%.1f duckdb=%.2f boostdb=%.2f "
-                    "cutdb=%.2f chan=%u frames=%ld nid=%ld "
-                    "onset=%ld\n",
-                    e_de_cli, duckdb, boostdb, cutdb, e_decfg_chan,
-                    frames, nid, onset);
-    }
-    for (long t = t0; t < t1; t++) {
-        for (int c = 0; c < wch; c++) {
-            short v = c < nch ? lr[c][t] : 0;
-            if (e_wav) {
-                wav_spool_s16(v, e_wav_bps);
-                if (e_wav_serr) {
-                    for (int q = 0; q < nch; q++)
-                        free(lr[q]);
-                    *note = "no-mem";
-                    return -1;
-                }
-                continue;
-            }
-            uint8_t le[4];
-            int nw = wav_s16_to_bytes(v, e_wav_bps, le);
-            if (fwrite(le, 1, (size_t)nw, o) != (size_t)nw) {
-                for (int q = 0; q < nch; q++)
-                    free(lr[q]);
-                *note = "output-fail";
-                return -1;
-            }
-        }
-    }
-    if (e5_need_postpass) {
-        /* 5x ACPL parsed but post-pass inapplicable (short legs,
-         * spill gap, or stage-1 parse incomplete: cc=3). Stub
-         * output (expected, honest unimpl-note). */
-        for (int q = 0; q < nch; q++)
-            free(lr[q]);
-        *note = "5x-acpl-unimpl";
-        return -1;
-    }
-    for (int q = 0; q < nch; q++)
-        free(lr[q]);
-    return frames;
+                                    e < e3_cmp_n ? e3_cmp_codec[e] : -9);
+    return 0;
 }
 
+#undef fp
+#undef Q
+#undef qrun
+#undef held
+#undef folsm
+#undef slewsm
+#undef gfifo
+#undef gatefifo
+#undef gpos
+#undef G
+#undef ex
+#undef slots
+#undef unity
+#undef inv
+#undef census
+#undef dumpf
+#undef fullint
+#undef avgall
+#undef gainhold
+#undef gdel
+#undef unshift
+#undef prewarm
+#undef onsetavg
+#undef floorskip
+#undef useflat
+#undef frameoff
+#undef frameof2
+#undef fol_a
+#undef fol_r
+#undef usofol
+#undef dampf
+#undef hotfill
+#undef slewrate
+#undef unityf
+#undef unityt0
+#undef unityt1
+#undef cmp_fp
+#undef cmp_Q
+#undef cmpG
+#undef cmpex
+/* ---- emit pipeline ---- */
+
+/* Stage skeleton frame f into dst as PRE-GAIN floats (plain FIFO
+ * partition, or mode-0 track mix which batch ran once over full
+ * streams — the mix is per-sample stateless so per-frame is
+ * identical). Gain applies at consume so a DN re-latch on the first
+ * P-frame stays bit-exact. */
+static int ac4d_gather_f(long f, double (*dst)[2048]) {
+    ac4d_ctx *cx = _ac4d_self;
+    int nch = cx->h_nch, spf = cx->h_spf;
+    long base = f * (long)spf;
+    int c, j;
+    /* Returns 1 when the frame's samples are not pushed yet (normal
+     * throttle: retry after more feeds), -1 on ring overwrite. */
+    if (cx->tf_used) {
+        const double *s[12];
+        double *fl[8];
+        long oc[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        for (c = 0; c < 12; c++) {
+            if (base + spf > cx->h_oc[c])
+                return 1;
+            if (cx->h_oc[c] - base > AC4D_SKN)
+                return -1;
+            for (j = 0; j < spf; j++)
+                cx->mx_tmp[c][j] =
+                    ac4d_rget_d(cx->tf_fifo[c], AC4D_SKN, base + j);
+            s[c] = cx->mx_tmp[c];
+        }
+        for (c = 0; c < 8; c++)
+            fl[c] = dst[c];
+        e3_mix12p_f(s, 0, spf, fl, oc);
+        return 0;
+    }
+    for (c = 0; c < nch; c++) {
+        if (base + spf > cx->h_oc[c])
+            return 1;
+        if (cx->h_oc[c] - base > AC4D_SKN)
+            return -1;
+        for (j = 0; j < spf; j++)
+            dst[c][j] =
+                ac4d_rget_d(cx->sk_fifo[c], AC4D_SKN, base + j);
+    }
+    return 0;
+}
+
+/* s16 twin of ac4d_gather_f (gain + quantize at consume). */
+static int ac4d_gather(long f, short (*dst)[2048]) {
+    ac4d_ctx *cx = _ac4d_self;
+    int nch = cx->h_nch, spf = cx->h_spf;
+    int c, j, grc;
+    grc = ac4d_gather_f(f, cx->fr_flt);
+    if (grc != 0)
+        return grc;
+    for (c = 0; c < nch; c++)
+        for (j = 0; j < spf; j++)
+            dst[c][j] =
+                imdct_d2s16(cx->fr_flt[c][j] * e3_dngain);
+    return 0;
+}
+
+/* Pump newly-ready stages (pp + compand analyze) after a feed or the
+ * drain. Purely data-driven (priming pushes make count thresholds
+ * wrong): each stage advances while its inputs are present. Emits
+ * become ready 2 analyzed frames later (writeback looks 577 samples
+ * past the emit frame). */
+static int ac4d_pp_ready(long f) {
+    /* 7.1.4 pp readiness: skeleton present, and the spill window when
+     * the post-pass applies to this frame. */
+    ac4d_ctx *cx = _ac4d_self;
+    int spf = cx->h_spf;
+    int slot = (int)(f % AC4D_APFN);
+    int q;
+    if (!cx->ap3[slot].have || cx->ap3[slot].fno != f || !e3_imm_elig)
+        return 1; /* skeleton stands; nothing to wait for */
+    for (q = 0; q < 4; q++)
+        if (e3_spill_oc[q] < (f + 1) * (long)spf + 577)
+            return cx->h_flushing ? 1 : 0; /* flush: zero-pad tail */
+    return 1;
+}
+
+static int ac4d_pump(void) {
+    ac4d_ctx *cx = _ac4d_self;
+    long F = cx->h_fed;
+    int c, j, grc;
+    if (!cx->h_fmt || cx->h_stub || cx->h_gap_sticky)
+        return 0;
+    int frozen = cx->h_dn_tent && !cx->h_flushing;
+    int press = 0;
+    if (frozen) {
+        /* Ring-pressure unfreeze: the oldest live data nears
+         * overwrite, so emits/analyze must flow (marked dirty); a
+         * later DN change then fails loud in feed (no silent
+         * divergence). Fires at ~4 frames, ahead of the pp (5f) and
+         * compand-raw horizons. */
+        int nch = cx->tf_used ? 12 : cx->h_nch;
+        long lim = (long)AC4D_SKN - 2L * (long)cx->h_spf;
+        for (int c = 0; c < nch; c++)
+            if (cx->h_oc[c] - cx->h_emit * (long)cx->h_spf > lim)
+                press = 1;
+    }
+    /* DN tentative (leading I, no P yet): analyze stalls only when
+     * compand is engaged (its QMF state + raw ring bake the gain);
+     * disengaged analyze is a no-op and pp/skeleton stay pre-gain,
+     * so eager analyze is exact. Ready freezes while tentative so
+     * no frame emits under a superseded gain (covers post-splice
+     * epochs where oc is already large). Flush with no P keeps the
+     * tentative (= batch first-kept fallback). */
+    if (frozen && !press && cx->ce_on)
+        return 0;
+    if (cx->h_nch == 6) {
+        while (cx->h_an < F) {
+            long f = cx->h_an;
+            int gap = 0;
+            int slot = (int)(f % AC4D_APFN);
+            grc = ac4d_gather_f(f, cx->fr_flt);
+            if (grc != 0)
+                return grc < 0 ? -1 : 0;
+            if (cx->ap5[slot].have && cx->ap5[slot].fno == f &&
+                e5_acpl_elig && !cx->h_flushing) {
+                int rd = 0;
+                for (int q = 0; q < 2; q++)
+                    if (e5_spill_oc[q] < (f + 1) * (long)cx->h_spf + 577)
+                        rd = 1;
+                if (rd)
+                    break; /* spill window not pushed yet */
+            }
+            if (ac4d_pp_5x_emit(f, cx->fr_flt, &gap) != 0)
+                return -1; /* spill ring overrun */
+            if (gap) {
+                /* Batch would fail the whole decode here and
+                 * fall back to full stub: latch sticky silence. */
+                cx->h_gap = "5x-acpl-unimpl";
+                cx->h_gap_sticky = 1;
+                cx->h_gap_start = f;
+                cx->h_ready = cx->h_fed;
+                return 0;
+            }
+            for (c = 0; c < 6; c++)
+                for (j = 0; j < cx->h_spf; j++)
+                    cx->pp_ring[c][(f * cx->h_spf + j) % AC4D_PPN] =
+                        cx->fr_flt[c][j];
+            if (cx->ce_on)
+                for (c = 0; c < 6; c++)
+                    for (j = 0; j < cx->h_spf; j++)
+                        cx->fr_s16[c][j] = imdct_d2s16(
+                            cx->fr_flt[c][j] * e3_dngain);
+            ac4d_cmp_analyze(f);
+            cx->h_an++;
+            if (cx->h_dn_tent && cx->ce_on)
+                cx->h_dn_dirty = 1;
+            if (!cx->h_flushing && (!cx->h_dn_tent || press) &&
+                cx->h_an > cx->h_need)
+                cx->h_ready = cx->h_an - cx->h_need;
+        }
+        if (cx->h_ready > F)
+            cx->h_ready = F;
+        return 0;
+    }
+    if (cx->h_nch == 8) {
+        while (cx->h_pp < F) {
+            long f = cx->h_pp;
+            if (!ac4d_pp_ready(f))
+                break;
+            grc = ac4d_gather_f(f, cx->fr_flt);
+            if (grc != 0)
+                return grc < 0 ? -1 : 0;
+            if (ac4d_pp_imm_emit(f, cx->fr_flt) != 0)
+                return -1; /* spill ring overrun */
+            for (c = 0; c < 8; c++)
+                for (j = 0; j < cx->h_spf; j++)
+                    cx->pp_ring[c][(f * cx->h_spf + j) % AC4D_PPN] =
+                        cx->fr_flt[c][j];
+            cx->h_pp++;
+            if (!cx->h_flushing && (!cx->h_dn_tent || press))
+                cx->h_ready = cx->h_pp;
+        }
+        if (cx->h_ready > F)
+            cx->h_ready = F;
+        return 0;
+    }
+    while (cx->h_an < F) {
+        long f = cx->h_an;
+        grc = ac4d_gather_f(f, cx->fr_flt);
+        if (grc != 0)
+            return grc < 0 ? -1 : 0;
+        if (cx->ce_on)
+            for (c = 0; c < cx->h_nch; c++)
+                for (j = 0; j < cx->h_spf; j++)
+                    cx->fr_s16[c][j] = imdct_d2s16(
+                        cx->fr_flt[c][j] * e3_dngain);
+        ac4d_cmp_analyze(f);
+        cx->h_an++;
+        if (cx->h_dn_tent && cx->ce_on)
+            cx->h_dn_dirty = 1;
+        if (!cx->h_flushing && (!cx->h_dn_tent || press) &&
+            cx->h_an > cx->h_need)
+            cx->h_ready = cx->h_an - cx->h_need;
+    }
+    if (cx->h_ready > F)
+        cx->h_ready = F;
+    return 0;
+}
+
+/* Emit ordinal h_emit into em_s16; *is_gap set for silence frames. */
+static int ac4d_emit_one(int *is_gap) {
+    ac4d_ctx *cx = _ac4d_self;
+    long e = cx->h_emit;
+    int nch = cx->h_nch, spf = cx->h_spf;
+    long base = e * (long)spf;
+    int c, j;
+    *is_gap = 0;
+    if (cx->h_stub || (cx->h_gap_sticky && e >= cx->h_gap_start)) {
+        for (c = 0; c < nch; c++)
+            for (j = 0; j < spf; j++)
+                cx->em_s16[c][j] = 0;
+        *is_gap = 1;
+        cx->h_emit++;
+        return 0;
+    }
+    if (cx->h_dn_tent)
+        cx->h_dn_dirty = 1; /* real emit under tentative gain */
+    if (nch == 8 || nch == 6) {
+        long done = nch == 8 ? cx->h_pp : cx->h_an;
+        int nc = nch == 8 ? 8 : 6;
+        if (e >= done || done - e > AC4D_PPN / 2048)
+            return -1; /* pp ring overrun (impossible by h_ready) */
+        for (c = 0; c < nc; c++)
+            for (j = 0; j < spf; j++)
+                cx->em_s16[c][j] = imdct_d2s16(
+                    ac4d_rget_d(cx->pp_ring[c], AC4D_PPN, base + j) *
+                    e3_dngain);
+        if (nch == 6 && ac4d_cmp_emit(e, cx->em_s16) != 0)
+            return -1;
+    } else {
+        if (ac4d_gather(e, cx->em_s16))
+            return -1;
+        if (ac4d_cmp_emit(e, cx->em_s16) != 0)
+            return -1;
+    }
+    /* FADE0 (batch: post-compand scale of t < fn; assumes fn < total,
+     * which holds for every real use of this discriminant probe). */
+    if (cx->ce_fade0 > 0) {
+        long fn = cx->ce_fade0;
+        for (j = 0; j < spf; j++) {
+            long t = base + j;
+            double r;
+            if (t >= fn)
+                break;
+            r = 0.5 *
+                (1.0 - cos(3.141592653589793 * (double)t / (double)fn));
+            for (c = 0; c < nch; c++)
+                cx->em_s16[c][j] =
+                    (short)lrint((double)cx->em_s16[c][j] * r);
+        }
+    }
+    cx->h_emit++;
+    return 0;
+}
+
+/* Convert + copy the next ready frame to the caller buffer. The frame
+ * must be ready (caller checked delay/counts). Polls (pcm NULL) do
+ * not consume. */
+static int ac4d_emit_consume(void *pcm, size_t cap, ac4d_info *fi) {
+    ac4d_ctx *cx = _ac4d_self;
+    ac4d_info ii;
+    size_t need, bps;
+    int is_gap = 0;
+    uint8_t *out;
+    int c, j;
+    if (ac4d_get_info(cx, &ii) != AC4D_OK)
+        return AC4D_ERR;
+    bps = ii.bits == 24 ? 3 : ii.bits == 32 ? 4 : 2;
+    need = (size_t)ii.channels * (size_t)ii.spf * bps;
+    if (fi)
+        *fi = ii;
+    if (pcm == NULL)
+        return (cx->h_stub ||
+                (cx->h_gap_sticky && cx->h_emit >= cx->h_gap_start))
+            ? AC4D_GAP
+            : AC4D_OK;
+    if (cap < need)
+        return AC4D_ERR;
+    if (ac4d_emit_one(&is_gap) != 0) {
+        cx->h_hard_err = AC4D_ERR;
+        cx->h_hard_note = "ring-overrun";
+        return AC4D_ERR;
+    }
+    out = pcm;
+    for (j = 0; j < ii.spf; j++) {
+        for (c = 0; c < ii.channels; c++) {
+            short v = c < cx->h_nch ? cx->em_s16[c][j] : 0;
+            uint8_t le[4];
+            int nw = wav_s16_to_bytes(v, e_wav_bps, le);
+            memcpy(out, le, (size_t)nw);
+            out += nw;
+        }
+    }
+    return is_gap ? AC4D_GAP : AC4D_OK;
+}
+
+int ac4d_get_frame(ac4d_ctx *c, void *pcm, size_t cap, ac4d_info *fi) {
+    if (!c || !c->ao_open)
+        return AC4D_ERR;
+    _ac4d_self = c;
+    if (c->h_hard_err)
+        return c->h_hard_err;
+    if (!c->h_fmt)
+        return AC4D_NEED_MORE;
+    if (c->h_emit >= c->h_ready)
+        return AC4D_NEED_MORE;
+    return ac4d_emit_consume(pcm, cap, fi);
+}
+
+int ac4d_flush(ac4d_ctx *c, void *pcm, size_t cap) {
+    const char *note = "ok";
+    if (!c || !c->ao_open)
+        return AC4D_ERR;
+    _ac4d_self = c;
+    if (c->h_hard_err)
+        return c->h_hard_err;
+    if (!c->h_fmt || c->h_flushed)
+        return AC4D_NEED_MORE;
+    if (!c->h_flushing) {
+        c->h_flushing = 1;
+        c->h_dn_tent = 0; /* no-P fallback stands (= batch first-kept) */
+        if (!c->h_stub && !c->h_gap_sticky) {
+            if (ac4d_drain(&note) != 0 ||
+                ac4d_length_check(&note) != 0) {
+                c->h_hard_err = AC4D_BITSTREAM;
+                c->h_hard_note = note;
+                return AC4D_BITSTREAM;
+            }
+        }
+        if (ac4d_pump() != 0) {
+            c->h_hard_err = AC4D_ERR;
+            c->h_hard_note = "ring-overrun";
+            return AC4D_ERR;
+        }
+        ac4d_cmp_flush();
+        c->h_ready = c->h_fed;
+    }
+    if (c->h_emit >= c->h_fed) {
+        c->h_flushed = 1;
+        return AC4D_NEED_MORE;
+    }
+    return ac4d_emit_consume(pcm, cap, NULL);
+}
+
+#ifndef AC4D_LIB_ONLY
 static int parse_long(const char *s, long *out) {
     char *e = NULL;
     long v = strtol(s, &e, 10);
@@ -8790,12 +8764,14 @@ static int parse_long(const char *s, long *out) {
     *out = v;
     return 0;
 }
+#endif /* AC4D_LIB_ONLY */
 
 /* E8 --print-info TAG dump (A-78 Q3: order FMT VER DN DRC DRCSEL CH5X
  * CMP CRC LOUD; TAG k=v on stdout; HYBRID mirror — DRP values quoted
  * verbatim where ours computes the same quantity, writer-defined keys
  * documented in tests/CLI.md). Values with spaces/commas are
  * double-quoted (grep-able units). */
+#ifndef AC4D_LIB_ONLY
 static void e3_info_print(const toc_t *ts, const char *srbuf,
                           const char *chbuf, const char *bits, long frames,
                           const char *status, const char *note,
@@ -9000,9 +8976,16 @@ static void e3_info_print(const toc_t *ts, const char *srbuf,
                corr, spch, lev, tpk, di, dichan);
     }
 }
+#endif /* AC4D_LIB_ONLY */
 
+/* Shim full-packet sidecar (combined alloc with raws; freed together). */
+typedef struct {
+    const uint8_t *p;
+    size_t len;
+} shim_pkt_t;
+
+#ifndef AC4D_LIB_ONLY /* shim CLI below */
 int main(int argc, char **argv) {
-    /* TEMP checkpoint: bind heap-ctx before H1 split (replaced by ac4d_open). */
     { static ac4d_ctx _tmp_ctx; _ac4d_self = &_tmp_ctx; ac4d_state_init(); }
     if (argc < 2 || strcmp(argv[1], "decode") != 0) {
         usage();
@@ -9016,8 +8999,13 @@ int main(int argc, char **argv) {
     const char *sel = NULL;
     const char *sel_pi = NULL;
     const char *bits = "16";
-    e_crc_bad = 0;
-    e_sync_first = 0;
+    /* Parsed-to-locals (ctx not open yet; mapped to opts/members below). */
+    int p_verb = 3, p_ajoc = 0, p_prov = 0, p_wav = 0, p_info = 0;
+    const char *p_out_cplx = "5.1.2";
+    int p_drc = 0, p_drc_given = 0;
+    double p_drc_or = -31.0, p_drc_boost = 100.0, p_drc_cut = 100.0;
+    int p_de_given = 0;
+    double p_de = 0.0;
     long timeout = 120;
     int endflags = 0;
     for (int i = 2; i < argc; i++) {
@@ -9034,7 +9022,7 @@ int main(int argc, char **argv) {
                         val ? val : "(none)");
                 return 1;
             }
-            e_verb = l;
+            p_verb = l;
             i++;
             continue;
         }
@@ -9066,14 +9054,14 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "ac4dec: bad --ajoc-core: %s\n", val);
                     return 1;
                 }
-                e_ajoc_core = (strcmp(val, "on") == 0);
+                p_ajoc = (strcmp(val, "on") == 0);
                 i++;
             } else if (strcmp(a, "--out-cplx") == 0 && val) {
                 if (!e_cplx_valid(val)) {
                     fprintf(stderr, "ac4dec: bad --out-cplx: %s\n", val);
                     return 1;
                 }
-                e_out_cplx = val;
+                p_out_cplx = val;
                 i++;
             } else if (strcmp(a, "--render-mode") == 0 && val) {
                 if (strcmp(val, "strict") != 0 &&
@@ -9081,7 +9069,7 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "ac4dec: bad --render-mode: %s\n", val);
                     return 1;
                 }
-                e_render_prov = (strcmp(val, "provisional") == 0);
+                p_prov = (strcmp(val, "provisional") == 0);
                 i++;
             } else if (strcmp(a, "--bits") == 0 && val) {
                 bits = val;
@@ -9093,9 +9081,9 @@ int main(int argc, char **argv) {
                 }
                 i++;
             } else if (strcmp(a, "--wav") == 0) {
-                e_wav = 1;
+                p_wav = 1;
             } else if (strcmp(a, "--print-info") == 0) {
-                e_info = 1;
+                p_info = 1;
             } else if (strcmp(a, "--verbosity") == 0 && val) {
                 int l = e9_parse_level(val);
                 if (l < 0) {
@@ -9103,10 +9091,10 @@ int main(int argc, char **argv) {
                             val);
                     return 1;
                 }
-                e_verb = l;
+                p_verb = l;
                 i++;
             } else if (strcmp(a, "--drc") == 0) {
-                e_drc_cli = 1;
+                p_drc = 1;
             } else if (strcmp(a, "--drc-out-ref") == 0 && val) {
                 char *e = NULL;
                 double v = strtod(val, &e);
@@ -9116,8 +9104,8 @@ int main(int argc, char **argv) {
                             val);
                     return 1;
                 }
-                e_drc_or_cli = v;
-                e_drc_or_given = 1;
+                p_drc_or = v;
+                p_drc_given = 1;
                 i++;
             } else if (strcmp(a, "--ac4dec-de-level") == 0 && val) {
                 char *e = NULL;
@@ -9128,8 +9116,8 @@ int main(int argc, char **argv) {
                             val);
                     return 1;
                 }
-                e_de_cli = (double)v;
-                e_de_given = 1;
+                p_de = (double)v;
+                p_de_given = 1;
                 i++;
             } else if ((strcmp(a, "--drc-boost") == 0 ||
                         strcmp(a, "--drc-cut") == 0) &&
@@ -9141,9 +9129,9 @@ int main(int argc, char **argv) {
                     return 1;
                 }
                 if (strcmp(a, "--drc-boost") == 0)
-                    e_drc_boost = v;
+                    p_drc_boost = v;
                 else
-                    e_drc_cut = v;
+                    p_drc_cut = v;
                 i++;
             } else {
                 fprintf(stderr, "ac4dec: unknown flag: %s\n", a);
@@ -9161,11 +9149,11 @@ int main(int argc, char **argv) {
         fprintf(stderr, "ac4dec: bad --bits: %s\n", bits);
         return 1;
     }
-    if (e_info && strcmp(out, "-") != 0) {
+    if (p_info && strcmp(out, "-") != 0) {
         fprintf(stderr, "ac4dec: --print-info takes no --out\n");
         return 1;
     }
-    if (e_info && e_wav) {
+    if (p_info && p_wav) {
         fprintf(stderr, "ac4dec: --print-info takes no --wav\n");
         return 1;
     }
@@ -9232,7 +9220,7 @@ int main(int argc, char **argv) {
         if (f != stdin)
             fclose(f);
         fmt(fsr, fch, bits, 0, "fail", "no-mem");
-        return e_info ? 2 : 3;
+        return p_info ? 2 : 3;
     }
     size_t r;
     while ((r = fread(buf + len, 1, cap - len, f)) > 0) {
@@ -9243,7 +9231,7 @@ int main(int argc, char **argv) {
                 if (f != stdin)
                     fclose(f);
                 fmt(fsr, fch, bits, 0, "fail", "too-big");
-                return e_info ? 2 : 3;
+                return p_info ? 2 : 3;
             }
             cap *= 2;
             uint8_t *nb = realloc(buf, cap);
@@ -9252,7 +9240,7 @@ int main(int argc, char **argv) {
                 if (f != stdin)
                     fclose(f);
                 fmt(fsr, fch, bits, 0, "fail", "no-mem");
-                return e_info ? 2 : 3;
+                return p_info ? 2 : 3;
             }
             buf = nb;
         }
@@ -9265,8 +9253,48 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    /* Open the streaming ctx (validated opts); ingest + decode run on it. */
+    ac4d_ctx *dctx = NULL;
+    {
+        ac4d_opts dopts;
+        int orc;
+        memset(&dopts, 0, sizeof dopts);
+        dopts.pres_sel = (int)sel_n;
+        dopts.drc_on = p_drc;
+        dopts.drc_out_ref = (int)p_drc_or;
+        dopts.drc_ref_given = p_drc_given;
+        dopts.drc_boost_pct = (int)p_drc_boost;
+        dopts.drc_cut_pct = (int)p_drc_cut;
+        dopts.de_given = p_de_given;
+        dopts.de_level = p_de;
+        dopts.sr_override = (int)sr_n;
+        dopts.ch_override = (int)ch_n;
+        dopts.bits =
+            strcmp(bits, "24") == 0 ? 24 : strcmp(bits, "32f") == 0 ? 32 : 16;
+        dopts.ajoc_core = p_ajoc;
+        orc = ac4d_open(&dctx, &dopts);
+        if (orc != AC4D_OK) {
+            const char *rz = orc == AC4D_UNSUPPORTED
+                ? (p_drc || (getenv("AC4DEC_DRC") &&
+                             getenv("AC4DEC_DRC")[0] == '1')
+                       ? "drc-unimpl"
+                       : "de-unimpl")
+                : "no-mem";
+            free(buf);
+            fmt(fsr, fch, bits, 0, "fail", rz);
+            return 3;
+        }
+    }
+    e_verb = p_verb;
+    e_ajoc_core = p_ajoc;
+    e_out_cplx = p_out_cplx;
+    e_render_prov = p_prov;
+    e_wav = p_wav;
+    e_info = p_info;
+
     /* Demux to raw frames (decode order). */
     raw_t *raws = NULL;
+    shim_pkt_t *fpk = NULL; /* full sync packets (combined alloc) */
     size_t nraw = 0;
     bytes_t pes = {0, 0, 0}; /* owned iff TS path */
     const char *vias = "?";
@@ -9313,12 +9341,16 @@ int main(int argc, char **argv) {
             free(fl);
         }
         if (pick && pick_n > 0) {
-            raws = malloc(pick_n * sizeof *raws);
+            raws = malloc(pick_n * (sizeof *raws + sizeof *fpk));
             if (raws) {
+                fpk = (shim_pkt_t *)(raws + pick_n);
                 for (size_t i = 0; i < pick_n; i++) {
                     const syncframe_t *sf = &pick[pick_s + i];
                     raws[i].p = pes.v + sf->off + sf->hdrlen;
                     raws[i].len = sf->rawlen;
+                    fpk[i].p = pes.v + sf->off;
+                    fpk[i].len = sf->hdrlen + sf->rawlen +
+                        (sf->crc ? (size_t)2 : (size_t)0);
                 }
                 nraw = pick_n;
             }
@@ -9331,7 +9363,7 @@ int main(int argc, char **argv) {
             pes.v = NULL;
             free(buf);
             fmt(fsr, fch, bits, 0, "fail", "no-sync");
-            return e_info ? 2 : 3;
+            return p_info ? 2 : 3;
         }
     } else if (is_mp4(buf, len)) {
         samplelist_t sl = {0, 0, 0, 0, 0, 0, 0};
@@ -9341,15 +9373,17 @@ int main(int argc, char **argv) {
             free(sl.v);
             free(buf);
             fmt(fsr, fch, bits, 0, "fail", "no-sync");
-            return e_info ? 2 : 3;
+            return p_info ? 2 : 3;
         }
-        raws = malloc(sl.n * sizeof *raws);
+        raws = malloc(sl.n * (sizeof *raws + sizeof *fpk));
         if (!raws) {
             free(sl.v);
             free(buf);
             fmt(fsr, fch, bits, 0, "fail", "no-mem");
-            return e_info ? 2 : 3;
+            return p_info ? 2 : 3;
         }
+        fpk = (shim_pkt_t *)(raws + sl.n);
+        memset(fpk, 0, sl.n * sizeof *fpk);
         for (size_t i = 0; i < sl.n; i++) {
             raws[i].p = buf + sl.v[i].off;
             raws[i].len = sl.v[i].size;
@@ -9367,11 +9401,15 @@ int main(int argc, char **argv) {
         if (fl && nfl > 0) {
             size_t bs = 0, bn = 0;
             longest_run(fl, nfl, &bs, &bn);
-            raws = malloc(bn * sizeof *raws);
+            raws = malloc(bn * (sizeof *raws + sizeof *fpk));
             if (raws) {
+                fpk = (shim_pkt_t *)(raws + bn);
                 for (size_t i = 0; i < bn; i++) {
                     raws[i].p = buf + fl[bs + i].off + fl[bs + i].hdrlen;
                     raws[i].len = fl[bs + i].rawlen;
+                    fpk[i].p = buf + fl[bs + i].off;
+                    fpk[i].len = fl[bs + i].hdrlen + fl[bs + i].rawlen +
+                        (fl[bs + i].crc ? (size_t)2 : (size_t)0);
                 }
                 nraw = bn;
             }
@@ -9382,16 +9420,19 @@ int main(int argc, char **argv) {
             if (len >= 2 && is_sync(rd16be(buf))) {
                 free(buf);
                 fmt(fsr, fch, bits, 0, "fail", "no-sync");
-                return e_info ? 2 : 3;
+                return p_info ? 2 : 3;
             }
-            raws = malloc(sizeof *raws); /* bare raw frame */
+            raws = malloc(sizeof *raws +
+                            sizeof *fpk); /* bare raw frame */
             if (!raws) {
                 free(buf);
                 fmt(fsr, fch, bits, 0, "fail", "no-mem");
-                return e_info ? 2 : 3;
+                return p_info ? 2 : 3;
             }
             raws[0].p = buf;
             raws[0].len = len;
+            fpk = (shim_pkt_t *)(raws + 1);
+            memset(fpk, 0, sizeof *fpk);
             nraw = 1;
             vias = "bare";
         }
@@ -9425,7 +9466,7 @@ int main(int argc, char **argv) {
         free(pes.v);
         free(buf);
         fmt(fsr, fch, bits, 0, "fail", "no-mem");
-        return e_info ? 2 : 3;
+        return p_info ? 2 : 3;
     }
     size_t nkeep = 0, nrej = 0, maxtail = 0;
     int gfs = -1, grate = -1, gch = -1;
@@ -9494,7 +9535,7 @@ int main(int argc, char **argv) {
             : (nraw > 0 && nverrej == nraw) ? "unsupported-version"
                                             : "no-sync";
         fmt(fsr, fch, bits, 0, "fail", why);
-        return e_info ? 2 : 3;
+        return p_info ? 2 : 3;
     }
 
     /* ig-gate: emit from first ig=1; none -> emit all (fail-open). */
@@ -9534,7 +9575,7 @@ int main(int argc, char **argv) {
     if (gch == 0) {
         /* Principled no-bed: parsed N frames, skipped object-class
          * payloads, no channel bed anywhere (oracle 0ch agrees). */
-        if (e_info)
+        if (p_info)
             e3_info_print(ts, srbuf, chbuf, bits, (long)nkeep, "ok",
                           "no-bed", vias, grate, gfs);
         else
@@ -9632,10 +9673,10 @@ int main(int argc, char **argv) {
         free(raws);
         free(pes.v);
         free(buf);
-        return e_info ? 2 : 3;
+        return p_info ? 2 : 3;
     }
 
-    FILE *o = e_info ? fopen("/dev/null", "wb")
+    FILE *o = p_info ? fopen("/dev/null", "wb")
                        : (strcmp(out, "-") == 0 ? stdout : fopen(out, "wb"));
     if (!o) {
         free(ts);
@@ -9644,7 +9685,7 @@ int main(int argc, char **argv) {
         free(pes.v);
         free(buf);
         fmt(srbuf, chbuf, bits, 0, "fail", "no-output");
-        return e_info ? 2 : 4;
+        return p_info ? 2 : 4;
     }
     size_t npre = 0;
     for (size_t i = 0; i < estart; i++)
@@ -9697,124 +9738,14 @@ int main(int argc, char **argv) {
      * mismatch/entropy-fail) still exit 3. Stereo path unchanged
      * (strict). e3_decode_frames buffers PCM fully before writing,
      * so nothing is emitted before the fallback decision. */
-    static const char *const gapfb[] = {
-        "5x-acpl-unimpl", "5x-codec-reserved", "5x-cc1-unimpl",
-        "5x-cc2-unimpl", "5x-cc3-unimpl", "5x-lfe-width", "snf-unimpl",
-        "ssf-unimpl", "aspx-unimpl", "aspx-acpl-unimpl",
-        "8ch-unimpl", "714-mode-unimpl", "714-grp-unimpl",
-        "714-addch-unimpl", "714-lfe-width", NULL};
-    const char *gapnote = NULL;
+    const char *gapnote = NULL; /* (no rewind: gap suffix unused) */
     const char *gapkind = "5x-gap";
-    int ims_probe = (want_real && gch == 2 && all_ims) ? 1 : 0;
-    int t14_probe = (want_real && gch == 12 && all_714) ? 1 : 0;
-    if ((want_real && gch == 6) || ims_probe || t14_probe) {
-        const char *gn0 = "ok";
-        if (ims_probe) {
-            gapkind = "ims-gap";
-            e3_zeroext = (all_ims120 && out_ch == 6) ? 6 : 0;
-        } else {
-            e3_zeroext = 0;
-        }
-        if (t14_probe)
-            gapkind = "714-gap";
-        int pnch = t14_probe ? 8 : gch;
-        /* Probe: close + reopen output around the attempt so the
-         * fallback starts from a clean file. */
-        long n0 =
-            e3_decode_frames(raws, ts, keep, estart, nraw, pnch, (int)spf,
-                             (int)spf, o, &gn0, elst_h, elst_t, elst_mdur);
-        if (n0 < 0) {
-            for (int q = 0; gapfb[q]; q++) {
-                if (strcmp(gn0, gapfb[q]) == 0) {
-                    gapnote = gn0;
-                    break;
-                }
-            }
-            if (gapnote && o != stdout && !e_info) {
-                fclose(o);
-                o = fopen(out, "wb");
-                if (!o) {
-                    free(ts);
-                    free(keep);
-                    free(raws);
-                    free(pes.v);
-                    free(buf);
-                    wav_spool_free();
-                    fmt(srbuf, chbuf, bits, 0, "fail", "no-output");
-                    return e_info ? 2 : 4;
-                }
-            }
-            if (gapnote)
-                wav_spool_reset(); /* fallback restarts output */
-            if (gapnote) {
-                want_real = 0; /* fall through to stub writer */
-            } else {
-                if (o != stdout) {
-                    fclose(o);
-                    remove(out);
-                }
-                free(ts);
-                free(keep);
-                free(raws);
-                free(pes.v);
-                free(buf);
-                wav_spool_free();
-                fmt(srbuf, chbuf, bits, 0, "fail", gn0);
-                return e_info ? 2 : 3;
-            }
-        } else {
-            int werr = 0;
-            if (e_wav)
-                werr = wav_emit(o, out_sr, e_wav_ch, e_wav_bps,
-                                e_wav_frames, e_wav_sp, e_wav_sn) != 0;
-            wav_spool_free();
-            if (o != stdout)
-                werr |= fclose(o) != 0;
-            else
-                werr |= fflush(o) != 0;
-            if (werr) {
-                if (o != stdout)
-                    remove(out);
-                fmt(srbuf, chbuf, bits, 0, "fail", "output-fail");
-                free(ts);
-                free(keep);
-                free(raws);
-                free(pes.v);
-                free(buf);
-                return e_info ? 2 : 4;
-            }
-            if (e_info)
-                e3_info_print(ts, srbuf, chbuf, bits, n0, "ok", "pcm",
-                              vias, grate, gfs);
-            else
-                fmt(srbuf, chbuf, bits, n0, "ok", e3_ok_note("pcm"));
-            e_d26_bed_plan(vias, sel_n, gch);
-            free(ts);
-            free(keep);
-            free(raws);
-            free(pes.v);
-            free(buf);
-            if (!saw_ig && e9_show(2))
-                fprintf(stderr, "ac4dec: warn no-ig-in-stream emit-all\n");
-            if (e9_show(3))
-                fprintf(stderr,
-                        "ac4dec: real pcm, %ld frames x %ld samples "
-                    "(%s, pre-i dropped %ld, rej %ld)\n",
-                    n0, spf, vias, (long)npre, (long)nrej);
-            if (elst_st && e9_show(3))
-                fprintf(stderr, "ac4dec: elst %s head=%llu tail=%llu\n",
-                        elst_st > 0 ? "applied" : "ignored-complex",
-                        (unsigned long long)elst_h,
-                        (unsigned long long)elst_t);
-            return 0;
-        }
-    }
     if (!want_real) {
         static const uint8_t zeros[4096] = {0};
         long total = (long)nemit * spf * out_ch * bps;
         long left = total;
         int werr = 0;
-        if (e_wav) {
+        if (p_wav) {
             werr = wav_emit(o, out_sr, out_ch, bps, (long)nemit * spf,
                             NULL, (size_t)total) != 0;
             left = 0;
@@ -9839,9 +9770,9 @@ int main(int argc, char **argv) {
             free(raws);
             free(pes.v);
             free(buf);
-            return e_info ? 2 : 4;
+            return p_info ? 2 : 4;
         }
-        if (e_info)
+        if (p_info)
             e3_info_print(ts, srbuf, chbuf, bits, (long)nemit, "ok",
                           "stub-pcm", vias, grate, gfs);
         else
@@ -9869,64 +9800,257 @@ int main(int argc, char **argv) {
                 gapnote ? " " : "", gapnote ? gapnote : "");
         return 0;
     }
+    /* Streaming real path (replaces probe + batch decode): feed kept
+     * frames, spool emitted PCM, elst-trim, write. */
     const char *gnote = "ok";
-    long ndec = e3_decode_frames(raws, ts, keep, estart, nraw, gch, (int)spf,
-                                 (int)spf, o, &gnote, elst_h, elst_t,
-                                 elst_mdur);
+    const char *sh_gapnote = NULL;
+    long sh_gapfirst = -1;
+    uint8_t *spool = NULL;
+    size_t spool_n = 0;
+    uint8_t *fbuf = NULL;
+    uint8_t *synth = NULL;
+    size_t synth_cap = 0;
+    long nframes_out = 0;
+    long framelen = 0;
     int werr = 0;
-    if (ndec >= 0 && e_wav)
-        werr = wav_emit(o, out_sr, e_wav_ch, e_wav_bps, e_wav_frames,
-                        e_wav_sp, e_wav_sn) != 0;
-    wav_spool_free();
+    int info_ok = 0;
+    size_t fi;
+    fbuf = malloc((size_t)8 * 2048 * 4);
+    if (!fbuf) {
+        gnote = "no-mem";
+        goto fail3;
+    }
+    for (fi = estart; fi < nraw; fi++) {
+        const uint8_t *pkt;
+        size_t plen;
+        int frc;
+        if (!keep[fi])
+            continue;
+        if (fpk[fi].p) {
+            pkt = fpk[fi].p;
+            plen = fpk[fi].len;
+        } else {
+            /* Headerless carriage (mp4/bare): synthesize an exact-fit
+             * AC40 header (stripped by feed; payload untouched). */
+            size_t hl = raws[fi].len < 0xFFFF ? (size_t)4 : (size_t)7;
+            if (hl + raws[fi].len > synth_cap) {
+                size_t nc = hl + raws[fi].len;
+                uint8_t *nb = realloc(synth, nc);
+                if (!nb) {
+                    gnote = "no-mem";
+                    goto fail3;
+                }
+                synth = nb;
+                synth_cap = nc;
+            }
+            synth[0] = 0xAC;
+            synth[1] = 0x40;
+            if (hl == 4) {
+                synth[2] = (uint8_t)((raws[fi].len >> 8) & 0xFF);
+                synth[3] = (uint8_t)(raws[fi].len & 0xFF);
+            } else {
+                synth[2] = 0xFF;
+                synth[3] = 0xFF;
+                synth[4] = (uint8_t)((raws[fi].len >> 16) & 0xFF);
+                synth[5] = (uint8_t)((raws[fi].len >> 8) & 0xFF);
+                synth[6] = (uint8_t)(raws[fi].len & 0xFF);
+            }
+            memcpy(synth + hl, raws[fi].p, raws[fi].len);
+            pkt = synth;
+            plen = hl + raws[fi].len;
+        }
+        frc = ac4d_feed(dctx, pkt, plen);
+        if (frc == AC4D_BAD_PACKET || frc == AC4D_CONFIG_CHANGE) {
+            gnote = ac4d_gap_note(dctx);
+            goto fail3;
+        }
+        if (frc < 0) {
+            gnote = ac4d_gap_note(dctx);
+            goto fail3;
+        }
+        if (!info_ok) {
+            ac4d_info lii;
+            if (ac4d_get_info(dctx, &lii) != AC4D_OK ||
+                lii.channels != out_ch || lii.spf != spf ||
+                lii.sample_rate != out_sr) {
+                gnote = "lib-info-mismatch";
+                goto fail3;
+            }
+            framelen = (long)lii.channels * (long)lii.spf *
+                (lii.bits == 24 ? 3 : lii.bits == 32 ? 4 : 2);
+            info_ok = 1;
+        }
+        for (;;) {
+            int grc = ac4d_get_frame(dctx, fbuf, framelen, NULL);
+            uint8_t *nb;
+            if (grc == AC4D_NEED_MORE)
+                break;
+            if (grc != AC4D_OK && grc != AC4D_GAP) {
+                gnote = ac4d_gap_note(dctx);
+                goto fail3;
+            }
+            if (grc == AC4D_GAP && !sh_gapnote) {
+                sh_gapnote = ac4d_gap_note(dctx);
+                sh_gapfirst = nframes_out;
+            }
+            if (p_info) {
+                nframes_out++;
+                continue;
+            }
+            nb = realloc(spool, spool_n + (size_t)framelen);
+            if (!nb) {
+                gnote = "no-mem";
+                goto fail3;
+            }
+            spool = nb;
+            memcpy(spool + spool_n, fbuf, (size_t)framelen);
+            spool_n += (size_t)framelen;
+            nframes_out++;
+        }
+    }
+    for (;;) {
+        int grc = ac4d_flush(dctx, fbuf, framelen);
+        uint8_t *nb;
+        if (grc == AC4D_NEED_MORE)
+            break;
+        if (grc != AC4D_OK && grc != AC4D_GAP) {
+            gnote = ac4d_gap_note(dctx);
+            goto fail3;
+        }
+        if (grc == AC4D_GAP && !sh_gapnote) {
+            sh_gapnote = ac4d_gap_note(dctx);
+            sh_gapfirst = nframes_out;
+        }
+        if (p_info) {
+            nframes_out++;
+            continue;
+        }
+        nb = realloc(spool, spool_n + (size_t)framelen);
+        if (!nb) {
+            gnote = "no-mem";
+            goto fail3;
+        }
+        spool = nb;
+        memcpy(spool + spool_n, fbuf, (size_t)framelen);
+        spool_n += (size_t)framelen;
+        nframes_out++;
+    }
+    if (nframes_out != (long)nemit) {
+        gnote = "frame-count-mismatch";
+        goto fail3;
+    }
+    if (!p_info) {
+        /* elst trim on final PCM (batch rule, outsamp = nemit*spf). */
+        long outsamp = (long)nemit * spf;
+        long t0 = 0, t1 = outsamp;
+        size_t bpsn =
+            (size_t)(strcmp(bits, "24") == 0 ? 3 : strcmp(bits, "32f") == 0 ? 4 : 2);
+        if (estart == 0 && elst_mdur > 0 && outsamp > 0 &&
+            (elst_h > 0 || elst_t > 0)) {
+            long th = (long)(elst_h * (uint64_t)outsamp / elst_mdur);
+            long tt = (long)(elst_t * (uint64_t)outsamp / elst_mdur);
+            if (th >= 0 && tt >= 0 && th + tt < outsamp) {
+                t0 = th;
+                t1 = outsamp - tt;
+            }
+            if (e9_show(5))
+                fprintf(stderr, "ELST t0=%ld t1=%ld outsamp=%ld\n", t0, t1,
+                        outsamp);
+        }
+        if (p_wav) {
+            werr = wav_emit(o, out_sr, out_ch, bps, t1 - t0,
+                            spool + (size_t)t0 * (size_t)out_ch * bpsn,
+                            (size_t)(t1 - t0) * (size_t)out_ch * bpsn) != 0;
+        } else if (t1 > t0) {
+            if (fwrite(spool + (size_t)t0 * (size_t)out_ch * bpsn,
+                       (size_t)out_ch * bpsn, (size_t)(t1 - t0),
+                       o) != (size_t)(t1 - t0))
+                werr = 1;
+        }
+    }
+    free(spool);
+    spool = NULL;
+    free(fbuf);
+    fbuf = NULL;
+    free(synth);
+    synth = NULL;
     if (o != stdout) {
         if (!werr)
             werr = fclose(o) != 0;
         else
             fclose(o);
-        if (ndec < 0 || werr)
-            remove(out);
-    } else if (ndec >= 0) {
+        o = NULL;
+        if (werr) {
+            fmt(srbuf, chbuf, bits, 0, "fail", "output-fail");
+            free(ts);
+            free(keep);
+            free(raws);
+            free(pes.v);
+            free(buf);
+            ac4d_close(dctx);
+            return p_info ? 2 : 4;
+        }
+    } else if (!p_info) {
         werr |= fflush(o) != 0;
+        if (werr) {
+            fmt(srbuf, chbuf, bits, 0, "fail", "output-fail");
+            free(ts);
+            free(keep);
+            free(raws);
+            free(pes.v);
+            free(buf);
+            ac4d_close(dctx);
+            return p_info ? 2 : 4;
+        }
     }
-    if (ndec < 0) {
-        fmt(srbuf, chbuf, bits, 0, "fail", gnote);
-        free(ts);
-        free(keep);
-        free(raws);
-        free(pes.v);
-        free(buf);
-        return e_info ? 2 : 3;
-    }
-    if (werr) {
-        fmt(srbuf, chbuf, bits, 0, "fail", "output-fail");
-        free(ts);
-        free(keep);
-        free(raws);
-        free(pes.v);
-        free(buf);
-        return e_info ? 2 : 4;
-    }
-    if (e_info)
-        e3_info_print(ts, srbuf, chbuf, bits, ndec, "ok", "pcm", vias,
+    if (p_info)
+        e3_info_print(ts, srbuf, chbuf, bits, nframes_out, "ok", "pcm", vias,
                       grate, gfs);
+    else if (sh_gapnote && sh_gapfirst == 0)
+        fmt(srbuf, chbuf, bits, nframes_out, "ok", e3_ok_note("stub-pcm"));
     else
-        fmt(srbuf, chbuf, bits, ndec, "ok", e3_ok_note("pcm"));
+        fmt(srbuf, chbuf, bits, nframes_out, "ok", e3_ok_note("pcm"));
     e_d26_bed_plan(vias, sel_n, gch);
     if (!saw_ig && e9_show(2))
         fprintf(stderr, "ac4dec: warn no-ig-in-stream emit-all\n");
-    if (e9_show(3))
+    if (e9_show(3)) {
         fprintf(stderr,
                 "ac4dec: real pcm, %ld frames x %ld samples "
-                "(%s, pre-i dropped %ld, rej %ld)\n",
-                ndec, spf, vias, (long)npre, (long)nrej);
+                "(%s, pre-i dropped %ld, rej %ld%s%s)\n",
+                nframes_out, spf, vias, (long)npre, (long)nrej,
+                sh_gapnote ? ", gap->silence " : "",
+                sh_gapnote ? sh_gapnote : "");
+        if (sh_gapnote)
+            gapnote = sh_gapnote;
+    }
     if (elst_st && e9_show(3))
         fprintf(stderr, "ac4dec: elst %s head=%llu tail=%llu\n",
                 elst_st > 0 ? "applied" : "ignored-complex",
-                (unsigned long long)elst_h, (unsigned long long)elst_t);
+                (unsigned long long)elst_h,
+                (unsigned long long)elst_t);
     free(ts);
     free(keep);
     free(raws);
     free(pes.v);
     free(buf);
+    ac4d_close(dctx);
     return 0;
+fail3:
+    free(spool);
+    free(fbuf);
+    free(synth);
+    if (o != stdout && o != NULL) {
+        fclose(o);
+        remove(out);
+    }
+    fmt(srbuf, chbuf, bits, 0, "fail", gnote);
+    free(ts);
+    free(keep);
+    free(raws);
+    free(pes.v);
+    free(buf);
+    ac4d_close(dctx);
+    return p_info ? 2 : 3;
 }
+
+#endif /* AC4D_LIB_ONLY */
