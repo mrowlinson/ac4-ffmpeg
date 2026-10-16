@@ -1,0 +1,50 @@
+To: samples-request@ffmpeg.org
+Subject: [samples-request] AC-4 parser-torture TOC-gate trio (ac4/t17*)
+Attachments: t17-rate14.ac4, t17b-rate14-f0.ac4, t18-rate15.ac4
+(3 files, 3126 bytes total)
+
+Hello,
+
+Please upload these files under fate-suite `ac4/` for the future
+ff_ac4_parser FATE torture tests (parser-torture block staged in
+tests/fate/ac4.mak; tests to follow — staging the bytes now):
+
+Suite files (needed by the tests):
+  ac4/t17-rate14.ac4        1042 bytes (mid-stream frame rate:=14,
+    TOC-head gate must reject f1; parser emits f0+f2 = 2)
+    sha256 118aa558b7577772d1520eb12f46b22635e3c7277a132f262e3880932a121c1b
+  ac4/t17b-rate14-f0.ac4    1042 bytes (head-position twin: f0
+    rate:=14; parser emits f1+f2 = 2)
+    sha256 705f1f92d35394d8a1883693218dc9dbe355a044a87a132b32134c8f00ddf90a
+  ac4/t18-rate15.ac4        1042 bytes (rate-15 twin of t17;
+    parser emits 2)
+    sha256 97d0a7ba29dcdfc224d360216fd07d6e3c781181b713c6a8c8677cfd6219041e
+
+Provenance / license: the three files are byte surgery (TOC rate
+field rewrite + CRC re-stamp) on clip-stereo.ac4 from my earlier
+15-file decoder mail — pure sine tones I synthesized myself (48 kHz
+s16 stereo 440/880 Hz), encoded with our own cleanroom AC-4 encoder
+(c-ac4enc, an independent implementation; no Dolby SDK, code, or
+bytes involved). The surgery script is deterministic and reproduces
+all three files byte-identically. No third-party content. I release
+all three files for unrestricted redistribution as part of the
+FFmpeg FATE suite.
+
+Stream details: sync AC41, fri13, spf2048, stereo cm2; CRC ok
+(re-stamped after the rate edit). Reference behavior: a cleanroom
+decoder skips the rate-14/15 frame at decode (2f pcm for t17/t18,
+1f for head-position t17b); the parser must reject it at parse
+(emit the 2 TOC-ok survivors in all three cases).
+
+Notes:
+- File names are proposed (they match the staged mak comment
+  `ac4/tNN-*.ac4`); happy to rename to whatever fits suite
+  conventions.
+- `ac4/` is the directory from the decoder mail (no existing files
+  to clobber under these names).
+- Nothing further in this mail: the remaining torture vectors go
+  in a later batch with the parser-FATE harness post.
+- I can re-send the attachments on request.
+
+Thanks,
+Michael Rowlinson <mrowlinson@gmail.com>
