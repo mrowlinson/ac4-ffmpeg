@@ -1,4 +1,4 @@
-# ASSEMBLY-PROTOCOL-R2 — A0→C→E→D post-order stacking, r4 pins (design doc, no code)
+# ASSEMBLY-PROTOCOL-R2 — A→A0→B→C→E→D post-order stacking, r4 pins + Series-A/B head (design doc, no code)
 
 Date: 2026-10-16 (R2 refresh of `ff-assembly-protocol/ASSEMBLY-PROTOCOL.md`; original untouched).
 Branch copy: `ff/doc-b2f1` (F1 fix — appends `## Rule 5` only;
@@ -11,6 +11,10 @@ rebased 20-commit stack: A0-submit-r2, C-split-r4, E-ts-r3, D-split-r3
 with D6 in-series; r2/r3 SHAs survive only in explicitly-marked
 historical notes; protocol form now pre-applied in-branch, zero
 assembly rebases).
+R-final refresh: 2026-10-16, branch `ff/doc-runbook-final` (decoder-first
+order A→A0→B→C→E→D: Series-A pre-step + Series-B creator-flip recorded;
+validated A0→C→E→D 20-stack core stands as combo-5 left it; B-first
+re-validation is a disclosed residual, not done here).
 Copy: `/Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-combo-rerun/ASSEMBLY-PROTOCOL-R2.md`
 (TMPDIR there). Parent repos untouched, no branches, no commits, no pushes.
 Supersedes the dry-run finding (RUNBOOK-DRYRUN top: 11/28 post-order conflicts)
@@ -19,17 +23,21 @@ with a conflict-free assembly procedure, validated by stacking in `wt/`
 r4: `ff-combo-rerun-5/COMBO-RERUN-5.md`, `git am` 20/20).
 
 ## Tip verification (all `git rev-parse`, read-only; r4 stack in the
-`ff-submit-fix/ffmpeg` scratch clone, linear over pristine 3e6cd5e)
+`ff-submit-fix/ffmpeg` scratch clone, linear over pristine 3e6cd5e;
+Series-A/B packs on parent master, file pins)
 
 | Series | Shape used | Tip | Verified |
 |---|---|---|---|
-| A0 | A0-submit-r2 (resquash + ASCII recut) | fc4866b | `master..A0-submit-r2` = fc4866b only, parent 3e6cd5e |
-| C | C-split-r4 11/11 (C1-C3 + C4'/C5' + C6 + W1-W3 + C7/C8 DSI) | 1ccd10a | 282ac3b,acc1bb8,0b3f890,3631fcf,b3f3a1f,38a19be,f36f407,f07df7f,e6f99ec,e017d9b,1ccd10a |
-| E | E-ts-r3 2/2 on the C' tip (E2 already protocol-form) | a2485a9 | 5e2d5d5+a2485a9 |
-| D | D-split-r3 6/6 on the E' tip (D4/D5/D6 append-form) | 08b4f00 | 083c676,c01ad3f,499892d,dd69611,0747972,08b4f00 |
+| A | Series-A decoder re-cut 3 (FINAL, post-ready) | mbox 606385 B @ f827e56 | staging 5602d33/de33e47, `git am` 6d38cf5/f7f9fd9 ZERO warnings on pristine 3e6cd5e |
+| A0 | A0-submit-r2 (resquash + ASCII recut) | fc4866b | `master..A0-submit-r2` = fc4866b only, parent 3e6cd5e (UNCHANGED, re-verified this run) |
+| B | Series-B doc + decoder-FATE (STAGED, re-cut at clock end) | mbox 13067 B @ 1645e4e | staging 02bc75b/af19c5e, `git am` clean on pristine 3e6cd5e; 9 PENDING-stub goldens, never post as-is |
+| C | C-split-r4 11/11 (C1-C3 + C4'/C5' + C6 + W1-W3 + C7/C8 DSI) | 1ccd10a | 282ac3b,acc1bb8,0b3f890,3631fcf,b3f3a1f,38a19be,f36f407,f07df7f,e6f99ec,e017d9b,1ccd10a (UNCHANGED, re-verified this run) |
+| E | E-ts-r3 2/2 on the C' tip (E2 already protocol-form) | a2485a9 | 5e2d5d5+a2485a9 (UNCHANGED, re-verified this run) |
+| D | D-split-r3 6/6 on the E' tip (D4/D5/D6 append-form) | 08b4f00 | 083c676,c01ad3f,499892d,dd69611,0747972,08b4f00 (UNCHANGED, re-verified this run) |
 
-Order A0→C→E→D per SUBMIT-PLAN-V2:130 (`A0→…→C1→C2→C3→C4→E1→E2→D1→D2→D3`)
-and :170 (`A→B→C→E→D`). Old branch tips (C-encoder e065111, D-parser 3b3ca20,
+Order A→A0→B→C→E→D (decoder-first flip APPROVED, P3; HISTORICAL order
+A0→C→E→D per SUBMIT-PLAN-V2:130 and :170 survives only as the validated
+20-stack core shape). Old branch tips (C-encoder e065111, D-parser 3b3ca20,
 D-demux 9a98bea/d2a253d, D-mux 5244b5c, E-tsmux 3fdb20c) are SUPERSEDED for
 post purposes — never stack them; their conflict hunks are documented only
 as the reason for each rule. HISTORICAL r2 C line (C-split-r2@d37a7b8 9/9:
@@ -38,17 +46,26 @@ HISTORICAL r3 C line (C-split-r3@065976d 11/11:
 a6f5544,3c8cafc,607e9fa,ed26bdd,ed73469,be72f52,c747e4f,41e00f5,f03e143,89adb71,065976d),
 HISTORICAL E1'/E2' (@98486f6/09a1bd2, create-form) and HISTORICAL
 D-split-r2 (@fcc9dbe 5/5: 4ba9790,14c6b50,5cd1740,b0e64ff,fcc9dbe)
-likewise superseded — post from the r4 lines.
+likewise superseded — post from the r4 lines. HISTORICAL Series-A
+re-cut 2 (606436 B @ a89c3b1) and re-cut 1 (605740 B) superseded by
+re-cut 3 (606385 B @ f827e56: hygiene ASCII + revendor fixes).
 
-## Rule 0 — what each series is (post set, 20 patches, zero rebases)
+## Rule 0 — what each series is (post set, 24 patches: 20-stack core + A/B head)
 
-A0: fc4866b. C: 282ac3b, acc1bb8, 0b3f890, 3631fcf, b3f3a1f,
+A: 5602d33 (1/2 decoder core, 24 files) + de33e47 (2/2 wire, 2 files).
+A0: fc4866b. B: 02bc75b (1/2 doc, 3 files) + af19c5e (2/2 fate, 12 files,
+RE-CUT at clock end — staged form carries PENDING stubs). C: 282ac3b,
+acc1bb8, 0b3f890, 3631fcf, b3f3a1f,
 38a19be, f36f407, f07df7f, e6f99ec, e017d9b, 1ccd10a. E: 5e2d5d5,
 a2485a9 (protocol-form in-branch). D: 083c676, c01ad3f, 499892d,
 dd69611, 0747972, 08b4f00 (all protocol-form in-branch).
-Zero patches need rebase: E2/D4/D5/D6 already carry the Rules 2-3 form
-(no tests/Makefile hunks, mak stanzas aggregate-anchored), so all 20
-post as-is (`git am` 20/20, see Validation). R4 notes: C6 (38a19be)
+Validated core: A0→C→E→D posts 20/20 as-is, zero rebases
+(`git am` 20/20, see Validation). Decoder-first head: A pre-step
+(disjoint lavc-only, am-clean on pristine 3e6cd5e — its A+C
+allcodecs.c/Makefile adjacencies are NOT re-validated here, see Rule 4)
++ B creator (creates ac4.mak + include; C5' rebase create→append +
+E2/D re-anchor owed at C post, see Rules 2-3 + Verdict residual (a)).
+R4 notes: C6 (38a19be)
 flips FATE_SAMPLES_AVCONV→FATE_FFMPEG (SAMPLES-unset); W3 (e6f99ec)
 adds the 10-line fold8 block; W2 adds tests/ac4-neg-check.sh (not fate);
 C7/C8 ride inside C as-is (lavc + fate refs only — no mak, Makefile-block,
@@ -56,48 +73,60 @@ Changelog, or include impact); C-final mak 53 lines byte-identical to r3;
 D6 appends the ts-demux stanza + `FATE_AC4_TSDEMUX-yes` (E1 in-history,
 no out-of-series dep).
 
-## Rule 1 — Changelog: C-only, anchor `version <next>:` + ` - ASTC…`
+## Rule 1 — Changelog: B appends, C prepends, no conflict (anchor `version <next>:`)
 
-Claimants found: C `0b3f890:Changelog` (`+ native AC-4 audio encoder`;
+Claimants found: B1 `02bc75b:Changelog` (`+ native AC-4 audio decoder`,
+APPENDED at the `<next>` chapter end, oldest→youngest); C
+`0b3f890:Changelog` (`+ native AC-4 audio encoder`, PREPENDED;
 HISTORICAL r3 C3 was 607e9fa, r2 C3 was ce7a9fc, same line),
 old D-mux `16fc2b0` (`+ AC-4 audio muxing in MP4/MOV (ac-4/dac4)`),
 old D-parser `70dc1b0` (`+ AC-4 parser`, self-dropped by d4e310f mid-series).
-A0/E1/E2 carry no Changelog hunk (verified by diff-stat).
+A/A0/E1/E2 carry no Changelog hunk (A: decoder-only code, no Changelog
+in 1/2 or 2/2; A0/E1/E2 verified by diff-stat).
 
-- C3 (0b3f890) KEEPS its line — sole Changelog claimant in the stack.
+- B1 APPENDS its decoder line; C3 (0b3f890) KEEPS its encoder line —
+  different lines, opposite ends of the chapter, no textual conflict
+  (B-POST-CHECKLIST D6; HISTORICAL "C-only" was the pre-B 20-stack core).
 - D carries none: D-split D1/D3 already drop both old hunks per the
   d4e310f policy ("contributor patches leave the maintainer-curated
   Changelog alone", msg-D1/msg-D3). Do NOT resurrect them.
 - Reconciles P5/D-split take-this-version: the old branch hunks stay dead.
 
-## Rule 2 — tests/Makefile include: C creates, E2/D4 already dropped in-branch
+## Rule 2 — tests/Makefile include: B creates, C5'/E2/D4 carry none
 
-The r4 E2/D4 commits carry NO `tests/Makefile` hunk (verified by
-show: a2485a9 touches ac4.mak + script + ref only; dd69611/0747972/
-08b4f00 likewise mak/api-only) — the Rule-2 drop is pre-applied, not an
-assembly step. For the record, the r2/r3-era conflict was the identical
-line `include $(SRC_PATH)/tests/fate/ac4.mak` inserted after
-`include …/ac3.mak` (`master:tests/Makefile:156`) and before
-`adpcm.mak` (add/add, `git apply` failed for the 2nd and 3rd).
+B2 (af19c5e, re-cut at clock end) CREATES the include line
+`include $(SRC_PATH)/tests/fate/ac4.mak` at tests/Makefile:157 (between
+ac3/adpcm) — B-first creator (B-POST-CHECKLIST D5, am-clean on pristine
+3e6cd5e). HISTORICAL 20-stack-core form: C5' created it and E2/D4 drops
+were pre-applied in-branch (r4 E2/D4 carry NO tests/Makefile hunk —
+verified by show: a2485a9 touches ac4.mak + script + ref only;
+dd69611/0747972/08b4f00 likewise mak/api-only). Decoder-first delta
+(OPEN, residual (a)): C5' (b3f3a1f) still carries the create-hunk in
+-branch — it rebases to DROP the hunk at C post (same mechanical drop
+E2/D4 already carry). The r2/r3-era conflict record (identical line
+after `…/ac3.mak`, before `adpcm.mak`; add/add, `git apply` failed for
+the 2nd and 3rd) is why only the creator keeps it.
 
-- C5' (b3f3a1f; HISTORICAL r3 C5' was ed73469, r2 was efb75b7) KEEPS the
-  hunk (creates the include).
+## Rule 3 — tests/fate/ac4.mak: B creates, C/E2/D4/D5/D6 append before aggregate
 
-## Rule 3 — tests/fate/ac4.mak: C creates, E2/D4/D5/D6 append before aggregate
+One creator (B2 af19c5e 105-line mak: 14 live decoder stanzas + wiring +
+seed `fate-ac4:` aggregate with the B2 vars) plus five appends at their
+time (C5' b3f3a1f 41-line encoder stanza REBASED create→append; E2
+a2485a9 42-line TS stanza; D4 dd69611 12-line parser stanza; D5 0747972
+mp4 stanza via the Rule-3b 2-edit surgery; D6 08b4f00 ts-demux stanza).
+HISTORICAL 20-stack-core form (combo-5 validated): C created (43 lines →
+C-final 53, byte-identical to r3) + four in-branch appends, mak
+progression 53→96→107→117→126, E-split precedent scratch merge 4c65a7e.
+Decoder-first delta (OPEN, residual (a)): the C5' create→append rebase +
+E2/D re-anchor onto the B(+C) tail + full B-first-stack fate green are
+NOT validated here — same byte-verbatim stanza-move mechanism as the
+validated appends, new creator + anchors only.
 
-One creator (C b3f3a1f 43 lines → C-final 1ccd10a 53 lines,
-byte-identical to r3) plus four in-branch appends (E2 a2485a9 42-line TS
-stanza; D4 dd69611 12-line parser stanza; D5 0747972 mp4 stanza via the
-Rule-3b 2-edit surgery; D6 08b4f00 ts-demux stanza). Mak progression
-53→96→107→117→126. E-split precedent: scratch merge 4c65a7e
-(C stanza verbatim + E2 stanza appended + merged aggregate).
-
-- C5' creates the file verbatim (encoder stanza, 41 lines + blank +
-  `fate-ac4: $(FATE_AC4_ENC-yes)` seed aggregate); C6 flips the FATE
-  list line (SAMPLES-unset) and W3 inserts the 10-line fold8 block, so
-  the C-final file is 51 lines + blank + seed aggregate (53 total —
-  byte-identical to r3-final; C7/C8 touch lavc + fate refs only, zero
-  mak impact).
+- B2 creates the file verbatim (decoder stanzas + wiring + seed
+  aggregate); C5' appends the encoder stanza (41 lines + blank) before
+  the aggregate and extends it with `$(FATE_AC4_ENC-yes)`; C6 flips the
+  FATE list line (SAMPLES-unset) and W3 inserts the 10-line fold8 block
+  (C7/C8 touch lavc + fate refs only, zero mak impact).
 - Each later fate patch inserts its stanza (own comment header + rules +
   own `FATE_* +=` lines, byte-verbatim, single-blank separators) immediately
   BEFORE the `fate-ac4:` aggregate line (unique anchor), and EXTENDS that
@@ -117,18 +146,24 @@ Rule-3b 2-edit surgery; D6 08b4f00 ts-demux stanza). Mak progression
 - D6 append: ts-demux rules stanza + `FATE_AC4_TSDEMUX-yes` wiring with
   `fate-ac4-ts:` sub-aggregate; final aggregate gains
   `$(FATE_AC4_TSDEMUX-yes)`.
-- Final aggregate (line 126 of validated r4 file):
-  `fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes) $(FATE_AC4_TSDEMUX-yes)`
+- Final aggregate (B-first stack — exact line number set at C-post
+  re-validation; HISTORICAL 20-stack-core form was line 126:
+  `fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes)
+  $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes)
+  $(FATE_AC4_TSDEMUX-yes)`): B vars first (seed order), then ENC,
+  MPEGTS pair, PARSE, MP4, TSDEMUX — single `fate-ac4:` line, all vars.
 - No `--- Series X ---` merge markers in posted patches (4c65a7e's marker
   was scratch-only); each stanza's own comment header is the section header.
 
-## Rule 4 — verified disjoint, no action (file:line evidence at r4 tip 08b4f00)
+## Rule 4 — verified disjoint core + two A-side adjacencies (OPEN)
+
+Core file:line evidence at r4 tip 08b4f00 (combo-5 validated, stands):
 
 - `configure`: C probe block @7962–7972 + `CFLAGS-ac4enc_float` @8597
   vs D1 `ac4_demuxer_select` @3891.
 - `libavcodec/Makefile`: C encoder OBJS block @222–234 (DSI line rides
   inside the C block; `CFLAGS +=` guard @250) vs D1 parser OBJS @1288.
-- Single-owner files: `parsers.c` D1; `allcodecs.c`+`version.h` C;
+- Single-owner files: `parsers.c` D1; `version.h` C;
   `mov.c` D2; `movenc.c` D3; `mpegtsenc.c` E1; `ac4dec.c` A0;
   `demux.mak`+`seek.mak` A0 (M3 fate, never in ac4.mak);
   `doc/encoders.texi`+`doc/general_contents.texi` C;
@@ -136,10 +171,25 @@ Rule-3b 2-edit surgery; D6 08b4f00 ts-demux stanza). Mak progression
   intra-D only).
 - All new files have unique names (34 lavc `ac4_*` + 5 DSI `ac4dsi*`,
   `ac4_parser.c`, 3 apitest tools incl `api-ac4-ts-demux-test.c`,
-  `ac4-pmt-section.sh`, 7 fate refs, `tests/ac4-neg-check.sh`).
+  `ac4-pmt-section.sh`, 7 fate refs, `tests/ac4-neg-check.sh`;
+  A-side adds 23 lavc-dec core files + `ac4dec.c`, B-side adds the mak +
+  fate refs — names disjoint from the C set by construction, NOT
+  operationally re-verified here).
   No APIchanges, no lavf Makefile/allformats touches anywhere in the stack.
 - Disjointness proven operationally: `git am` 20/20 clean onto pristine
   3e6cd5e (combo-5), applied tree == tip 08b4f00.
+
+Decoder-first adjacencies (OPEN, residual (b) — textual disjointness NOT
+re-validated here; operational check owed at C post: `am` A→A0→B→C + build):
+
+- `allcodecs.c`: A 2/2 (decoder registration) + C3 (encoder
+  registration) — decoder vs encoder lines, expected disjoint.
+  (HISTORICAL "single-owner C" was the pre-A 20-stack core.)
+- `libavcodec/Makefile`: A 1/2 (decoder OBJS line) + C1/C3 (encoder OBJS
+  block @222–234) — decoder vs encoder regions, expected disjoint.
+- B-side doc adjacency: B1 (decoder table row + @section ac4) + C4'
+  (encoder table row at the same spot) — C rebases at C post
+  (B-POST-CHECKLIST, disclosed there, carried here).
 
 ## Validation (`git am` 20/20 onto pristine 3e6cd5e, read-only sources;
 r4 record `ff-combo-rerun-5/COMBO-RERUN-5.md` — HISTORICAL r3 record was
@@ -219,12 +269,30 @@ COMBO-RERUN-5 re-audited the premise on the 20-stack (no B2 mak at any
 step, `git am` 20/20, every mak merge a Rule-3 append + aggregate
 extension incl D6), so append+merge stands as the B2 landing procedure.
 
-## Verdict: APPLIES-CLEAN — residual conflicts: NONE
+Final cross-check (ff/doc-runbook-final): the E-tail append form above
+is now HISTORICAL under the approved decoder-first order — B lands
+before C/E/D and CREATES the file (Rule 3), so no E-track tail exists
+at B time. Append+merge stands as the mechanism (all later stanzas
+still land byte-verbatim before the single aggregate); only the creator
+(B, not C5') + anchors change. Residual (a) owns the re-validation.
 
-Residual list: (none). Zero assembly rebases (protocol form pre-applied
-in-branch: E2/D4/D5/D6 carry no create/include hunks).
-r4 protocol deviations: NONE (same Rules, rebased series; all 3 negative
-controls reproduced verbatim with HISTORICAL raw patches). Not validated
-here (needs built tree, owned by other lanes): per-patch build gates,
-patcheck pass. (Fate-test execution on the assembled tree: covered by
-COMBO-RERUN-5, 13/13 green.)
+## Verdict: APPLIES-CLEAN (20-stack core) — full-stack residuals: 2 OPEN
+
+Core verdict stands: A0→C→E→D 20/20 `git am` clean, zero assembly
+rebases (protocol form pre-applied in-branch), r4 deviations NONE (all 3
+negative controls reproduced verbatim with HISTORICAL raw patches).
+Residual list (decoder-first follow-ups, NOT validated here, owned at
+B-land/C-post by a combo-6 lane):
+
+(a) B-first-stack re-validation: C5' rebase create→append (+ Rule-2
+    include-hunk drop) onto the B-created mak; E2/D4/D5/D6 re-anchor
+    onto the B(+C+E) tail (same stanzas, new anchors); `am` full
+    A→A0→B→C→E→D 24/24 + build + 13/13(+B) fate green both SAMPLES
+    modes + single-aggregate check.
+(b) A+C adjacency re-verify: `allcodecs.c` (decoder vs encoder
+    registration lines) + `libavcodec/Makefile` (decoder OBJS vs
+    encoder block) textual disjointness, operationally via the (a)
+    stack-up + build; plus B1/C4' doc table-row adjacency (C rebases).
+Not validated here (needs built tree, owned by other lanes): per-patch
+build gates, patcheck pass. (Fate-test execution on the 20-stack core:
+covered by COMBO-RERUN-5, 13/13 green.)
