@@ -2,622 +2,401 @@
 
 Doc only. No code. All repos read-only until the step that says commit.
 Date: 2026-10-16. Scratch/TMPDIR: `/Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-integrate-runbook`.
-Refresh: 2026-10-16 (r2 pins, mechanical only — no new procedures, no redesign).
-Refresh scratch: `/Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-runbook-refresh`.
-Branch copy: `ff/doc-b2f1` (F1 fix — appends `## B2 landing addendum` only;
-base text verbatim from the ff-integrate-runbook scratch copy).
-Refresh2: 2026-10-16 (r3 pins, mechanical only — no new procedures, no redesign).
-Refresh2 scratch: `/Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-runbook-r3`.
-Branch copy: `ff/doc-runbook-r3` (r3 pin sweep; r2 SHAs survive only in
-explicitly-marked historical notes).
-Refresh3: 2026-10-16 (r4 pins, mechanical only — no new procedures, no redesign).
-Refresh3 scratch: `/Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-runbook-r4-sweep`.
-Branch copy: `ff/doc-runbook-r4` (r4 pin sweep; r2/r3 SHAs survive only in
-explicitly-marked historical notes).
-Refresh4: 2026-10-16 (FINAL: decoder-first order, mail-sent clock, A/B send
-pointers, N5 + suite-watch state — order flip only, no new procedures).
-Refresh4 scratch: `/Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-runbook-final`.
-Branch copy: `ff/doc-runbook-final` (A→A0→B→C→E→D throughout; every
-A0-first step/claim now explicitly-marked HISTORICAL).
-Refresh5: 2026-10-17 (post-recut reality: A-r4 READY-TO-POST, C-r5
-L1-closed, B-final merged (sends at clock end), E/D still-clean,
-combo-6 record, combo-7 owed — pin sweep only, no new procedures).
-Refresh5 scratch: `/Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-runbook-refresh-2`.
-Branch copy: `ff/doc-runbook-refresh-2` (r4/re-cut-3/staged-B claims
-survive only in explicitly-marked historical notes).
+Refresh6: 2026-10-17 (post-MUST-final: union mboxes, MUST-verify
+verdicts, combo-8 HOLD, send-sitting-2 — pin + verdict sweep; stale
+pre-MUST steps DELETED, not marked).
+Refresh6 scratch: `/Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-runbook-r3`
+(run R3-final, clone `wt-final` @ master 224ec0b).
+Branch: `ff/doc-runbook-r3` (this branch).
+Prior refreshes 1-5: HISTORICAL as of this refresh — their pins
+(re-cut 3/4/5 chains, staged-B, 24-patch counts, combo-5/6/7,
+mail-1 prep, suite-watch pending, N5-pending, D-P3 wiring-open) are
+superseded by §0 + the MUST records below. Only the B2-landing
+mechanism section keeps its historical cross-checks (append-only).
 
-Inputs read: `ff-submit-v2/SUBMIT-PLAN-V2.md` (192 l),
-`ff-C-splitplan/C-SPLITPLAN.md` (131 l), `ff-D-plan/D-PLAN.md` (142 l),
-`ff-E-plan/E-PLAN.md` (139 l), `ff-open-items/OPEN-ITEMS.md` (113 l, 93 rows),
-`ff-runbook-dryrun/RUNBOOK-DRYRUN.md` (per-step validation table),
-`ff-assembly-protocol/ASSEMBLY-PROTOCOL.md` (stacking Rules 0-4),
-`ff-split-polish/REPORT.md` (r2 reword/C6/fold8 provenance),
-`ff-combo-rerun/HEARTBEAT.md` (r2 assembly validation),
-`ff-combo-rerun-4/COMBO-RERUN-4.md` (r3 assembly validation, 19 patches),
-`ff-submit-fix/FIX-REPORT.md` (r4 recut: F1-F6 fixes, 20-commit stack),
-`ff-combo-rerun-5/COMBO-RERUN-5.md` (r4 assembly validation, 20 patches),
-`ff-Q1-verify/VERIFY-Q1.md` (Q1 independent verify, PASS),
-`ff-D6-verify/VERIFY-D6.md` (D6 independent verify, PASS),
-`ff-D-cover-align/D-COVER-ALIGN.md` (D 0/6 decision + stale-§0 finding),
-`ff-N5-reconcile/N5-RECONCILE.md` (N5 CONTRADICTION),
-`ff-dec-lib-review/REVIEW-DEC-LIB.md` §8 (APPROVE-WRAP conditional),
-`doc/covers/COVER-*.txt` (r4 cover set, parent 0177e87),
-`ff-mail1-prep/HEARTBEAT.md` + `ff-mail2-prep/HEARTBEAT.md` (mails prepped
-then — now combined + SENT, step 8d),
-`doc/post/A-PREFLIGHT-CHECKLIST.md` (Series-A re-cut 4 READY-TO-POST,
-master 2018c89; HISTORICAL re-cut 3 @ f827e56) +
-`doc/post/A-OWNER-SEND-STEPS.md` (A send mechanics),
-`doc/post/B-POST-CHECKLIST.md` (Series-B STAGED, PENDING stubs —
-HISTORICAL stage record, never post) +
-`doc/post/B-PREFLIGHT-CHECKLIST.md` + `B-OWNER-SEND-STEPS.md` +
-`series-B-fate.mbox` (Series-B FINAL re-cut, merged ef93aa9
-(pack 2330a26) — suite 12/12 live, +24h
-clock ends 2026-10-17T22:23:09Z),
-`doc/post/DEC-POST-CHECKLIST.md` (re-cut-2 behavioral gates, carried),
-`doc/post/C-PREFLIGHT-CHECKLIST.md` (Series-C r5 READY-TO-POST,
-L1 closed, master 4912272) + `C-OWNER-SEND-STEPS.md`,
-`doc/post/A0-PREFLIGHT-CHECKLIST.md` (Series-A0 FINAL READY-TO-POST,
-merged c53d99e) + `A0-OWNER-SEND-STEPS.md`,
-`doc/post/E-PREFLIGHT-CHECKLIST.md` + `D-PREFLIGHT-CHECKLIST.md`
-(both Final READY-TO-POST, merged f521c36/96a0bee),
-`doc/post/COMBO-RERUN-6.md` (combo-6 full-24 validation, CONDITIONAL
-PASS, findings L1/P1 + F1-F8 re-cut list),
-`doc/post/ED-STILL-CLEAN.md` (E+D postable as-is after N5 re-vendor,
-no re-cut),
-`ff-suite-watch/SUITE-WATCH-LOG.md` (mail SENT ~11:30Z, LANDED round
-9 22:23:09Z 12/12) + `SUITE-LANDED.md` + `EXPECTED.sha256` (12 pins),
-`ff-N5-shadow/N5-SHADOW.md` (N5 CONTRADICTION CONFIRM, all claims —
-HISTORICAL: N5fix since LANDED, re-vendored, re-pinned),
-`doc/mail-torture-trio/CHECKLIST.md` (trio READY-AT-CLOCK-END, blocks nothing),
-branch tips re-verified read-only this run (below, §0 = pin table).
+Inputs read: `doc/post/STACK-DAG.md` (191 l),
+`doc/post/MUST-TRIAGE.md` (327 l), `doc/post/MUST-VERIFY.md` (149 l),
+`doc/post/COMBO-RERUN-8.md` (116 l),
+`doc/post/SEND-SITTING.md` (256 l),
+`doc/post/E-VERIFY.md` (127 l), `doc/post/UNION-D.md` (62 l),
+`doc/post/A-PREFLIGHT-CHECKLIST.md` (187 l, r6),
+`doc/post/C-PREFLIGHT-CHECKLIST.md` (143 l, union),
+`doc/post/B-PREFLIGHT-CHECKLIST.md` (107 l),
+`doc/covers/COVER-*.txt` (DAG chain set),
+`doc/post/*-OWNER-SEND-STEPS.md` (six mechanics),
+all six `doc/post/series-*.mbox` (union bytes).
+Master: `224ec0b ff/merged: ff/doc-must-verify`.
 
-Assembly reference: stack per `ff-assembly-protocol/ASSEMBLY-PROTOCOL.md`
-Rules 0-4 + Rule 5 (C-only Changelog; C creates tests/Makefile include,
-E2/D4 drop; C creates ac4.mak, E2/D4/D5/D6 aggregate-anchored appends;
-disjoint-file table; B2 append+merge, never copy).
-HISTORICAL r4 re-validation: `ff-combo-rerun-5` (`git am` 20/20 onto
-pristine 3e6cd5e, applied tree == tip 08b4f00, final mak 126 lines,
-13/13 fate + aggregate both SAMPLES modes + aliases + neg-gate 2/2,
-goldens 86828e84…/53a44aca… byte-identical vs combo-4).
-Full-stack re-validation: `doc/post/COMBO-RERUN-6.md` (combo-6,
-CONDITIONAL PASS — A→A0→B→C→E→D 24/24 `git am` onto pristine
-3e6cd5e: 14/24 plain-clean, 10 resolved (2 `-3`-auto, 8 hand,
-byte-faithful), +2 resolution commits; build rc=0, 0 ac4 warnings;
-fate 14/14 executable + 10/10 nosamples + aliases + neg 2/2; N5
-14/14; final mak 230 lines, single aggregate 9 vars. 10 B failures
-were pre-existing stage-state (PENDING pack, suite 0/12 at round 8),
-not regressions).
-Combo-6 post-time findings folded since: L1 (A+C 34 duplicate
-huffman symbols, link BLOCKER) CLOSED by the Series-C r5 re-cut
-(01/11 AC4_ completion, table bytes identical); F8 (B staged-ref
-prefix + crc-note literal) fixed in the B-final re-cut (PENDING
-branch). P1 (E2 probe needs `-strict -2` while A experimental)
-stays a post-time note at E post. F2-F6 (C/E/D mak + context
-anchors) describe merge-time assembly on a landed A, not the
-standalone posts. Combo-7 (full-24 re-run on B-final + C-r5 bytes)
-is OWED (now runnable on master bytes) — see `docs/ASSEMBLY-PROTOCOL-R2.md`
-R-recut + Steps 2A/2B below.
+## 0. Pin table — MUST-final union send packs (master 224ec0b)
 
-## 0. Pin table — r5 post packs + branches (read-only `git log/show/rev-parse`)
+Live post set = the six mbox send packs. Every size/count below was
+re-verified first-hand on master bytes this refresh (`ls -l` +
+`grep -c "^From "`; MUST-VERIFY.md:10-11 records the same table).
 
-Live post set = the six mbox send packs (all on parent master —
-file pins below). The r4 20-commit stack in the
-submit-fix scratch clone (`ff-submit-fix/ffmpeg`, A0'→C'→E'→D' over
-pristine 3e6cd5e) is now HISTORICAL as a post source — C superseded by
-the r5 line, the rest carried byte-identical into the Final send packs.
-Parent `Projects/ac4-ffmpeg/ffmpeg` repo + its branches untouched
-(still r2/r3-era tips); post cuts are the mbox series, not branches.
+| send pack (= pin) | bytes | mails | union commit |
+|---|---|---|---|
+| A0 head `doc/post/series-A0-head.mbox` | 43263 | 1 | `36b9eec` union-B-A0 (M21 walker) |
+| A decoder `doc/post/series-A-decoder.mbox` | 507373 | 2 | `554b92b` must-fix-A (r6, M4-M9) |
+| B fate `doc/post/series-B-fate.mbox` | 40708 | 2 | `36b9eec` union-B-A0 (stack tests) |
+| C encoder `doc/post/series-C-encoder.mbox` | 650974 | 10 | `91c214b` union-C (M10-M18, C08 dropped) |
+| E TS `doc/post/series-E-ts.mbox` | 12693 | 2 | `3b65f39` must-fix-stack (M22/M19) |
+| D mp4 `doc/post/series-D-mp4.mbox` | 162643 | 6 | `50e7de5` union-D (M19-M21/T3) |
 
-| post pack (= pin) | tip | shape over 3e6cd5e |
-|---|---|---|
-| Series A decoder (READY-TO-POST, re-cut 4, post-N5) | `doc/post/series-A-decoder.mbox` 620505 B @ master 2018c89 (pack commit ab0ff5f) | 2 patches: staging 7955a1e (1/2, Makefile + 24 core incl `ac4_src.h` s5.11 header, N5 DSP/API) + 6144274 (2/2, N5-adapted ac4dec.c + allcodecs.c); `git am` 6f026cb/f6a620e ZERO warnings; cover `doc/covers/COVER-A.txt` (`[PATCH 0/2]`, N5 note flipped LANDED); zero sample deps. HISTORICAL re-cut 3: 606385 B @ f827e56 (PRE-N5 core, STALE) |
-| Series A0 head (READY-TO-POST, after A + suite-live+24h) | `doc/post/series-A0-head.mbox` 35400 B @ master c53d99e (pack commit 83dd3d9) | 1 patch: fresh `format-patch -1 fc4866b`, byte-identical to gated `submit-fix/A0/0001`; cover `doc/covers/COVER-A0.txt` |
-| Series B doc + decoder-FATE (FINAL re-cut, merged) | `doc/post/series-B-fate.mbox` 19113 B @ master ef93aa9 (pack commit 2330a26) | 2 patches: staging 0a49864 (1/2 doc, content-identical to stage, options frozen 6/6) + 42d53d9 (2/2 fate, 11 files, F8 fixed: 9 refs prefix-less + crc-note literal); suite 12/12 live, +24h clock ends 2026-10-17T22:23:09Z; cover `doc/covers/COVER-B.txt` (`[PATCH 0/2]`). Master still carries the STAGED `series-B-decfate.mbox` (13067 B, PENDING stubs — NEVER post) |
-| Series C encoder (READY-TO-POST, r5, L1 closed) | `doc/post/series-C-encoder.mbox` 653799 B @ master 4912272 (pack commit 758fe35) | 11 patches, fresh `format-patch` of `ac4/C-encoder-split-r5@fd578ca` (row below); 01/11 folds the L1 AC4_ completion (34 symbols, table bytes identical), 02/11..11/11 byte-identical to gated r4; cover `doc/covers/COVER-C.txt` (`[PATCH 0/11]`, r5 note) |
-| Series E TS-mux (READY-TO-POST, still-clean, after C) | `doc/post/series-E-ts.mbox` 11605 B @ master f521c36 (pack commit d566f83) | 2 patches, byte-identical to gated pack (`cmp` clean per ED-STILL-CLEAN); no re-cut after N5 re-vendor; cover `doc/covers/COVER-E.txt` |
-| Series D MP4+dac4 (READY-TO-POST, still-clean, after C+E) | `doc/post/series-D-mp4.mbox` 128977 B @ master 96a0bee (pack commit c5c7a3d) | 6 patches, byte-identical to gated pack (`cmp` clean per ED-STILL-CLEAN); no re-cut after N5 re-vendor; cover `doc/covers/COVER-D.txt` |
+Stack order (STACK-DAG.md:10-21): A0 → A → B → C → E → D.
+Patch rollup: 1 + 2 + 2 + 10 + 2 + 6 = **23 patches**,
+**29 wire messages** with the six covers (SEND-SITTING.md:201-207:
+2+3+3+11+3+7). Applies with plain `git am` in DAG order only
+(SEND-SITTING.md:59-67). The stale STAGED `series-B-decfate.mbox`
+is removed from the tree (SEND-SITTING.md:29-36).
 
-| post branch (= pin) | tip | shape over master |
-|---|---|---|
-| ac4/A0-submit-r2 | fc4866b | UNCHANGED (re-verified via the A0 send pack: fresh `-1` byte-identical). 1 commit, parent 3e6cd5e; HISTORICAL c22b0fe + 3 comment lines (§→`Sec.`, ASCII-only); M3 fate in demux.mak/seek.mak, never ac4.mak |
-| ac4/C-encoder-split-r5 | fd578ca | 11 commits, linear, no merges, in scratch `ff-C-post-r2-retry/ffmpeg`: 6c07969 (C1 tables + L1 AC4_ completion), 065c5e5 (C2 core+lib), 2cd9378 (C3 wrapper+reg, keeps sole Changelog line), bd7a122 (C4' docs), 1985788 (C5' fate), c8c74e1 (C6 nosamples), 1f76f88 (W1 doc-note) + 1ef16bd (W2 neg-gate) + 6a4733d (W3 fold8), 383a1e9 (C7 DSI-wire putbits) + fd578ca (C8 DSI-mask lavc table); 02/11..11/11 byte-identical to HISTORICAL r4 1ccd10a (r4 kept intact in `ff-submit-fix/ffmpeg`); C-final mak 53 lines; stereo golden 86828e84ccecb4171d775806616e0e93 (98193 B), 5.1 53a44acaa21853f91cfef7dbdcccb67e unchanged (L1 rename byte-neutral, 5/5 fate green) |
-| ac4/E-ts-r3 | a2485a9 | UNCHANGED (re-verified via ED-STILL-CLEAN: fresh `format-patch` byte-identical, tips unmoved). 2 commits on the C' tip: 5e2d5d5 (E1, lavf-only mpegtsenc.c) + a2485a9 (E2, protocol-form: no tests/Makefile hunk, 42-line stanza append + aggregate extension); E-tip mak 96 lines |
-| ac4/D-split-r3 | 08b4f00 | UNCHANGED (re-verified via ED-STILL-CLEAN: fresh `format-patch` byte-identical, tips unmoved). 6 commits, linear, no merges, on the E' tip: 083c676 (D1 parser), c01ad3f (D2 mov demux), 499892d (D3 movenc mux), dd69611 (D4 parser fate, append-form), 0747972 (D5 mp4 fate, append-form), 08b4f00 (D6 ts-demux fate); final mak 126 lines, single aggregate with 6 vars; no Changelog hunk anywhere in D |
+MUST-verify verdicts (MUST-VERIFY.md:13-20; base master `2def950`,
+bytes identical to 224ec0b for all six mboxes):
 
-D6 note (LANDED — placement closed, rides D in-series): D6 = 08b4f00
-(6th commit of D-split-r3; E1 in-history, no cherry-pick, no
-out-of-series dep). HISTORICAL fold placements 73daef5 (D-tip stack)
-and 70016fb (standalone stack) superseded — same test .c bytes, now
-posted from the series. D6-fold gates + VERIFY-D6 (3x PASS, vectors
-pinned) + combo-5 ts-demux PASS all green.
+| branch | commit | verdict | debt ref |
+|---|---|---|---|
+| A-r6 | `554b92b` | **POST-OK** | none |
+| union-B-A0 | `36b9eec` | **POST-OK** | none (encneg strict is assembly debt, MUST-VERIFY.md:82-85) |
+| union-C | `91c214b` | **HOLD** | 6-line context re-cut, MUST-VERIFY.md:75-78 + :123-125 |
+| union-D | `50e7de5` | **HOLD** | toc-drop + T3 strict + 7 re-pins, MUST-VERIFY.md:95-119 + :123-131 |
+| E stack re-cut | `3b65f39` | **HOLD** | 2-line M11 re-cut, E-VERIFY.md:1-10 + :105-118 |
 
-Superseded for post purposes — never stack (conflict hunks documented only
-as the reason for each protocol rule): ac4/A0-demux-params@bbad279 (dev
-line; post from the squash), HISTORICAL A0-submit@c22b0fe (superseded by
-the -r2 ASCII recut fc4866b), ac4/C-encoder e065111-era (merge era dead;
-`log --merges` empty on all r2/r3/r4 lines), ac4/C-encoder-split@790c073 (r1),
-HISTORICAL r2 C line ac4/C-encoder-split-r2@d37a7b8 (9/9: 9115609,
-b327617, ce7a9fc, 2f8f1c1, efb75b7, b4a924f, ef9eaf2, 21ff22e, d37a7b8;
-r2 stereo golden was 0f0e9f6092ea4d489f91a41acef75a59; the -r2 branch tip
-has since moved to bdffc8f — never post a mid-branch pin),
-HISTORICAL r3 C line ac4/C-encoder-split-r3@065976d (11/11: a6f5544,
-3c8cafc, 607e9fa, ed26bdd, ed73469, be72f52, c747e4f, 41e00f5, f03e143,
-89adb71, 065976d; content carried into the r4 recut 1ccd10a + submit
-hygiene; C-final mak byte-identical),
-HISTORICAL r4 C line ac4/C-encoder-split-r4@1ccd10a (11/11: 282ac3b,
-acc1bb8, 0b3f890, 3631fcf, b3f3a1f, 38a19be, f36f407, f07df7f, e6f99ec,
-e017d9b, 1ccd10a; kept intact in `ff-submit-fix/ffmpeg`; superseded
-by the r5 L1 re-cut fd578ca — 02/11..11/11 byte-identical),
-ac4/E-tsmux@3fdb20c, ac4/E1-tsdesc@5772a4e, ac4/E2-tsfate@39d4eab,
-HISTORICAL E1'/E2'@98486f6/09a1bd2 (create-form; content carried into
-E-ts-r3, E2 now protocol-form), ac4/D-split@356a375,
-HISTORICAL D-split-r2@fcc9dbe (5/5: 4ba9790, 14c6b50, 5cd1740, b0e64ff,
-fcc9dbe; D4/D5 create-form; content carried into D-split-r3, fate
-commits now append-form + D6),
-ac4/D-parser, ac4/D-demux, ac4/D-demux-r3, ac4/D-demux-r4 (fold branch),
-ac4/D-mux, ac4/fuzz-lavf.
-
-Parent repo (`Projects/ac4-ffmpeg`, master = ef93aa9):
-
-| branch | state |
-|---|---|
-| ff/dec-lib (+wrap, +Q1, +ngis, +fuzzfix, +cleanfiles, +revendor, +hygiene, +1344, +N5) | DONE, all MERGED (d505b36 H1 … hygiene cc42e2c; 1344-ASCII 85bdde8/2436f47; N5fix 55ed2c9/a7d1036/7aa39c8/63dd7eb merged 99bcc58, N5-repin f174b7b merged f23777b, re-vendor-N5 96369c7 merged df3f2de, MBP-N5-build 45f282c merged 1a4a7c2, MBP-wrap-regate e452d52 merged 240dad8 — step 1a; N5 LANDED, covers flipped) |
-| ff/enc-libr2 (+R3, +minors, +overflow, +S5FU, +covers) | DONE, all MERGED (c2 a8b4b1c … S5FU 9c7fb2e, cover-r3 0f6c6e2, cover-r4 0177e87/277c5ef) |
-| ff/dsi-ser (+r2, +minors, +lavcshape) | DONE, all MERGED (ser 4e1d1e6/6b4e3be … lavcshape 6ae9514); contract `dsi/README.md` on master (payload-only, no box header); drift verdict DOC-ONLY ba001e9, merged via 7c35c41 — step 1c |
-| ff/dec-b2 (+b2f2) | DONE, MERGED (afb3beb B2 mak + pins; 2ebab0c F2 gap-trunc loud fail + gate) |
-| ff/doc-mail1 / mail-combined | MERGED + SENT + LANDED (2733d19 mail-1 fills; 0cc5539 combined 15-file single send; owner SENT ~11:30Z Oct 16; suite LANDED round 9 22:23:09Z 12/12 — step 8d) |
-| ff/doc-A-post-final + ff/doc-A-post-r2 + ff/doc-A-post-r4 | MERGED (re-cut 2 a66f84e/a89c3b1; HISTORICAL re-cut 3 6bd03b6/f827e56; re-cut 4 ab0ff5f/2018c89 FINAL post-N5 — step 2A; Series A itself UNSENT, READY-TO-POST) |
-| ff/doc-A0-post-final | MERGED (83dd3d9/c53d99e: Series-A0 Final send pack — step 2; UNSENT, READY-TO-POST after A + suite-live+24h) |
-| ff/doc-B-series-stage | MERGED (d731060/1645e4e: Series-B STAGED — HISTORICAL, never post; superseded by the B-final re-cut below) |
-| ff/doc-B-post-final | MERGED (2330a26/ef93aa9: Series-B FINAL re-cut on the live 12/12 suite — step 2B; sends at +24h clock end 2026-10-17T22:23:09Z) |
-| ff/doc-C-post-final + ff/doc-C-post-r2 | MERGED (0553df8 r4 pack; 758fe35/4912272 r5 L1 re-cut FINAL — step 3; UNSENT, READY-TO-POST) |
-| ff/doc-E-post-final + ff/doc-D-post-final | MERGED (d566f83/f521c36 E pack; c5c7a3d/96a0bee D pack; still-clean ceb5c2d/4f3c7a4, no re-cut — steps 7/4; UNSENT, READY-TO-POST) |
-| ff/doc-combo-6 | MERGED (cbe9a9c/de179fe: full-24 CONDITIONAL PASS — combo-7 now runnable on master bytes) |
-| ff/doc-torture-upload | MERGED (10ab93b/ec13cba: trio pack READY-AT-CLOCK-END, blocks nothing — step 8d) |
-| ff/doc-runbook-r4, ff/doc-D-cover-align, ff/doc-runbook-final | MERGED (68c8930 r4 sweep; 7919298 D 0/6 decision, D6 legit; 9a2f54d decoder-first flip) |
-| ff/enc-lib, ff/enc-libfix | merged (0d53cc9, cf94072) |
-
-V2 deltas since it was written (HISTORICAL chains — live pins in §0):
-A0 squash posted-shape committed (M3 fate folded), then recut to -r2
-(fc4866b, ASCII-only comments); C split + C6 + fold8 committed on the
--r2 line, RECUT to r3 (11/11 @065976d), then recut to r4 (11/11 @1ccd10a:
-same content + submit hygiene, goldens unchanged); E1'/E2' reworded
-(trees identical), then folded to E-ts-r3 (@a2485a9: E1 blob-identical +
-E2 protocol-form); D 5/5 committed on the -r2 line, then recut to
-D-split-r3 (@08b4f00: D1/D2 blob-identical, D3 +2-line rewrap, D4/D5
-append-form, D6 LANDED in-series); full stack then
-one linear 20-commit post line (0 merges, 20/20 sign-offs), `git am`
-20/20 + 13/13 fate green (combo-5) — HISTORICAL shape: live post set is
-now the 24-patch A→A0→B→C→E→D line (Final deltas below); enc-libr2 c2-c5
-+ R3 + minors + overflow + S5FU and dsi-ser + r2 + minors all merged;
-dec-lib H1 merged, wrap+Q1+ngis merged (Q1 independently verified PASS;
-N5fix pending); submit covers @doc/covers rewritten for r4 (D 0/6);
-mail-1 + mail-2 both prepped then (mail-2 fills merged) — HISTORICAL:
-since combined into one send + SENT (step 8d).
-V2 "not started" claims for D4-draft/E1/R2-c2 are stale; the c223fe1
-merge is dead history.
-Dry-run deltas since IT ran (HISTORICAL chains — live pins in §0):
-parent master 3c89b94 -> bd8c505 (dec-lib,
-dec-b2, overflow, S5FU, covers-r3, B2F1, wrap, Q1, ngis, samples-manifest,
-covers-r4, mail2 all merged since 6ae9514); A0-submit ee82042 -> c22b0fe
-(squash of full bbad279 line incl MINOR-1) -> fc4866b (ASCII recut);
-C-split d1b9e0e/790c073 -> r2 d37a7b8 (C4'/C5' reword + C6 + fold8 replay)
--> r3 065976d (recut: guards + S5FU + fuzz + DSI pair + new stereo golden)
--> r4 1ccd10a (recut: submit hygiene, content carried, goldens unchanged);
-E1/E2 5772a4e/39d4eab -> 98486f6/09a1bd2 (message-only) -> 5e2d5d5/a2485a9
-(E-ts-r3: E1 blob-identical, E2 protocol-form); D-split 356a375
--> fcc9dbe (D1-D3 identical, D4/D5 small deltas) -> 08b4f00 (D1/D2
-blob-identical, D3 +2-line rewrap, D4/D5 append-form, +D6).
-Final deltas since r4 (HISTORICAL chains — live pins in §0): parent
-master bd8c505 -> f827e56 (mail1, D-cover-align, runbook-r4, b2f2,
-mail-combined, fuzzfix, cleanfiles, A-post-final, torture-upload,
-wrap-revendor, hygiene, B-series-stage, A-post-r2 all merged);
-decoder-first flip APPROVED (P3: Series-A letter + re-cut-3
-READY-TO-POST = the flip;
-HISTORICAL A0-first order survives only in marked notes); mail-1 SENT
-~11:30Z Oct 16 (clock running, suite-watch PENDING rounds 1-2, 0/12);
-Series A re-cut 3 FINAL (606385 B, am ZERO warnings); Series B STAGED
-(13067 B, PENDING stubs, re-cut at clock end); N5 still PENDING
-(shadow CONFIRM, fix unlanded, tripwire pinned in cover).
-Recut deltas since Final (live pins in §0): parent master f827e56 ->
-ef93aa9 (B-nit, E-post, runbook, N5fix, 1344, C-post, D-post, MBP-N5,
-N5-repin, A0-post, re-vendor-N5, MBP-wrap-regate, A-post-r4,
-ED-still-clean, C-post-r2, B-post-final all merged); N5 LANDED (fix + repin +
-re-vendor + MBP regate, COVER-A flipped, gpac pin 48000/1602/
-5727312B); suite LANDED round 9 22:23:09Z 12/12 (clip-714 accepted,
-no drops); Series A re-cut 4 Final post-N5 (620505 B, supersedes
-STALE re-cut 3); Series A0 Final send pack (35400 B); Series B
-FINAL re-cut on the live suite (19113 B, F8 fixed, merged
-ef93aa9, +24h clock ends 2026-10-17T22:23:09Z); Series C r5 re-cut
-(653799 B, combo-6 L1 closed, 02/11..11/11 byte-identical to r4);
-Series E + D still-clean (byte-identical, no re-cut); combo-6 full-24
-CONDITIONAL PASS (14/24 plain + 10 resolved, mak 230, N5 14/14);
-combo-7 OWED (now runnable on B-final master bytes).
-
-Patch-count rollup: A(2) + A0(1) + B(2) + C(11)
-+ E(2) + D(6) = **24 patches** (HISTORICAL A1/A2/A3/B1/B2
-decomposition folded: the decoder IS Series A, docs+FATE IS Series B).
+Combo-8 assembly verdict: **HOLD** — 23/23 `git am` green
+(17 plain + 6 hand, COMBO-RERUN-8.md:22-36), build green
+(COMBO-RERUN-8.md:46-50), N5 14/14 (COMBO-RERUN-8.md:51-54),
+live suite 12/12 (COMBO-RERUN-8.md:55-57), sole red class G1
+(7 post-D goldens, bytes proven, COMBO-RERUN-8.md:79-92);
+before posting cut the 1 content + 4 mechanical re-cuts
+(COMBO-RERUN-8.md:94-111).
 
 ## 1. Endgame sequence
 
-### Step 1 — Freeze lib prep in parent repo (blocks Series A, C-resync, D-P3)
+### Step 0 — Gates: clock + link + global preflight (owner-run)
 
-1a. DONE — `ff/dec-lib` merged to master (d505b36 = 32b0f1a H1 streaming:
-opaque ctx, bounded rings, parity 100/100 DIFF 0). Wrap DONE — staged +
-merged (54d3922/13ccfc6: thin RECEIVE_FRAME wrapper, 11/11 byte-exact vs
-dec-lib CLI, tseek T1-T6, ASan/UBSan clean). Q1 CLOSED — in-tree core
-port merged (96ce7bf/d41f784: snapshot-vendoring, WHERE = in-tree
-libavcodec/ under CONFIG_AC4_DECODER) and independently verified PASS
-(ff-Q1-verify: wiring.apply-check clean, 11/11 byte-exact x3 legs, neg
-splice + garbage-cap, tseek T1-T6, port-delta audit 23/23 headers+strip
-only). ngis fix DONE — merged (d20e772/68fcd33: FINDING-1 cfg==6
-uninit-ngis SBO + E4_MAXGRP bound + regression gate). Fuzzfix DONE —
-merged (61366ac/018cbf8: FUZZ-DEC-1 cfg6 uninit ngis + loud fail +
-gate). Cleanfiles DONE — merged (ec78459/7ba72eb: `*_tab` rename, P1
-done, `make clean` survival). Wrap-revendor DONE — merged
-(999b4e3/b86587f/0e5aa0f: FINDING-1/FUZZ-DEC-1 fixes re-vendored into
-`lavc-dec/core`, +14 lines, Series-A mbox re-cut). Hygiene DONE —
-merged (5c8740a/cc42e2c: 64 comment lines UTF-8→ASCII + entropy tail-WS
-strip, comment-stripped byte-identical, zero behavior change).
-1344-ASCII DONE — merged (85bdde8/2436f47: last UTF-8 line + tail).
-N5fix DONE — merged (55ed2c9/a7d1036/7aa39c8/63dd7eb/99bcc58: s5.11
-count header + Table-70 unit test, base_fs x sf_mult rate semantics
-+ converter, fate-n5 pin stage, AC4D_FLUSH_FI compat key —
-HISTORICAL CONTRADICTION/SHADOW-CONFIRM now resolved by the fix).
-N5-repin DONE — merged (f174b7b/f23777b: N5fix core re-vendored +
-wrap goldens/prose re-pinned). Re-vendor-N5 DONE — merged
-(96369c7/df3f2de: strict-latch resolution + README union; `core/`
-gains `ac4_src.h`, N5 DSP/API in dec_lib.c/ac4d.h, ac4dec.c N5
-adaptation). MBP batteries DONE — merged (45f282c/1a4a7c2 post-N5fix
-BUILD-CLEAN + N5-GREEN; e452d52/240dad8 post-revendor BUILD-CLEAN +
-N5-GREEN + SMOKE-48000, SPLIT closed). COVER-A N5 note flipped
-LANDED (gpac pin 48000/1602/5727312B; HISTORICAL 46034 Hz tripwire
-dead). Struck; Series-A gate open.
-1b. DONE — `ff/enc-libr2` c2-c5 + R3 + minors + overflow + S5FU all merged
-to master (faefdc5 … 9c7fb2e). Struck; C-resync gate open.
-1c. DONE — `ff/dsi-ser` + r2 + minors + lavcshape all merged; contract
-settled and on master (`dsi/README.md`: raw DSI payload bytes as
-extradata, E.5 packing, no box header). Drift verdict DOC-ONLY at
-`ff/doc-dsi-l3@ba001e9`, merged via 7c35c41: parent dsi/ moved (minors2)
-since C7/C8 vendored from lavcshape-merged, proven wire-neutral
-(goldens identical, suites ALL PASS both ends, parent-master oracle+putbits
-reproduce r3 extradata bytes exactly, 32 B both layouts) — no follow-up,
-no re-vendor. Struck; D-P3 gate open.
-
-### Step 2 — Stack A0 for post (after Series A + suite-live+24h)
-
-2a. `ac4/A0-submit-r2@fc4866b` = single squash (parent 3e6cd5e; HISTORICAL
-r3 c22b0fe + 3 ASCII comment lines): code + M3 fate (demux.mak/seek.mak
-refs, never ac4.mak). Posts SECOND as one patch, after Series A (step
-2A) lands and after mail-1 suite-live+24h clears (M3 fate refs
-`ac4/clip-stereo.ac4` + `ac4/clip-51-real.ac4`; clock ends
-2026-10-17T22:23:09Z — step 8d). Final send pack on master:
-`doc/post/series-A0-head.mbox` (35400 B) + `COVER-A0.txt`, pre-flight
-`doc/post/A0-PREFLIGHT-CHECKLIST.md` (READY-TO-POST after A + clock),
-mechanics `doc/post/A0-OWNER-SEND-STEPS.md`. HISTORICAL: "posts
-FIRST" (raw-first premise, V2 D2) — superseded by the approved
-decoder-first flip (P3). The old split instruction (withhold M3 0003
-to ride the B2 block, V2 D5) applies ONLY if posting from
-`ac4/A0-demux-params` instead of the squash.
-2b. Verify A0 gates closed: A0-B1/B2 BLOCKERs, A0-M1..M4, A0-m1..m7,
-D12 peek bound (VERIFIED in HISTORICAL c22b0fe, carried into fc4866b:
-`AC4_TOC_PEEK_MAX` 64 KiB @ ac4dec.c:98 + fast-path/seekback guards);
-standalone demux build; patcheck in files form (step 5/9).
-
-### Step 2A — Series A decoder send (HEAD of submission order, owner posts)
-
-Pack (pins §0): `doc/post/series-A-decoder.mbox` (2 patches vs 3e6cd5e,
-620505 B, re-cut 4 post-N5 @ 2018c89; HISTORICAL re-cut 3: 606385 B
-PRE-N5, STALE) + `doc/covers/COVER-A.txt` (`[PATCH 0/2]`, N5 note
-flipped LANDED + em-dashes transliterated).
-Pre-flight record: `doc/post/A-PREFLIGHT-CHECKLIST.md` (all green, am
-6f026cb/f6a620e ZERO warnings, ASCII-only, smoke 11/11 x2, gpac pin
-match, F2 PASS, patcheck same-classes). Background behavioral gates
-(re-cut 2, carried): `doc/post/DEC-POST-CHECKLIST.md`
-(byte-exact 11/11, negs 9/9, tseek T1-T6, F2 gate, ASan/UBSan, 300-iter
-fuzz 0 crashes, patch-1 standalone inert). Send mechanics (verbatim
-procedure, owner-run): `doc/post/A-OWNER-SEND-STEPS.md` — `git
-mailsplit` the mbox, cover as send/0000, `git send-email` to
-`ffmpeg-devel@ffmpeg.org` from `Michael Rowlinson
-<mrowlinson@gmail.com>`; patches only, NO attachments; zero 8bit
-warnings expected (ASCII-only, no MIME headers);
-threading 0/2 cover (`native AC-4 decoder for raw .ac4 streams`) →
-1/2 core → 2/2 wire; record Message-IDs + date in the checklist copy.
-Preconditions: P3 flip approved (this pack existing with READY-TO-POST
-= approval); zero sample deps (no suite wait, mail clock irrelevant).
-Status: READY-TO-POST, UNSENT (no SENT marker; Owner-at-post blanks
-unfilled). N5: LANDED in-core (labels 48000 Hz / 1601-1602 frames,
-max-latch); mail-1 starts no clock for A.
-
-### Step 2B — Series B doc + decoder-FATE final (merged, sends at clock end, owner posts)
-
-Pack (pins §0): `doc/post/series-B-fate.mbox` (2 patches vs 3e6cd5e,
-19113 B, FINAL re-cut on the live 12/12 suite, merged
-ef93aa9 (pack 2330a26) +
-`doc/covers/COVER-B.txt` (`[PATCH 0/2]`).
-HISTORICAL stage pack: `series-B-decfate.mbox` (13067 B, 9
-PENDING-stub goldens — NEVER post as-is; still beside the final
-`series-B-fate.mbox` on master). Pre-flight record:
-`doc/post/B-PREFLIGHT-CHECKLIST.md` (P1 suite 12/12 sha-ok live
-re-verified first-party; 9 goldens recorded from the real wrapper +
-suite bytes, B2EXEC-REAL F1/F1b/F2/F3 folded, F8 fixed; fate-ac4
-14/14 x2 + gate-split 14/14; full fate 3054 sole-fail fate-source,
-A-owned + escalated; am-clean pristine+A0; subjects/signoffs/ASCII).
-P1-P6 status: P1-P5 DONE by the re-cut lane; P6 (send) waits the +24h
-clock end 2026-10-17T22:23:09Z (owner-at-post confirm) + A/A0 LANDED.
-Send mechanics (clock end, owner-run): `doc/post/B-OWNER-SEND-STEPS.md`
-— same mailsplit/cover/send-email shape as Series A; threading 0/2
-cover (`doc + FATE for the native AC-4 decoder`) → 1/2 doc → 2/2 fate.
-Preconditions: Series A + A0 LANDED (B rides the A tail, copy/seek-eof
-need the A0 demux fill — proven by negative); suite gate P1 green
-(LANDED round 9 22:23:09Z 12/12 — step 8d).
-Final deltas vs the stage pack (all in B-PREFLIGHT): F8 fixed (9 refs
-renamed prefix-less per the default-ref strip rule, crc-note REF
-`crc1` → `skipping bad packet`); ims120 pres-1 pin (pres-0 v1-fatal
-@pkt17); D1 `-strict -2` kept while A experimental; D5 B CREATES
-`tests/fate/ac4.mak` + include (B-first creator — C5'/E2/D append at
-their time per combo-6 F2-F6, merge-time assembly); D6 Changelog
-APPENDS decoder line at `<next>` end (no textual conflict with C3's
-prepended encoder line). Status: Final re-cut DONE + MERGED; sends
-at clock end + A/A0 landed. Combo-7 now runnable (full-24 re-run
-on B-final + C-r5 master bytes).
-
-### Step 3 — C line (post the r5 send pack, pins §0)
-
-~~3a. unmerge C~~ — REMOVED, obsolete: all C lines linear, `log --merges`
-empty; c223fe1 survives only as dead history. Post the r5 mbox.
-3b. R3 re-sync — DONE (carried through r4 into r5; HISTORICAL r4 C1-C3
-were 282ac3b/acc1bb8/0b3f890, r3 a6f5544/3c8cafc/607e9fa, r2 C2 b327617
-S1-only; parent c1-c5 + R3 + minors + overflow + S5FU merged).
-3c. M3 mechanical rename + L1 completion — DONE (r5 C1 6c07969 folds the
-combo-6 L1 AC4_ completion: the 34 AJOC/DE/DRC huffman globals the M3
-rename missed are now `AC4_`-prefixed, decoder untouched, A+C links
-with ZERO duplicate symbols; table bytes identical, rename byte-neutral
-per 5/5 fate + goldens).
-3d. MSVC rework — DONE (carried; configure probe + `$(CFLAGS-ac4enc_float)`
-in C3; zero raw fast-math flags).
-3e. REVIEW-C fold — DONE (folded content carried through the recuts;
-code unposted, folded, no fixups; HISTORICAL review commit c4cb474).
-3f. Split — DONE: -r5 line is C1 tables / C2 core+lib / C3 wrapper+reg
-(flips codec live) / C4' docs / C5' fate / C6 nosamples / +3 (W1 doc-note,
-W2 neg-gate, W3 fold8) / +2 DSI (C7 putbits wire, C8 lavc-mask table).
-Shape delta vs splitplan 5: +C6 +W1-W3 +C7/C8. Final send pack on
-master: `doc/post/series-C-encoder.mbox` (653799 B) +
-`doc/covers/COVER-C.txt` (`[PATCH 0/11]`, r5 note + branch-state),
-pre-flight `doc/post/C-PREFLIGHT-CHECKLIST.md` (READY-TO-POST, L1
-fixed), mechanics `doc/post/C-OWNER-SEND-STEPS.md`.
-3g. Submit hygiene — DONE (r4 recut, carried into r5: sign-offs 11/11,
-80-col hand code, ASCII-only code+messages+covers, ordered dates,
-de-jargoned messages; C-final mak 53 lines; goldens unchanged).
-3h. Post-time assembly notes (combo-6 F2-F6, NOT pack defects): C1/C2/C3
-Makefile+allcodecs hunks, C4 general_contents row, C5'/C6/E2/D4/D5/D6
-mak anchors need A/B-context re-cut at merge-time assembly on a landed
-A (combo-6 proved the resolutions byte-faithful); the standalone post
-(vs 3e6cd5e) is am-clean as gated.
-
-### Step 4 — Stack D (post the Final send pack, pins §0)
-
-Final send pack on master: `doc/post/series-D-mp4.mbox` (128977 B) +
-`doc/covers/COVER-D.txt`, pre-flight `doc/post/D-PREFLIGHT-CHECKLIST.md`
-(READY-TO-POST after C+E), mechanics `doc/post/D-OWNER-SEND-STEPS.md`.
-Still-clean after the N5 re-vendor (ED-STILL-CLEAN: fresh format-patch
-byte-identical, no re-cut).
-Order D1->D2->D3->D4->D5->D6 (D-plan order, overrides V2).
-4a. D1 = 083c676 (parser; blob == HISTORICAL r2 4ba9790, content == r1 d93900d):
-review it (TOR-1/2/3 asserts pinned for D4; design-over-oracle t22/t29
-emit-1; t25 bounded re-lock), then rebase point.
-4b. D2 = c01ad3f (mov demux, `mov.c` only; blob == HISTORICAL r2 14c6b50,
-content == r1 d9091f3): need_parsing dead without it.
-4c. D3 = 499892d (movenc mux; HISTORICAL r2 5cd1740 content + 2-line
-80-col rewrap only, == r1 622c9db modulo the rewrap): Step 1c contract
-settled (DONE above); E.5 byte validation vs `mp4_extract.py walk`
-hex of real files
-(34 B payloads).
-4d. P4 wiring + `ac4_header.h` shared TOC/sync helpers (>=2 call sites
-or drop) — STILL OPEN: no wiring commit on the -r3 line (D4/D5/D6 are
-fate, not wiring); resolve feed-shape FLAG with decoder owner. D6
-PLACEMENT now closed (lands in-series as 08b4f00, E1 in-history) — what
-is open is wiring only, not the test.
-4e. D4 = dd69611 (parser fate) + D5 = 0747972 (mp4 fate) + D6 = 08b4f00
-(ts-demux fate), all already in protocol append-form in-branch (no
-tests/Makefile hunks; mak stanzas aggregate-anchored): post as-is, no
-assembly rebase (B2-vs-D4 split: demux INVALIDDATA vs parser drop-bad).
-
-### Step 5 — Per-patch gates (every patch, every series)
-
-patcheck clean-under-triage (files form — the tool takes patch FILES,
-verified in `tools/patcheck`: greps `$*`, stdin only with zero args;
-the old `<base>..HEAD` range form is WRONG); `git commit -s` signoff;
-one logical change; lavc K&R style; no spec prose (clause numbers
-only); LGPL SPDX on new files; standalone
-`--disable-everything --enable-{decoder,encoder,parser,muxer}=ac4` build per
-patch step; no new warnings; ASan + trasher on new demux/decoder/parser paths.
-macOS notes (dry-run): `xargs -d` + BSD-grep ERE break 2 check sections
-(use GNU grep or wrapper); literal "clean" unachievable (false-pos:
-`for(;;)`, tabs-in-.mak, awk-script hits, comment-text "missing }") —
-clean means triaged, every hit dispositioned.
-r4 compliance (submit-fix F3/F4/F5, re-verified this run): 20/20
-sign-offs; 80-col hand code (generated tables + .mak left per baseline
-precedent, justified in FIX-REPORT); ASCII-only code+messages+covers;
-`send-email` 8bit warnings 0 on all 4 series.
-
-### Step 6 — Combined-build recipe (integration worktree, trees untouched)
+Clock + link (SEND-SITTING.md:16-21 — BOTH must pass):
 
 ```sh
-export TMPDIR=/Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-runbook-refresh-2
-# detached worktree stacking post-order per ASSEMBLY-PROTOCOL Rules 0-5
-# (pins §0): A(2, step 2A Final re-cut 4) -> A0(1, Final pack) -> B(2, step 2B Final, merged ef93aa9)
-#   -> C(11, r5) -> E(2) -> D(6) (24 patches; combo-6: 14/24 plain + 10 resolved, mak 230)
-git -C ~/Projects/ac4-ffmpeg/ffmpeg worktree add --detach /Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-runbook-refresh-2/wt-combo <tip>
-B=/Volumes/NVME/ac4-ffmpeg-ws/build/ff-combo; mkdir -p $B
-cd /Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-runbook-refresh-2/wt-combo && ./configure --disable-doc --disable-debug --prefix=$B  # baseline flags
-make -j18  # baseline: exit 0, <5 min, Apple clang 21
-./ffmpeg -hide_banner -codecs 2>/dev/null | grep -c ac4   # expect codec rows
+date -u +%Y-%m-%dT%H:%M:%SZ   # must print >= 2026-10-17T22:23:09Z (B2 +24h); else STOP
+ifconfig | grep 169.254.103.231  # TB-only send link; must print a line; else STOP
 ```
 
-Stacking detail (stanza anchors, resolution table, L1/P1 findings):
-`ff-assembly-protocol/ASSEMBLY-PROTOCOL.md`; combo-6 validation record
-(24/24 with 2 resolution commits, mak 230, 14/14 + 10/10 fate, N5 14/14):
-`doc/post/COMBO-RERUN-6.md` (HISTORICAL r4 20-stack record:
-`ff-combo-rerun-5/COMBO-RERUN-5.md`; r3 record, 19/19:
-`ff-combo-rerun-4/COMBO-RERUN-4.md`; r2 record, 17/17:
-`ff-combo-rerun/HEARTBEAT.md`). Combo-7 (same recipe on B-final + C-r5
-bytes, now runnable) OWED.
-
-Per-component standalone builds (same worktree, separate build dirs):
-`--disable-everything --enable-decoder=ac4`, `--enable-encoder=ac4`,
-`--enable-parser=ac4`, mp4-demux, mp4-mux, mpegts-mux configs. Full build
-must stay zero-new-warnings throughout.
-
-### Step 7 — Stack E on C-merge HEAD, then full FATE execution
-
-7a. `ac4/E-ts-r3@a2485a9` = E1' (5e2d5d5, lavf-only mpegtsenc.c)
-+ E2' (a2485a9, already protocol-form: no tests/Makefile hunk,
-42-line stanza append + aggregate extension), posted as-is onto the C
-post line (C-split-r5 tip fd578ca; HISTORICAL r4 tip 1ccd10a); E1/C
-still disjoint (E1 lavf-only, C lavc-only). Final send pack on master:
-`doc/post/series-E-ts.mbox` (11605 B) + `COVER-E.txt`, pre-flight
-`doc/post/E-PREFLIGHT-CHECKLIST.md` (READY-TO-POST after C), mechanics
-`doc/post/E-OWNER-SEND-STEPS.md`. Still-clean after the N5 re-vendor
-(ED-STILL-CLEAN: fresh format-patch byte-identical, no re-cut).
-Post-time note (combo-6 P1): E2 probe CMD needs `-strict -2` while A
-stays experimental (strip at E post if A drops it); C-final mak 53
-lines, E-tip mak 96.
-7b. E1 gates: remux `ffmpeg -i tone.wav -c:a ac4 -f mpegts out.ts` ->
-`codec_name=ac4`, `codec_tag_string=AC-4`; PMT bytes stream_type 0x06 +
-regdesc `AC-4` + SYSTEM_B 0x7F/0x15 flags 0x80; TSDuck/MP4Box parse clean;
-NEGATIVE: pre-patch binary on same cmd MUST print "may not be recognized".
-7c. Full `make fate` green on the combined worktree (step 6). Encoder-sourced
-FATE only: NEVER `.ts` stream-copy source (mux.c:239 block until parser lands).
-E2 cmd must dodge loudness refusal: `-loudness_target 0` (or 5.1/short span).
-
-### Step 8 — Golden blessing (record, verify, upload-before-post)
-
-8a. Goldens come ONLY from real wrapper builds (this combined tree):
-md5 + framecrc prints; every golden re-run byte-identical (`cmp` clean);
-deterministic under `-flags +bitexact` / `-bitexact` (C-FATE-LOCAL: 4/4 with
-T1 `-loudness_target 0` correction; known goldens recorded there).
-r4 encoder goldens UNCHANGED from r3 (COMBO-RERUN-5 byte-spot vs combo-4
-binary, `cmp` clean both layouts): stereo
-86828e84ccecb4171d775806616e0e93 (98193 B), 5.1
-53a44acaa21853f91cfef7dbdcccb67e.
-8b. No silence round-trip tests (V2 D9): md5/framecrc only.
-8c. OWNER-RUN (suite access): suite files uploaded FIRST, never
-overwritten: `make fate-rsync`, verify `ac4/clip-*` present, then the
-FATE patch may post. Lanes never run this.
-8d. OWNER-SENT + SUITE-LIVE (clock running to 2026-10-17T22:23:09Z,
-owner-run): mail-1 SENT ~11:30Z Oct 16 (combined single send, 15 files
-/ 285352 B over 2 mails, 0cc5539). Suite LANDED round 9
-2026-10-16T22:23:09Z: 12/12 `ac4/` files present + sha256 match
-`EXPECTED.sha256` (per `ff-suite-watch/SUITE-LANDED.md`; HISTORICAL
-rounds 1-8 PENDING 0/12; clip-714 accepted, no drops; suite latency
-~11h). 24h clock runs from suite-live confirm, NOT from send → clock
-ends 2026-10-17T22:23:09Z (owner-at-post confirm in the A0/B
-pre-flights). A0 posts after clock end (M3 refs); Series B-final sends
-at clock end (step 2B P6). Torture-trio mail READY-AT-CLOCK-END
-(`doc/mail-torture-trio/`: 3 files, 3126 B, pack verified + REQUEST
-drafted, send at clock end; blocks NOTHING in the submit set). D needs
-no samples mail (D4/D5/D6 self-contained, null-cmp). Lanes never send.
-
-### Step 9 — patcheck + format-patch per series (post mechanics)
+Global preflight on merged master (SEND-SITTING.md:23-57):
 
 ```sh
-# in the series worktree, linear branch over its base, N patches:
-git format-patch -s --cover-letter -o /tmp/patches/<series> <base>..HEAD
-./tools/patcheck /tmp/patches/<series>/*.patch   # files form; must be clean-under-triage, every patch
+git log --oneline -1                     # expect 224ec0b ff/merged: ff/doc-must-verify (or later parent merge)
+ls -l doc/post/*.mbox                    # sizes MUST read §0: 43263 / 507373 / 40708 / 650974 / 12693 / 162643
+perl -ne '$c += tr/\x80-\xFF//; END { print "non-ascii=$c (want 0)\n" }' \
+  doc/post/series-*.mbox doc/covers/COVER-*.txt
+grep -c "^From " doc/post/series-A0-head.mbox doc/post/series-A-decoder.mbox \
+  doc/post/series-B-fate.mbox doc/post/series-C-encoder.mbox \
+  doc/post/series-E-ts.mbox doc/post/series-D-mp4.mbox
+# want 1 2 2 10 2 6 in that file order (23 patch mails)
+grep -n "incl. fate-source" doc/covers/COVER-B.txt  # must print one line (COVER-B.txt:33)
 ```
 
-Cover letter re-emitted from V2 template per series (fixes V2 D11):
-`[PATCH 0/N] native AC-4 {decoder for raw .ac4 streams / encoder /
-MPEG-TS mux descriptors / MP4 ac-4+dac4 support}`; body = what series adds,
-raw-first ordering note, test recipe (`ffmpeg -i clip.ac4 out.wav`,
-`make fate-ac4-*`), suite files (FATE series only), open questions
-(H1/D1 for C; need_parsing for D); Signed-off-by each patch.
-Covers = `doc/covers/COVER-*.txt` (A N5-flipped LANDED at re-cut 4;
-C r5 note + branch-state; A0/E/D Final; B post-ready on the branch).
-Send artifacts = `doc/post/series-{A-decoder,A0-head,C-encoder,E-ts,
-D-mp4}.mbox` (all FINAL on master — steps 2A/2/3/7/4) +
-`doc/post/series-B-fate.mbox` (FINAL re-cut, on master ef93aa9
-— step 2B). HISTORICAL: `series-B-decfate.mbox` (STAGED, beside the final on master
-— NEVER post) + `ff-submit-fix/mbox/
-series-{A0,C,E,D}.mbox` (r4-era cuts, superseded by the Final packs).
-Per-series mechanics: every series via its `*-OWNER-SEND-STEPS.md`
-(mailsplit + cover-as-0000 + send-email); A0/C/E/D no longer need the
-format-patch recipe (packs are cut + gated).
+Suite fact behind the clock: live 12/12 + sha-ok, live since
+2026-10-16T22:23:09Z (B-PREFLIGHT-CHECKLIST.md:16-18); the +24h
+end needs owner-at-post confirm (B-PREFLIGHT-CHECKLIST.md:19).
+MUST-triage fact-checked this clock as M3 FALSE-POSITIVE with the
+SEND-SITTING gate as its residue (MUST-TRIAGE.md:89-101).
+
+### Step 1 — Lib prep DONE (blocks nothing now)
+
+dec-lib + wrap + Q1 + ngis + fuzzfix + cleanfiles + hygiene +
+N5fix + re-vendor, enc-libr2 + R3 + minors + overflow + S5FU,
+dsi-ser + lavcshape: all merged pre-MUST; N5 LANDED in-core
+(gpact pin 48000/1602/5727312B, A-PREFLIGHT-CHECKLIST.md:108;
+MUST-VERIFY.md:43-45 re-proves live). DSI drift DOC-ONLY stands.
+The old per-commit chains are deleted from this doc — live proof
+is the r6 preflight + MUST-VERIFY gates, not the merge history.
+D-P3 wiring-open (old step 4d) is CLOSED by M21: one shared TOC
+walker `libavcodec/ac4_toc.h`, A0 creates / D uses
+(STACK-DAG.md:112-127; UNION-D.md:20-31).
+
+### Step 2 — Series A0 head (POST-OK, sends FIRST)
+
+Pack: `series-A0-head.mbox` (43263 B, 1 patch) + `COVER-A0.txt`
+(`[PATCH] lavf/ac4: fill codecpar + timestamps from first frame`,
+COVER-A0.txt:1). Union commit `36b9eec`. DAG head over pristine
+`3e6cd5e` (STACK-DAG.md:10-11); cover states the full chain +
+`Stack parent: none` (COVER-A0.txt:3-7).
+MUST-final content: M21 one-walker — creates
+`libavcodec/ac4_toc.h` (678 lines, mbox:57-74) and the demuxer
+walks it (no private fps table, mbox:411 + :731), with
+`need_parsing=HEADERS` (mbox:23); pre-D PARSE_NONE degrade proven
+(MUST-VERIFY.md:57-60).
+Verify: POST-OK (MUST-VERIFY.md:18) — stack A0+A+B 5/5 `am`
+clean, B-tip `fate-ac4` 16/16 + deterministic rerun, A0 3/3
+(MUST-VERIFY.md:52-56). A0-vs-D header delta is comment-only
+(MUST-VERIFY.md:61-63); the D-side create collision rides the D
+HOLD, not this series.
+Send: FIRST, after the step-0 clock (M3 fate refs need suite
+clips). Mechanics `doc/post/A0-OWNER-SEND-STEPS.md`; one-sitting
+form SEND-SITTING.md:78-95 (mailsplit → 0001, cover as 0000).
+Expect zero warnings.
+
+### Step 3 — Series A decoder (POST-OK, sends SECOND)
+
+Pack: `series-A-decoder.mbox` (507373 B, 2 patches, re-cut 6) +
+`COVER-A.txt` (`[PATCH 0/2] native AC-4 decoder for raw .ac4
+streams`, COVER-A.txt:1). Union commit `554b92b`. Staging
+`b2df32f` (1/2, 24 files) + `1c1b2b0` (2/2, ac4dec.c +
+allcodecs.c) on pristine `3e6cd5e`
+(A-PREFLIGHT-CHECKLIST.md:47-59).
+MUST-final content: r6 fixes M4 (97 getenv + 179 fprintf + fopen
+dumps stripped), M5 (provenance scrub + `ac4_stages.h` deleted),
+M6 (`pres_sel`-only, 5 dead options deleted), M7 (flush unref),
+M8 (CRC disclosure), M9 (portability)
+(A-PREFLIGHT-CHECKLIST.md:8-41) + the re-cut-5 guard fix
+(`fate-source` CI blocker closed).
+Verify: POST-OK (MUST-VERIFY.md:17) — `git am` rc=0 ZERO
+warnings, trees exact-match staging (MUST-VERIFY.md:24-26);
+`fate-source` byte-identical to ref (MUST-VERIFY.md:35-36;
+A-PREFLIGHT-CHECKLIST.md:72); build rc=0 with 0 ours warnings
+(MUST-VERIFY.md:37-39); smoke 11/11 `cmp`-identical to shim +
+sprobe + r5 bytes (MUST-VERIFY.md:40-42;
+A-PREFLIGHT-CHECKLIST.md:101); N5 live exact vs pins
+(MUST-VERIFY.md:43-45); M6 `-pres_sel`-only /
+F2-gate PASS (MUST-VERIFY.md:47-48;
+A-PREFLIGHT-CHECKLIST.md:111-118); round-trip `format-patch`
+byte-identical 507373 B (MUST-VERIFY.md:46).
+Send: SECOND, stacks after A0. Mechanics
+`doc/post/A-OWNER-SEND-STEPS.md`; one-sitting form
+SEND-SITTING.md:97-113 (0/2 cover → 1/2 core → 2/2 wire).
+Zero sample deps. Expect zero 8bit warnings.
+
+### Step 4 — Series B doc + decoder-FATE (POST-OK, sends THIRD at clock end)
+
+Pack: `series-B-fate.mbox` (40708 B, 2 patches) + `COVER-B.txt`
+(`[PATCH 0/2] doc + FATE for the native AC-4 decoder`,
+COVER-B.txt:1). Union commit `36b9eec`. Stale STAGED pack
+deleted from tree — B pack is `series-B-fate.mbox` only
+(SEND-SITTING.md:29-36).
+MUST-final content: M17 layout negatives folded from dropped C08
+into B 2/2 as FATE behind `ifeq ($(CONFIG_AC4_ENCODER),yes)`
+(mbox:272-291; STACK-DAG.md:74-78); T2 frac pair
+(mbox:108-124 + :245; STACK-DAG.md:85-89); T5 seek-eof `-copyts`
++4096 golden (mbox:94 + :252-253; STACK-DAG.md:102-107); M8
+skip-bad rename (mbox:111-124 + :213-223; STACK-DAG.md:71-73);
+M6 pres-only docs (STACK-DAG.md:69-70); T4 pres-1 disclosure
+(STACK-DAG.md:98-101). B 2/2 CREATES `tests/fate/ac4.mak`
+(mbox:114-139, seed aggregate mbox:317) + the Makefile include
+(STACK-DAG.md:48-49).
+Verify: POST-OK as union-B-A0 (MUST-VERIFY.md:18, :50-63) —
+same gates as step 2. B 2/2 CMDs lacking `-strict -2` is proven
+only at C-tip (encneg activates post-C) and is recorded assembly
+debt, not a B HOLD (MUST-VERIFY.md:82-85); the re-cut carries it
+(COMBO-RERUN-8.md:105-106).
+Send: THIRD, at clock end, after A/A0 land (B FATE legs need the
+A decoder + A0 carriage; STACK-DAG.md:28-29). Mechanics
+`doc/post/B-OWNER-SEND-STEPS.md`; one-sitting form
+SEND-SITTING.md:115-132 (0/2 cover → 1/2 doc → 2/2 fate).
+Expect zero 8bit warnings.
+
+### Step 5 — Series C encoder (HOLD: 6-line context re-cut, sends FOURTH)
+
+Pack: `series-C-encoder.mbox` (650974 B, 10 mails) + `COVER-C.txt`
+(`[PATCH 0/10] native AC-4 encoder`, COVER-C.txt:1). Union commit
+`91c214b` (r6 M10-M18 content re-chained onto stack-B, mak in
+appendix shape; C-PREFLIGHT-CHECKLIST.md:1-13). Old C08 neg gate
+DROPPED — its two layout negatives ride B 2/2 as FATE
+(C-PREFLIGHT-CHECKLIST.md:12-13; SEND-SITTING.md:29-36;
+COMBO-RERUN-8.md:36). Subjects 01/10 tables → 02/10 core →
+03/10 wire → 04/10 docs → 05/10 fate → 06/10 nosamples →
+07/10 doc-note → 08/10 fold8 → 09/10 DSI-wire → 10/10 DSI-mask
+(mbox:4, :2094, :16139, :17002, :17100, :17246, :17281, :17318,
+:17383, :18343; SEND-SITTING.md:149-160).
+MUST-final content: M10 `AC4_`-prefixed tables, M11 EXPERIMENTAL
+(mbox:16891) + 13 `-strict -2` CMDs, M12 cap, M13 sincos guard,
+M14 lavc allocators, M15 TLS/mutex fix, M16 bump-drop, M17
+script-delete (C08 drops, series → 10), M18 single-row docs
+chained on B (C-PREFLIGHT-CHECKLIST.md:16-21). Goldens full-hash
+in 05/10, unchanged from r5 (MUST-VERIFY.md:67-70).
+Verify: HOLD — content green, 6-line re-cut owed
+(MUST-VERIFY.md:19, :65-85). Static green (650974 B/10 mails,
+1:1 subjects, 10/10 signoffs, ASCII 0/0, 0 placeholders;
+MUST-VERIFY.md:67-70); M10-M18 residue zero
+(MUST-VERIFY.md:71-74); encoder fate 5/5 on pinned md5s,
+`nm` dupsym-intersection EMPTY (MUST-VERIFY.md:79-81). The seam:
+C 01/10 fails at `Makefile:219` on the A-r6 tree — 3 hunks quote
+r5's 2-line decoder comment that A-r6 reworded (predicted in
+A-r6 preflight, C-seat-owned); the 6-context-line refresh (no
+content change) makes A0+A+B+C 15/15 rc=0
+(MUST-VERIFY.md:75-78; MUST-VERIFY.md:123-125 debt row 1;
+COMBO-RERUN-8.md:31 + :109-111 cut 5).
+Send: FOURTH, after B lands (extends B's docs row + appends the
+B-created mak; STACK-DAG.md:30-31 + :47-49). Mechanics
+`doc/post/C-OWNER-SEND-STEPS.md`; one-sitting form
+SEND-SITTING.md:134-160. DO NOT SEND until the 6-line re-cut
+lands and combo-9 (or the parent-ruled equivalent) re-runs.
+
+### Step 6 — Series E TS-mux (HOLD: 2-line M11 re-cut, sends FIFTH)
+
+Pack: `series-E-ts.mbox` (12693 B, 2 patches) + `COVER-E.txt`
+(`[PATCH 0/2] MPEG-TS mux descriptors for AC-4`, COVER-E.txt:1).
+Stack commit `3b65f39` (M22 message rewrite + M19 Changelog line
+after C's, STACK-DAG.md:58-68; mbox Changelog hunk mbox:33;
+E-tip stacking L5 C / L6 E / L24 B proven in
+E-VERIFY.md:59-61).
+MUST-final content: M22 true-cause message (mpegtsenc PCR helper
++ `frame_bytes=0` fallback, encoder DOES set 2048 — every clause
+verified code + empirically, E-VERIFY.md:63-81; message at
+mbox:95-112); probe `-strict -2` (mbox:286, load-bearing both
+sides of D, E-VERIFY.md:96-98); asynth-only, no sample wait.
+Verify: HOLD — E-as-merged neither applies to nor passes on
+union-C (M11 EXPERIMENTAL); content gates all green
+(E-VERIFY.md:1-10). Subjects 1:1, signoffs 2/2, ASCII 0/0, 0
+placeholders (E-VERIFY.md:47-58); build rc=0 with 0 ac4
+warnings, `DEA.L. ac4` (E-VERIFY.md:85-91); E fate 2/2 PASS +
+deterministic re-run (E-VERIFY.md:92-95). Re-cut spec (E seat):
+tail-CMD context 1 line + GEN `-strict -2` 1 line + message
+clause, subjects unchanged (E-VERIFY.md:105-114;
+MUST-VERIFY.md:123-126 debt row 2; COMBO-RERUN-8.md:102-104
+cut 2). NOT E's: C01-C03 context (C seat) + B encneg strict
+(B seat) (E-VERIFY.md:115-118).
+Send: FIFTH, after C lands (2/2 appends the B-created,
+C-extended mak; STACK-DAG.md:32). Mechanics
+`doc/post/E-OWNER-SEND-STEPS.md`; one-sitting form
+SEND-SITTING.md:162-179. DO NOT SEND until the 2-line re-cut
+lands and combo-9 re-runs.
+
+### Step 7 — Series D MP4 + parser (HOLD: toc-drop + T3 strict + 7 re-pins, LAST)
+
+Pack: `series-D-mp4.mbox` (162643 B, 6 patches) + `COVER-D.txt`
+(`[PATCH 0/6] MP4 ac-4+dac4 support + AC-4 parser`, COVER-D.txt:1).
+Union commit `50e7de5` (D-seat content + stack mechanics + T3,
+UNION-D.md:3-8). Subjects 1/6 parser → 2/6 dac4 demux → 3/6
+dac4 mux → 4/6 parser fate → 5/6 mp4 roundtrip → 6/6 ts demux
+(mbox:4, :1215, :1314, :1562, :2644, :3612; SEND-SITTING.md:197-199).
+MUST-final content: M19 Changelog lines re-anchored to the stack
+(parser after E's TS line in 1/6, mov line after the parser line
+in 3/6; UNION-D.md:12-16; mbox:58 + :1349-1350); M20
+`mov_ac4_is_multiframe` + EINVAL + negative, landed verbatim
+(UNION-D.md:17-19; mbox:1407 + :1535); M21 parser half — D 1/6
+creates header-only `ac4_toc.h` (mbox:44-58 + :512-516) and the
+parser includes it (mbox:141, no second walk; UNION-D.md:20-28);
+T3 claimed by D — `FATE_AC4_RT` roundtrip section riding 5/6,
+150-line ref, first-frame dts/pts 4096
+(UNION-D.md:36-41; mbox:2673-2676 + :3414-3433).
+Verify: HOLD — D fate + T3 green on the fixed assembly; own
+re-cut owed (MUST-VERIFY.md:20, :87-119). Static green (162643
+B/6, 6/6 signoffs, ASCII 0/0, 0 placeholders;
+MUST-VERIFY.md:89-94). Seams, all first-hand: E-as-master tail
+context + GEN strict (E debt); D 1/6 `ac4_toc.h: already exists`
+vs A0's walker — fixed D drops the 684-line create block (D
+debt); T3 GEN strict 1 line (D debt); B encneg strict 2 lines
+(B debt) (MUST-VERIFY.md:95-106). Fixed-assembly D-tip (23
+commits): build rc=0, `fate-ac4` 25/29 with D 4/4 + aliases
+green (MUST-VERIFY.md:107-110); the 4 reds + A0 3/3 red are
+EXACTLY the predicted post-D parser flips (MUST-VERIFY.md:111-115),
+unpinned because union-D shipped zero-churn pre-walker
+(MUST-VERIFY.md:116-119). Combo-8 confirms: G1 = 7 goldens need
+the D re-pin re-cut, observed bytes `cmp`-identical to the
+predicted d-repin bytes 7/7, reswap proof 32/32 PASS
+(COMBO-RERUN-8.md:79-92).
+Send: LAST, after C+E land (appends the B/C/E-extended mak +
+api/Makefile; STACK-DAG.md:33-34). Mechanics
+`doc/post/D-OWNER-SEND-STEPS.md`; one-sitting form
+SEND-SITTING.md:181-199. DO NOT SEND until the D re-cut (7
+re-pins + toc-drop + T3 strict; COMBO-RERUN-8.md:99-102 cut 1
++ :107-108 cut 4; MUST-VERIFY.md:123-131 debt rows 3/4/6)
+lands and combo-9 re-runs.
+
+### Step 8 — Assembly validation (combo-8 record; combo-9 owed)
+
+Record: `doc/post/COMBO-RERUN-8.md` (branch `ff/doc-combo-8`,
+commit `643c968`, merged `2a1132f`). Stack A0(1) → A(2) →
+B(2) → C(10) → E(2) → D(6) = 23 patches over pristine `3e6cd5e`,
+sizes §0-exact (COMBO-RERUN-8.md:10-18). Per-patch: 17/23
+plain-clean, 0 via `-3`, 6 hand, every hand merge byte-faithful
+(COMBO-RERUN-8.md:22-36). Integrity: zero conflict markers,
+single `fate-ac4:` aggregate (11 vars), `show --check` clean,
+23/23 signoffs, ASCII 0 (COMBO-RERUN-8.md:38-42). Per-test:
+B 11/11 incl 714 (combo-7 F1 CLOSED), C 5/5 goldens unchanged,
+E 2/2, D 3/3 + T3 after RT-GEN strict, G1 4+3 reds =
+predicted-exact (COMBO-RERUN-8.md:61-77).
+Recipe for the combo-9 closer (re-run AFTER the step 5/6/7 +
+B-mechanical re-cuts land — same scratch shape as combo-8,
+COMBO-RERUN-8.md:3-8): fresh pristine-`3e6cd5e` clone, sequential
+`git am` in DAG order, out-of-tree build, `make -j18`, N5
+validate, live-suite 12/12, full `fate-ac4` + rerun + no-samples
+shape. No code changes implied — re-cuts only
+(COMBO-RERUN-8.md:113-116). Combo-6/7 records are HISTORICAL
+(pre-MUST bytes); the old step-6 worktree recipe is deleted
+(it pinned the superseded 24-stack).
+
+### Step 9 — Send mechanics (ONE sitting, after all HOLDs lift)
+
+Live procedure: `doc/post/SEND-SITTING.md` (send-sitting-2,
+commit `ea3d10d`, merged `c3b3c5f`) — six series back-to-back in
+stack order, no drip-sends (SEND-SITTING.md:1-14). To
+`ffmpeg-devel@ffmpeg.org`, patches only, NO attachments, From/
+Signoff `Michael Rowlinson <mrowlinson@gmail.com>`
+(SEND-SITTING.md:12-14). Per-series: mailsplit `-osendX` attached
+form + cover-as-0000 + `send-email` (SEND-SITTING.md:78-199;
+attached form required — `-o send/` fails on git 2.56.0,
+SEND-SITTING.md:230-243). After each series: archive shows the
+full thread in order, record Message-IDs + date; 29 wire total
+(SEND-SITTING.md:201-207). Owner-at-post checklist
+(SEND-SITTING.md:245-256). Dry-run record on master bytes: six
+mailsplits rc=0 with exact counts, six cover copies shape-ok,
+`send-email --dry-run` Result OK on all 29 with ZERO warnings,
+ASCII 0, signoffs 2/1/2/10/2/6
+(SEND-SITTING.md:230-243). NOTHING IS SENT until steps 5/6/7 +
+B-mechanical re-cuts land and combo-9 (or parent-ruled
+equivalent) closes combo-8 (COMBO-RERUN-8.md:113-116);
+MUST-VERIFY.md:134-137 states the same owner-at-post rule.
 
 ### Step 10 — Per-series ship checklist (post in this order)
 
-Order: A(2) -> A0(1) -> B(2) -> C(11) -> E(2) -> D(6).
+Order: A0(1) → A(2) → B(2) → C(10) → E(2) → D(6).
 
-- A: Step 2A done — Series-A re-cut-4 pack FINAL post-N5 (ab0ff5f/
-  2018c89, READY-TO-POST, UNSENT); owner sends per A-OWNER-SEND-STEPS.md
-  (mailsplit + cover + send-email, no attachments); zero sample deps
-  (no clock wait); posts HEAD of order (decoder-first flip APPROVED,
-  P3). HISTORICAL A1/A2/A3 decomposition FOLDED — the decoder IS this
-  2-patch send. HISTORICAL re-cut 3 (PRE-N5) STALE — never send.
-- A0: Step 2 done — Final send pack (83dd3d9/c53d99e); D12 pins;
-  standalone demux build; posts SECOND, after A lands + after
-  suite-live+24h (clock ends 2026-10-17T22:23:09Z — step 8d).
-  HISTORICAL "posts first" — superseded by the flip.
-  (Rest of B assumes copy exit 0 + seekable pts.)
-- B: Step 2B Final re-cut DONE + MERGED 2330a26/ef93aa9 (P1-P5
-green, F8 fixed); owner sends at clock end per B-OWNER-SEND-STEPS.md;
-  preconditions A + A0 LANDED + clock end
-  2026-10-17T22:23:09Z. HISTORICAL B1/B2 decomposition FOLDED — docs +
-  FATE IS this 2-patch send. HISTORICAL stage pack (PENDING stubs —
-  NEVER post). Landing = B-FIRST creator (creates ac4.mak + include;
-  C5'/E2/D append at their time — see `## B2 landing addendum` recut
-  cross-check). Combo-7 now runnable on master bytes.
-- C: Step 3 all-DONE on `ac4/C-encoder-split-r5@fd578ca` (r5 send pack
-  FINAL, READY-TO-POST); EL-B1/B2 + EL-M/m, C-B1/M1-M5/m1-m9 closed;
-  C-M3 syms, C-M4 MSVC; R3 guards, S5FU x2.0, fuzz guards, DSI C7/C8
-  (drift DOC-ONLY ba001e9, merged); L1 CLOSED (01/11 AC4_ completion,
-  A+C zero dup syms); submit hygiene (11/11 sign-offs, 80-col,
-  ASCII-only); H1 MANUAL-only confirm; D1 ENCODE_CB cover question;
-  byte-parity gates re-run at C3 (stereo golden 86828e84…, unchanged).
-  Post-time assembly notes F2-F6 (step 3h) stand, not pack defects.
-- E: Step 7 done — Final send pack (d566f83/f521c36), still-clean (no
-  re-cut); C merged (E never posts before C); disjoint E1/C re-verified.
-  Post-time note P1 (`-strict -2` while A experimental).
-- D: Step 4 done — Final send pack (c5c7a3d/96a0bee), still-clean (no
-  re-cut); 4d wiring unchanged this refresh (no wiring commit on the
-  -r3 line); D6 LANDED in-series (08b4f00, placement closed); Step 1c
-  contract DONE; D1 review; TOR-1/2/3 asserts in D4; no samples mail
-  needed (self-contained); full `make fate` green.
-- Parallelizable prep (never post early): combo-7 run on master
-bytes; C4 w/ C3-tail; mak/docs prep anytime. Each
-  series independently reviewable + revertable.
+- A0: Step 2 done — union walker pack POST-OK; sends FIRST after
+  the step-0 clock. No debt.
+- A: Step 3 done — r6 pack POST-OK; sends SECOND. No debt.
+- B: Step 4 done — union pack POST-OK; sends THIRD at clock end
+  after A/A0 land. Mechanical fwd-fix rides the re-cut round:
+  both encneg CMDs `-strict -2` (COMBO-RERUN-8.md:105-106;
+  MUST-VERIFY.md:123-130 debt row 5).
+- C: Step 5 HOLD — content green; 6-line Makefile-context re-cut
+  owed (no content change), then combo-9. Sends FOURTH.
+- E: Step 6 HOLD — content green; 2-line M11 re-cut owed, then
+  combo-9. Sends FIFTH.
+- D: Step 7 HOLD — fate + T3 green on fixed assembly; toc-drop +
+  T3 strict + 7 re-pins owed, then combo-9. LAST.
+- Each series independently reviewable + revertable (revert order
+  is reverse post order; posted patches never rebased — v2/v3
+  re-posts per the old step-11 rules, kept).
 
-### Step 11 — Rollback notes
+### Step 11 — Rollback notes (from SEND-SITTING.md:209-228, kept)
 
-- Revert order is reverse post order (D -> E -> C -> B -> A0 -> A);
-  each series reverts cleanly alone.
-- C3 revert deactivates the codec (tables/core stay inert under the guard).
-- A revert orphans B (docs/FATE test the A decoder) — revert B with it.
-- A0 revert breaks B remux/copy tests (copy/pts premise) — revert B with it.
-- E revert is lavf-only, safe anytime after C (no lavc symbols).
-- D-P1 revert orphans P2 need_parsing — revert P2-P5 with P1.
-- Posted patches are never rebased: review feedback -> v2/v3 re-posts
-  (`git format-patch -v2`), same per-patch gates each round.
-- Merge commits never post: any accidental merge -> reset to
-  pre-merge tip in a fresh worktree, re-stack linearly, re-run Steps 5-7.
-- Golden recalls: suite files are append-only; a bad golden is superseded by
-  a new file + mak update patch, never overwritten in place.
+Mail cannot be unsent. Wrong bytes → reply `v2` superseding
+thread for that series only (a v2 re-carries its stack context:
+C re-carries B, E re-carries C, D re-carries E). Broken thread →
+resend the missing message as a reply in-thread. Mid-sitting
+halt → sent series stay sent; remainder goes in a second sitting
+in the same A0,A,B,C,E,D order. Out-of-order upstream landing →
+follow-up rebase onto the landed tree, re-verify `git am`,
+repost as v2 (chain A0→A→B→C→E→D is the application order; B's
+A/A0 need is the only purely functional link). B landed before
+A/A0 → B FATE legs fail upstream until A+A0 land, no repost
+needed once they do. Suite files append-only (bad golden =
+supersede + mak patch, never overwrite). Golden recalls and
+merge-never-post rules from the old step 11 stand unchanged.
 
-## B2 landing addendum (F1 fix, ff/doc-b2f1)
+## B2 landing addendum (F1 fix, ff/doc-b2f1 — mechanism kept)
 
 Source: `ff-B2-review/REVIEW-B2.md` F1 (medium). The staged B2 note
 (`fate-b2/README.md`: "copy to tests/fate/ac4.mak; add include")
-is stale and DELETED by this branch — it would clobber the E-track
-TS-mux tests already living in `tests/fate/ac4.mak`, and both files
-define a single-colon `fate-ac4:` target (make keeps the last, the
-other set silently drops from the aggregate). No var-name collision
+is stale and DELETED — it would clobber the E-track TS-mux tests
+already living in `tests/fate/ac4.mak`, and both files define a
+single-colon `fate-ac4:` target (make keeps the last, the other
+set silently drops from the aggregate). No var-name collision
 (`FATE_AC4_MPEGTS_*` vs `FATE_AC4/MD5/REMUX` — clean).
 
 Landing procedure (mechanical, byte-verbatim stanza move, zero
-content change; mirrors ASSEMBLY-PROTOCOL-R2 Rule 3; validated by
-the ff/doc-b2f1 dry-run — merged mak parses under the real
-tests/Makefile, single aggregate, 18/18 tests expand):
+content change; validated by the ff/doc-b2f1 dry-run — merged mak
+parses under the real tests/Makefile, single aggregate, 18/18
+tests expand):
 
 1. No include step: `include $(SRC_PATH)/tests/fate/ac4.mak` is
    already at tests/Makefile:157.
@@ -644,33 +423,19 @@ with NO `tests/fate/ac4.mak` in tree, the B2 block lands as the
 seed instead — but that re-opens the B/C creator boundary (C5'
 also creates); do not improvise, re-stack per the assembly owner.
 
-r3 cross-check (ff/doc-runbook-r3): Rule 5 text above is unchanged from
-the F1 fix — COMBO-RERUN-4 re-audited the premise (B2-F1 caution: the
-r3 A0→C→E→D stack contains no B2 mak at any step, every mak merge a
-Rule-3 stanza append + `fate-ac4` prereq extension, no wholesale mak
-copy anywhere), so append+merge stands as the B2 landing procedure.
+HISTORICAL cross-checks (r3/r4/Final/recut — pre-MUST bytes, kept
+for the record): every re-audit re-confirmed append+merge as the
+mechanism; the Final flip made B the creator (C5' rebases
+create→append at C post; E2/D appends re-anchor).
 
-r4 cross-check (ff/doc-runbook-r4): Rule 5 text still unchanged —
-COMBO-RERUN-5 re-audited the premise on the 20-stack (no B2 mak at any
-step, `git am` 20/20, every mak merge a Rule-3 append + aggregate
-extension incl D6), so append+merge stands as the B2 landing procedure.
-
-Final cross-check (ff/doc-runbook-final): the E-tail append form above
-is now HISTORICAL under the approved decoder-first order — Series B
-lands FIRST (step 2B) and its 2/2 fate patch CREATES `tests/fate/ac4.mak`
-+ the Makefile include (B-POST-CHECKLIST D5, am-clean on pristine
-3e6cd5e), so there is no E-track tail to append to. Live procedure:
-B creates; C5' rebases create→append onto the B file at C post;
-E2/D4/D5/D6 appends re-anchor onto the B+C(+E) tail (same stanzas, new
-anchor). The C5' rebase + full B-first-stack re-validation (am A→A0→B→
-C→E→D + fate green both SAMPLES modes) is a disclosed follow-up, NOT
-validated here — assembly R-final residual (a). Append+merge itself
-stands as the mechanism; only the creator + anchor change.
-
-Recut cross-check (ff/doc-runbook-refresh-2): combo-6 EXECUTED the
-Final live procedure end-to-end (B-staged creator + C5'/E2/D4/D5/D6
-appends, all byte-faithful, single aggregate 9 vars at mak 230) —
-residual (a) closed for staged bytes. The B-final re-cut (staging
-0a49864/42d53d9, F8 fixed) changes the creator bytes, so the same
-procedure re-runs as combo-7 (B-final + C-r5 master bytes, now
-runnable); mechanism unchanged, anchors re-verified there.
+MUST-final cross-check (this refresh): combo-8 EXECUTED the
+mechanism on union bytes — B 2/2 creates the mak
+(series-B-fate.mbox:114-139, seed aggregate :317), C05 + fold8 +
+E2 + D4/D5/D6/T3 append before the single aggregate with
+monotonic extension (STACK-DAG.md:48-49; COMBO-RERUN-8.md:26-36),
+no wholesale mak copy anywhere, final single `fate-ac4:`
+aggregate with 11 vars (COMBO-RERUN-8.md:38-39). The pending
+re-cuts change no mechanism: E2 strict + RT-GEN strict + B
+encneg strict are same-stanza token adds, the D toc-drop removes
+a create hunk, the 7 re-pins touch ref files only
+(COMBO-RERUN-8.md:99-111). Append+merge stands.
