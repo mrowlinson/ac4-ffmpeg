@@ -55,8 +55,8 @@
  * counts for fs=0/fri!=13 and sf>1 are the consistent extension, not
  * a tabulated value.
  */
-#ifndef AC4_SRC_H
-#define AC4_SRC_H
+#ifndef AVCODEC_AC4_SRC_H
+#define AVCODEC_AC4_SRC_H
 
 /* Max per-frame output count over all (fri, fs, sf): fri13/sf4 8192. */
 #define AC4_SRC_OMAX 8192
@@ -134,4 +134,4 @@ static double AC4_SRC_UNUSED ac4_src_fps(int fri, int fs) {
 
 #undef AC4_SRC_UNUSED
 
-#endif
+#endif /* AVCODEC_AC4_SRC_H */

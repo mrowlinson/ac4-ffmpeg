@@ -19,8 +19,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AC4_QMF_H
-#define AC4_QMF_H
+#ifndef AVCODEC_QMF_H
+#define AVCODEC_QMF_H
 
 #include <complex.h>
 
@@ -47,4 +47,4 @@ void qmf_analysis(const double *pcm, int nslots, qmf_state_t *s,
 void qmf_synthesis(const double complex (*Q)[QMF_NSB], int nslots,
                    qmf_state_t *s, double *pcm);
 
-#endif
+#endif /* AVCODEC_QMF_H */

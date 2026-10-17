@@ -33,8 +33,8 @@
  * SNF: Table 42 + clause 5.1.4.2 implemented (snf_tab.h RNG
  * table); AC4E_SNF retained for API compat, no longer returned.
  */
-#ifndef AC4_ENTROPY_H
-#define AC4_ENTROPY_H
+#ifndef AVCODEC_ENTROPY_H
+#define AVCODEC_ENTROPY_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -115,4 +115,4 @@ int ac4e_chparam_parse(ac4_ebr_t *b, const asf_info_t *info,
 void ac4e_sap_apply(const asf_info_t *info, const ac4e_sap_t *sap,
                     asf_chan_t *ch0, asf_chan_t *ch1);
 
-#endif
+#endif /* AVCODEC_ENTROPY_H */

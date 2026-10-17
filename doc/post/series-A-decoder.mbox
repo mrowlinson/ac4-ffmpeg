@@ -1,6 +1,6 @@
-From 7955a1ecdc9f4e44b5b53c9bfb09730357bcca9b Mon Sep 17 00:00:00 2001
+From 1ef339d4146bb64493b4a5b64c521956a3fcc7cb Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
-Date: Fri, 16 Oct 2026 19:30:31 -0400
+Date: Fri, 16 Oct 2026 20:09:24 -0400
 Subject: [PATCH 1/2] avcodec: add native AC-4 decoder core
 
 Vendored streaming decoder core (bit reader, entropy, IMDCT, QMF,
@@ -98,7 +98,7 @@ index 249b0fe..1e8a0c8 100644
  OBJS-$(CONFIG_AHX_DECODER)             += mpegaudiodec_float.o
 diff --git a/libavcodec/ac4_src.h b/libavcodec/ac4_src.h
 new file mode 100644
-index 0000000..4fbc08f
+index 0000000..f371e48
 --- /dev/null
 +++ b/libavcodec/ac4_src.h
 @@ -0,0 +1,137 @@
@@ -159,8 +159,8 @@ index 0000000..4fbc08f
 + * counts for fs=0/fri!=13 and sf>1 are the consistent extension, not
 + * a tabulated value.
 + */
-+#ifndef AC4_SRC_H
-+#define AC4_SRC_H
++#ifndef AVCODEC_AC4_SRC_H
++#define AVCODEC_AC4_SRC_H
 +
 +/* Max per-frame output count over all (fri, fs, sf): fri13/sf4 8192. */
 +#define AC4_SRC_OMAX 8192
@@ -238,10 +238,10 @@ index 0000000..4fbc08f
 +
 +#undef AC4_SRC_UNUSED
 +
-+#endif
++#endif /* AVCODEC_AC4_SRC_H */
 diff --git a/libavcodec/ac4_stages.h b/libavcodec/ac4_stages.h
 new file mode 100644
-index 0000000..e26187d
+index 0000000..d1aff09
 --- /dev/null
 +++ b/libavcodec/ac4_stages.h
 @@ -0,0 +1,162 @@
@@ -293,8 +293,8 @@ index 0000000..e26187d
 + * - Overlap state zero-init (e2 assumption, QUESTION-e2-3).
 + * - Long-block only until block-switch bits settle.
 + */
-+#ifndef AC4_STAGES_H
-+#define AC4_STAGES_H
++#ifndef AVCODEC_AC4_STAGES_H
++#define AVCODEC_AC4_STAGES_H
 +
 +#include <stddef.h>
 +#include <stdint.h>
@@ -406,10 +406,10 @@ index 0000000..e26187d
 +}
 +#endif
 +
-+#endif /* AC4_STAGES_H */
++#endif /* AVCODEC_AC4_STAGES_H */
 diff --git a/libavcodec/ac4d.h b/libavcodec/ac4d.h
 new file mode 100644
-index 0000000..343af71
+index 0000000..59043df
 --- /dev/null
 +++ b/libavcodec/ac4d.h
 @@ -0,0 +1,136 @@
@@ -448,8 +448,8 @@ index 0000000..343af71
 + * ctx instances are fully independent (all decode state lives in the
 + * heap ctx, ~16 MB).
 + */
-+#ifndef AC4D_H
-+#define AC4D_H
++#ifndef AVCODEC_AC4D_H
++#define AVCODEC_AC4D_H
 +
 +#include <stddef.h>
 +#include <stdint.h>
@@ -548,7 +548,7 @@ index 0000000..343af71
 +}
 +#endif
 +
-+#endif
++#endif /* AVCODEC_AC4D_H */
 diff --git a/libavcodec/acpl.c b/libavcodec/acpl.c
 new file mode 100644
 index 0000000..af21ab0
@@ -1170,7 +1170,7 @@ index 0000000..af21ab0
 +}
 diff --git a/libavcodec/acpl.h b/libavcodec/acpl.h
 new file mode 100644
-index 0000000..717692b
+index 0000000..54a1ee4
 --- /dev/null
 +++ b/libavcodec/acpl.h
 @@ -0,0 +1,147 @@
@@ -1195,8 +1195,8 @@ index 0000000..717692b
 + * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 + */
 +
-+#ifndef AC4_ACPL_H
-+#define AC4_ACPL_H
++#ifndef AVCODEC_ACPL_H
++#define AVCODEC_ACPL_H
 +
 +#include <complex.h>
 +
@@ -1320,7 +1320,7 @@ index 0000000..717692b
 +                   const acpl_mod_t *P, int spf, double *oL,
 +                   double *oR, double *oLs, double *oRs, acpl_state_t *st);
 +
-+#endif
++#endif /* AVCODEC_ACPL_H */
 diff --git a/libavcodec/aspx_noise.c b/libavcodec/aspx_noise.c
 new file mode 100644
 index 0000000..0841041
@@ -1867,7 +1867,7 @@ index 0000000..0841041
 +};
 diff --git a/libavcodec/aspx_noise.h b/libavcodec/aspx_noise.h
 new file mode 100644
-index 0000000..186f199
+index 0000000..82ecb7d
 --- /dev/null
 +++ b/libavcodec/aspx_noise.h
 @@ -0,0 +1,39 @@
@@ -1903,13 +1903,13 @@ index 0000000..186f199
 + *   transcribed by the generator; zero ETSI prose or code
 + *   copied. DO NOT HAND-EDIT: regenerate with the tool.
 + */
-+#ifndef AC4_ASPX_NOISE_H
-+#define AC4_ASPX_NOISE_H
++#ifndef AVCODEC_ASPX_NOISE_H
++#define AVCODEC_ASPX_NOISE_H
 +
 +extern const float ASPX_NOISE[512][2];
 +#define ASPX_NOISE_NROWS 512
 +
-+#endif
++#endif /* AVCODEC_ASPX_NOISE_H */
 diff --git a/libavcodec/aspx_tab.c b/libavcodec/aspx_tab.c
 new file mode 100644
 index 0000000..b029963
@@ -2279,7 +2279,7 @@ index 0000000..b029963
 +}
 diff --git a/libavcodec/aspx_tab.h b/libavcodec/aspx_tab.h
 new file mode 100644
-index 0000000..6ad24c6
+index 0000000..840b78e
 --- /dev/null
 +++ b/libavcodec/aspx_tab.h
 @@ -0,0 +1,95 @@
@@ -2317,8 +2317,8 @@ index 0000000..6ad24c6
 + * ENV_BALANCE_30/NOISE_LEVEL/NOISE_BALANCE x F0/DF/DT.
 + * Codeword convention: low LEN bits, MSB first on the wire.
 + */
-+#ifndef AC4_ASPX_TABLES_H
-+#define AC4_ASPX_TABLES_H
++#ifndef AVCODEC_ASPX_TAB_H
++#define AVCODEC_ASPX_TAB_H
 +
 +#include <stdint.h>
 +
@@ -2377,7 +2377,7 @@ index 0000000..6ad24c6
 +int aspx_decode(const aspx_book_t *b,
 +                int (*getbit)(void *ctx), void *ctx);
 +
-+#endif
++#endif /* AVCODEC_ASPX_TAB_H */
 diff --git a/libavcodec/dec_lib.c b/libavcodec/dec_lib.c
 new file mode 100644
 index 0000000..e1133e0
@@ -11455,7 +11455,7 @@ index 0000000..c4c0015
 +}
 diff --git a/libavcodec/entropy.h b/libavcodec/entropy.h
 new file mode 100644
-index 0000000..eadd14d
+index 0000000..73460c0
 --- /dev/null
 +++ b/libavcodec/entropy.h
 @@ -0,0 +1,118 @@
@@ -11494,8 +11494,8 @@ index 0000000..eadd14d
 + * SNF: Table 42 + clause 5.1.4.2 implemented (snf_tab.h RNG
 + * table); AC4E_SNF retained for API compat, no longer returned.
 + */
-+#ifndef AC4_ENTROPY_H
-+#define AC4_ENTROPY_H
++#ifndef AVCODEC_ENTROPY_H
++#define AVCODEC_ENTROPY_H
 +
 +#include <stddef.h>
 +#include <stdint.h>
@@ -11576,7 +11576,7 @@ index 0000000..eadd14d
 +void ac4e_sap_apply(const asf_info_t *info, const ac4e_sap_t *sap,
 +                    asf_chan_t *ch0, asf_chan_t *ch1);
 +
-+#endif
++#endif /* AVCODEC_ENTROPY_H */
 diff --git a/libavcodec/huffman_tab.c b/libavcodec/huffman_tab.c
 new file mode 100644
 index 0000000..6f0327c
@@ -12738,7 +12738,7 @@ index 0000000..6f0327c
 +}
 diff --git a/libavcodec/huffman_tab.h b/libavcodec/huffman_tab.h
 new file mode 100644
-index 0000000..3ea1957
+index 0000000..8049705
 --- /dev/null
 +++ b/libavcodec/huffman_tab.h
 @@ -0,0 +1,186 @@
@@ -12778,8 +12778,8 @@ index 0000000..3ea1957
 + * 49-52 DE (ABS_0/DIFF_0/ABS_1/DIFF_1), 53 DRC.
 + * Codeword convention: low LEN bits, MSB first on the wire.
 + */
-+#ifndef AC4_HUFFMAN_TABLES_H
-+#define AC4_HUFFMAN_TABLES_H
++#ifndef AVCODEC_HUFFMAN_TAB_H
++#define AVCODEC_HUFFMAN_TAB_H
 +
 +#include <stdint.h>
 +
@@ -12927,7 +12927,7 @@ index 0000000..3ea1957
 +int hcb_decode(const huffman_book_t *b,
 +               int (*getbit)(void *ctx), void *ctx);
 +
-+#endif
++#endif /* AVCODEC_HUFFMAN_TAB_H */
 diff --git a/libavcodec/imdct.c b/libavcodec/imdct.c
 new file mode 100644
 index 0000000..99e7e58
@@ -13374,7 +13374,7 @@ index 0000000..99e7e58
 +}
 diff --git a/libavcodec/imdct.h b/libavcodec/imdct.h
 new file mode 100644
-index 0000000..de72bc1
+index 0000000..bae07b0
 --- /dev/null
 +++ b/libavcodec/imdct.h
 @@ -0,0 +1,137 @@
@@ -13424,8 +13424,8 @@ index 0000000..de72bc1
 + * row alpha, so switch boundaries are exactly PR (1e-12 gated);
 + * uniform path 1e-12 exact.
 + */
-+#ifndef AC4_IMDCT_H
-+#define AC4_IMDCT_H
++#ifndef AVCODEC_IMDCT_H
++#define AVCODEC_IMDCT_H
 +
 +#include <stddef.h>
 +
@@ -13514,7 +13514,7 @@ index 0000000..de72bc1
 +}
 +#endif
 +
-+#endif /* AC4_IMDCT_H */
++#endif /* AVCODEC_IMDCT_H */
 diff --git a/libavcodec/qmf.c b/libavcodec/qmf.c
 new file mode 100644
 index 0000000..fef3379
@@ -13661,7 +13661,7 @@ index 0000000..fef3379
 +}
 diff --git a/libavcodec/qmf.h b/libavcodec/qmf.h
 new file mode 100644
-index 0000000..dea7440
+index 0000000..885618a
 --- /dev/null
 +++ b/libavcodec/qmf.h
 @@ -0,0 +1,50 @@
@@ -13686,8 +13686,8 @@ index 0000000..dea7440
 + * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 + */
 +
-+#ifndef AC4_QMF_H
-+#define AC4_QMF_H
++#ifndef AVCODEC_QMF_H
++#define AVCODEC_QMF_H
 +
 +#include <complex.h>
 +
@@ -13714,7 +13714,7 @@ index 0000000..dea7440
 +void qmf_synthesis(const double complex (*Q)[QMF_NSB], int nslots,
 +                   qmf_state_t *s, double *pcm);
 +
-+#endif
++#endif /* AVCODEC_QMF_H */
 diff --git a/libavcodec/qwin_tab.c b/libavcodec/qwin_tab.c
 new file mode 100644
 index 0000000..8029c5d
@@ -13910,7 +13910,7 @@ index 0000000..8029c5d
 +};
 diff --git a/libavcodec/qwin_tab.h b/libavcodec/qwin_tab.h
 new file mode 100644
-index 0000000..2077e0a
+index 0000000..1b57ca8
 --- /dev/null
 +++ b/libavcodec/qwin_tab.h
 @@ -0,0 +1,27 @@
@@ -13935,12 +13935,12 @@ index 0000000..2077e0a
 + * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 + */
 +
-+#ifndef AC4_QWIN_TABLES_H
-+#define AC4_QWIN_TABLES_H
++#ifndef AVCODEC_QWIN_TAB_H
++#define AVCODEC_QWIN_TAB_H
 +
 +extern const double QWIN_C[640];
 +
-+#endif
++#endif /* AVCODEC_QWIN_TAB_H */
 diff --git a/libavcodec/sfb_offsets.c b/libavcodec/sfb_offsets.c
 new file mode 100644
 index 0000000..8a3436a
@@ -14115,7 +14115,7 @@ index 0000000..8a3436a
 +}
 diff --git a/libavcodec/sfb_offsets.h b/libavcodec/sfb_offsets.h
 new file mode 100644
-index 0000000..a4beee0
+index 0000000..ded2915
 --- /dev/null
 +++ b/libavcodec/sfb_offsets.h
 @@ -0,0 +1,34 @@
@@ -14144,15 +14144,15 @@ index 0000000..a4beee0
 + * GENERATED by tools/sfb_gen.py; DO NOT HAND-EDIT.
 + * Values: m5 TSV (ANSWER-e1-1) + own B.7 transcription; B.1 prefix.
 + * Layout own; zero ETSI prose copied. */
-+#ifndef AC4_SFB_OFFSETS_H
-+#define AC4_SFB_OFFSETS_H
++#ifndef AVCODEC_SFB_OFFSETS_H
++#define AVCODEC_SFB_OFFSETS_H
 +
 +/* 48k band count (Table B.1) + offsets (Annex B column prefix).
 + * off[nbands] == length. Returns 0/NULL on unknown length. */
 +int sfb_nbands48(int length);
 +const int *sfb_offsets48(int length);
 +
-+#endif
++#endif /* AVCODEC_SFB_OFFSETS_H */
 diff --git a/libavcodec/snf_tab.c b/libavcodec/snf_tab.c
 new file mode 100644
 index 0000000..444c58f
@@ -14230,7 +14230,7 @@ index 0000000..444c58f
 +};
 diff --git a/libavcodec/snf_tab.h b/libavcodec/snf_tab.h
 new file mode 100644
-index 0000000..a393435
+index 0000000..13ccf44
 --- /dev/null
 +++ b/libavcodec/snf_tab.h
 @@ -0,0 +1,38 @@
@@ -14265,20 +14265,20 @@ index 0000000..a393435
 + * regenerate with tools/snf_gen.py.
 + * Values: RANDOM_NOISE_TABLE (Annex C.11), binary32.
 + */
-+#ifndef AC4_SNF_TABLES_H
-+#define AC4_SNF_TABLES_H
++#ifndef AVCODEC_SNF_TAB_H
++#define AVCODEC_SNF_TAB_H
 +
 +#define SNF_RANDOM_NOISE_N 256
 +extern const float SNF_RANDOM_NOISE[SNF_RANDOM_NOISE_N];
 +
-+#endif
++#endif /* AVCODEC_SNF_TAB_H */
 -- 
 2.56.0
 
 
-From 61442747727a36f0bc6acf52278714993095b4fc Mon Sep 17 00:00:00 2001
+From 8875e17bf87fbe81401c9b8fab37364f3e9e455b Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
-Date: Fri, 16 Oct 2026 19:30:35 -0400
+Date: Fri, 16 Oct 2026 20:09:27 -0400
 Subject: [PATCH 2/2] avcodec: wire ff_ac4_decoder
 
 AVCodec wrapper over the 1/2 core: init/decode/flush/close against

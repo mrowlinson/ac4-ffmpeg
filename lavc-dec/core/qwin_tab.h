@@ -19,9 +19,9 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AC4_QWIN_TABLES_H
-#define AC4_QWIN_TABLES_H
+#ifndef AVCODEC_QWIN_TAB_H
+#define AVCODEC_QWIN_TAB_H
 
 extern const double QWIN_C[640];
 
-#endif
+#endif /* AVCODEC_QWIN_TAB_H */

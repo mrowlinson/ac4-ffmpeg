@@ -30,10 +30,10 @@
  *   transcribed by the generator; zero ETSI prose or code
  *   copied. DO NOT HAND-EDIT: regenerate with the tool.
  */
-#ifndef AC4_ASPX_NOISE_H
-#define AC4_ASPX_NOISE_H
+#ifndef AVCODEC_ASPX_NOISE_H
+#define AVCODEC_ASPX_NOISE_H
 
 extern const float ASPX_NOISE[512][2];
 #define ASPX_NOISE_NROWS 512
 
-#endif
+#endif /* AVCODEC_ASPX_NOISE_H */

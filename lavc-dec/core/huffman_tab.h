@@ -34,8 +34,8 @@
  * 49-52 DE (ABS_0/DIFF_0/ABS_1/DIFF_1), 53 DRC.
  * Codeword convention: low LEN bits, MSB first on the wire.
  */
-#ifndef AC4_HUFFMAN_TABLES_H
-#define AC4_HUFFMAN_TABLES_H
+#ifndef AVCODEC_HUFFMAN_TAB_H
+#define AVCODEC_HUFFMAN_TAB_H
 
 #include <stdint.h>
 
@@ -183,4 +183,4 @@ static inline int huffman_de(int absdif, int m) {
 int hcb_decode(const huffman_book_t *b,
                int (*getbit)(void *ctx), void *ctx);
 
-#endif
+#endif /* AVCODEC_HUFFMAN_TAB_H */
