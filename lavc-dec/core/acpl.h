@@ -66,8 +66,6 @@ typedef struct {
 
 int acpl_parse_1ch(ac4_ebr_t *b, int nbands, int fine, int module,
                    acpl_mod_t *out, const char **note, acpl_state_t *st);
-int acpl_probe_1ch(ac4_ebr_t *b, int nbands, int fine, int module,
-                   long frameno, const char **note, acpl_state_t *st);
 
 /* Decorrelator instance (one per module input; dx selects Tables
  * 199/200/201 coef rows). Zero-init via acpl_decorr_init. */
@@ -107,7 +105,6 @@ typedef struct {
     double pa[4][64];
     double pbv[4][64];
     int init;
-    int dump_frame;
 } acpl_imm_t;
 
 void acpl_imm_init(acpl_imm_t *s);
@@ -128,7 +125,7 @@ void acpl_5x_init(acpl_5x_t *s);
  * x9/x10 = F/G (track reuse, first-hand: m2/m3 live inputs).
  * Fold: Ls = z5 + (z9+z10)/fold_div (fold_div = sqrt(2) at
  * height-gain index 1 (-3dB); 1.0 at index 0 (0dB); 2.0 at
- * index 2 (-6dB); duet6-dec-writerB Finding 12 ladder).
+ * index 2 (-6dB); height-gain ladder).
  * H (NULL-able): 4xspf height out (AB-20: Tfl=z9 Tfr=z11 Tbl=z10
  * Tbr=z12, post-sqrt(2) synth, NO fold) for the separate heights
  * artifact. NULL skips (mains path unchanged). */

@@ -1,5 +1,5 @@
 /*
- * SNF spectral-noise-fill table, pipe2-clean-etsi transcription.
+ * SNF spectral-noise-fill table, ETSI transcription.
  * Copyright (c) 2026 Michael Rowlinson
  *
  * This file is part of FFmpeg.
@@ -19,15 +19,11 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/* SNF spectral-noise-fill table, pipe2-clean-etsi transcription.
- * Sources (public ETSI deliverables, fetched 2026-10-02):
- *   P1 V1.4.1 ts_10319001v010401p0.zip sha 8c827f84...e3ea4
- *   URLs + full shas: tmp/wave05/WEB-e0.md. Generator:
- *   tools/snf_gen.py (aspx gate family: count + descriptor).
- * Layout below is own; numeric values transcribed by the
- * generator; zero ETSI prose or code copied. DO NOT HAND-EDIT:
- * regenerate with tools/snf_gen.py.
- * Values: RANDOM_NOISE_TABLE (Annex C.11), binary32.
+/* SNF spectral-noise-fill table, ETSI transcription.
+ * Source: ETSI TS 103 190-1 V1.4.1 (ts_10319001v010401p0.zip,
+ * sha 8c827f84...e3ea4), Annex C.11 RANDOM_NOISE_TABLE, binary32.
+ * Layout below is own; numeric values transcribed by machine;
+ * zero ETSI prose or code copied. DO NOT HAND-EDIT.
  */
 #ifndef AVCODEC_SNF_TAB_H
 #define AVCODEC_SNF_TAB_H

@@ -1,5 +1,5 @@
 /*
- * ASPX (A-SPX) codebook tables, spec-next transcription (wave9).
+ * ASPX (A-SPX) codebook tables, ETSI transcription.
  * Copyright (c) 2026 Michael Rowlinson
  *
  * This file is part of FFmpeg.
@@ -19,15 +19,11 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/* ASPX (A-SPX) codebook tables, spec-next transcription (wave9).
- * Authorized: ANSWER-spec-part2-2 (ZIP-TRANSCRIBE, 18 books).
- * Sources (public ETSI deliverables, fetched 2026-10-02):
- *   P1 V1.4.1 ts_10319001v010401p0.zip sha 8c827f84...e3ea4
- *   URLs + full shas: tmp/wave05/WEB-e0.md. Generator:
- *   tools/aspx_gen.py (e0 gate family: prefix-free + Kraft).
- * Layout below is own; numeric values transcribed by the
- * generator; zero ETSI prose or code copied. DO NOT HAND-EDIT:
- * regenerate with tools/aspx_gen.py.
+/* ASPX (A-SPX) codebook tables, ETSI transcription (18 books).
+ * Source: ETSI TS 103 190-1 V1.4.1 (ts_10319001v010401p0.zip,
+ * sha 8c827f84...e3ea4). Layout below is own; numeric values
+ * transcribed by machine (prefix-free + Kraft verified); zero ETSI
+ * prose or code copied. DO NOT HAND-EDIT.
  * Order: fam ENV_LEVEL_15/ENV_LEVEL_30/ENV_BALANCE_15/
  * ENV_BALANCE_30/NOISE_LEVEL/NOISE_BALANCE x F0/DF/DT.
  * Codeword convention: low LEN bits, MSB first on the wire.

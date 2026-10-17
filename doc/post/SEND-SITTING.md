@@ -24,11 +24,11 @@ ifconfig | grep 169.254.103.231  # TB-only send link; must print a line; else ST
 git log --oneline -1                     # expect e72a4b9 ff/merged: runbook-r2 (or later parent merge)
 ls -l doc/post/*.mbox                    # sizes MUST read:
 ```
-Expected bytes: `series-A-decoder` 620888, `series-A0-head` 43263,
-`series-B-fate` 40708, `series-C-encoder` 653750, `series-E-ts`
-12693, `series-D-mp4` 162643. A0/B sizes are the MUST-fix union
-re-cut (`ff/doc-union-B-A0`); D is the union re-cut (UNION-D.md);
-C/E sizes are the stack re-cut (STACK-DAG.md); stale STAGED
+Expected bytes: `series-A-decoder` 507373, `series-A0-head` 43263,
+`series-B-fate` 40708, `series-C-encoder` 650974, `series-E-ts`
+12693, `series-D-mp4` 162643. A/B/A0/D sizes are the MUST-fix union
+re-cuts; C is the union re-cut (`ff/doc-union-C`, 10 mails);
+E size is the stack re-cut (STACK-DAG.md); stale STAGED
 `series-B-decfate.mbox` removed from tree; B pack is
 `series-B-fate.mbox` only.
 

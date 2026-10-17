@@ -1,23 +1,24 @@
 # A-OWNER-SEND-STEPS — Series A decoder post (owner posts)
 
-Final pack re-cut 5, gated 2026-10-16 on master `ef93aa9` +
-the guard fix on this branch (fate-source conformance; supersedes
-the 620505-B re-cut-4 pack, whose 13 `AC4_*` header guards fail
-`fate-source` — upstream CI would fail on it — and is STALE).
+Final pack re-cut 6, gated 2026-10-17 on master `6905822` +
+the MUST fixes M4-M9 on this branch (env/dump/probe strip,
+comment scrub, DRC/DE option delete, flush unref, CRC
+disclosure, portability; supersedes the 620888-B re-cut-5 pack,
+which is STALE).
 Pre-flight record: `doc/post/A-PREFLIGHT-CHECKLIST.md`.
-Behavioral gates re-proven on these bytes (smoke/F2) or carried via
-byte-identity from the revendor-N5 validation: see the checklist.
+Behavioral gates re-proven on these bytes (smoke/F2/tseek) or
+carried via byte-identity from the re-cut-5 validation: see the
+checklist.
 
 Pack: `doc/post/series-A-decoder.mbox` (2 patches vs `3e6cd5e`,
-620888 B) + `doc/covers/COVER-A.txt` (`[PATCH 0/2]`, unchanged from
-re-cut 4 — subjects and prose still exact).
+507373 B) + `doc/covers/COVER-A.txt` (`[PATCH 0/2]`, scrub line
+past-tense this re-cut — subjects and prose exact).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
 ## 0. Preconditions (all true at gate time)
 
-- P3 confirmed: Series-A letter + decoder-first flip approved. (This
-  file existing on `ff/doc-A-guard-fix` with READY-TO-POST = the flip
-  is approved; runbook step 10 still says A0 first — stale, fix later.)
+- A0 merged: this series posts AFTER Series A0 merges (stack
+  order A0 -> A; every later series assumes the carriage fill).
 - NOTHING sent yet: no SENT marker in repo; Series A and mail-1 both
   unsent. No suite/sample wait for this series (zero sample deps).
 - Posts AFTER Series A0 merges (stack order A0 -> A: every later
@@ -45,15 +46,15 @@ bare `-o send/` fails on this git — see `A-SENDSTEPS-NITFIX.md`.)
 Expected send order / threading:
 
 1. `[PATCH 0/2] native AC-4 decoder for raw .ac4 streams` (cover)
-2. `[PATCH 1/2] avcodec: add native AC-4 decoder core` (25 files:
-   Makefile OBJS + 24 core incl. `ac4_src.h` s5.11 count header,
+2. `[PATCH 1/2] avcodec: add native AC-4 decoder core` (24 files:
+   Makefile OBJS + 23 core incl. `ac4_src.h` s5.11 count header,
    guards in `AVCODEC_<file>_H` form, builds inert under undefined
    CONFIG_AC4_DECODER)
 3. `[PATCH 2/2] avcodec: wire ff_ac4_decoder` (ac4dec.c + allcodecs.c)
 
 Expect ZERO 8bit warnings from `git send-email`: mbox + cover are
-pure ASCII in this re-cut (carried from re-cut 4; the guard fix adds
-ASCII-only lines). No MIME headers in the mbox.
+pure ASCII in this re-cut (mechanical grep: 0 non-ASCII lines).
+No MIME headers in the mbox.
 Verify the archive/outbox shows 0/2 + 1/2 + 2/2 threaded
 in order, then record the Message-IDs + date in the checklist copy.
 
@@ -70,8 +71,10 @@ A0/B2 post.
 
 ## 3. Post order (full sequence)
 
-Series A now (this send) → mail-1 (any time, owner) → A0 (after
-mail-1 +24 h) → B1/B2 → C(11) → E1 → E2-R → D(5) → (D6 TBD).
+Mail-1 (any time, owner) → +24 h after suite-live → A0 (head of
+stack) → Series A (this send, after A0 merges) → B → C → E → D
+(merged stack DAG: A0 → A → B → C → E → D; see `STACK-DAG.md`).
 
 Constraints: mail-1+24 h before A0 (M3 fate refs) and B2 (decoder
-FATE); A0 before B2 (demux copy/pts); B2-before-C NOT required.
+FATE); A0 before A (stack order); B before C (M18 single docs
+row); D declares E (D 6/6 asserts E's bytes).

@@ -21,12 +21,9 @@
 
 /* ac4d.h -- streaming AC-4 decoder library API (opaque context).
  *
- * Refactored from the c-ac4dec batch decoder (single TU, all-static) into
- * a heap-instance streaming API for ffmpeg integration. Design:
- * DEC-LIBDESIGN.md (ff-dec-libdesign). Hazard H1 (streaming-first):
- * bounded per-frame step, no whole-stream malloc, no rewind; sticky
- * latches from the first fed frame; gap frames emit silence in place
- * (AC4D_GAP) instead of the CLI's rewind-and-stub fallback.
+ * Heap-instance streaming API: bounded per-frame step, no
+ * whole-stream malloc, no rewind; sticky latches from the first fed
+ * frame; gap frames emit silence in place (AC4D_GAP).
  *
  * Threading: one ac4d_ctx per stream; calls on the same ctx must be
  * serialized (the decode core keeps no thread-local state). Distinct
@@ -55,13 +52,15 @@ extern "C" {
 #define AC4D_BITSTREAM (-5)       /* strict-path bit error (stereo etc.) */
 #define AC4D_UNSUPPORTED (-6)     /* DRC-on / DE-on (whole-stream legs) */
 
-/* Open-time options (CLI flag mirrors). Zero-init; pointer may be NULL
- * for all defaults. Preselect matches --sel/--pres-index (-1 = default
- * presentation 0). sr_override/ch_override match --sr/--ch (0 = none);
- * sr_override relabels sample_rate only -- output counts stay
- * stream-determined. bits = 16/24/32f output width (as 16/24/32; 32
- * means float32). log wires the decode-core diagnostics (stderr in
- * the CLI); NULL = quiet (default). */
+/* Open-time options. Zero-init; pointer may be NULL for all
+ * defaults. pres_sel selects the presentation (-1 = default
+ * presentation 0). drc_on / nonzero de_level are rejected at open
+ * (AC4D_UNSUPPORTED: whole-stream legs the streaming core lacks).
+ * sr_override/ch_override relabel the reported rate/channels (0 =
+ * none); sr_override relabels sample_rate only -- output counts stay
+ * stream-determined. bits = 16/24/32 output width (32 means
+ * float32). Diagnostics are silent in-tree; failures surface as
+ * return codes plus ac4d_gap_note/ac4d_strerror text. */
 typedef struct {
     int pres_sel;
     int drc_on;
@@ -74,8 +73,6 @@ typedef struct {
     int ch_override;
     int bits;
     int ajoc_core;
-    void (*log)(int lvl, const char *msg, void *u);
-    void *log_u;
 } ac4d_opts;
 
 /* Stream info, valid after the first successful feed (latch).
@@ -110,7 +107,7 @@ int ac4d_get_frame(ac4d_ctx *c, void *pcm, size_t cap, ac4d_info *fi);
  * note set) / <0 hard error. pcm may be NULL with cap 0 to poll. fi
  * may be NULL. Required cap = channels*fi->spf*(bits/8) (24 -> x3);
  * size caller buffers with channels*get_info-spf (the max).
- * Drain contract (H1): call get_frame until AC4D_NEED_MORE after each
+ * Drain contract: call get_frame until AC4D_NEED_MORE after each
  * feed; the instance holds only a few frames, so unbounded undrained
  * feeds fail cleanly with AC4D_ERR (ring overrun), never grow. */
 /* N5: flush takes fi (the drained frame's actual output count,
@@ -126,7 +123,7 @@ void ac4d_close(ac4d_ctx *c);
 const char *ac4d_strerror(int rc);
 const char *ac4d_gap_note(const ac4d_ctx *c); /* never NULL after GAP */
 int ac4d_get_info(const ac4d_ctx *c, ac4d_info *i);
-/* (design Sec. 1 names this ac4d_info; renamed: C forbids sharing the
+/* (named ac4d_get_info rather than ac4d_info: C forbids sharing the
  * name with the ac4d_info struct type) */
 
 #ifdef __cplusplus

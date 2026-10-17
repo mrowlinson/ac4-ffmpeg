@@ -22,14 +22,11 @@
 /* entropy.h -- ASF spectral-frontend decode: sf_info + sections +
  * spectral + scalefactors + noise-fill + ungrouping -> per-window coeffs.
  *
- * Lane e3-pcm, wave6. Behavior pins (own words): ETSI P1 Tables
- * 34/37/38/39/40/41/42 + Pseudocode 2/3/4/5/21/22/25 + Annex B;
- * ANSWER-e1-1 (widths/ladders), ANSWER-c3-1 N1/N4 (walk-in),
- * survey-asf (books/dim/sign). Zero ETSI prose copied.
+ * Behavior (own words): ETSI P1 Tables 34/37/38/39/40/41/42 +
+ * Pseudocode 2/3/4/5/21/22/25 + Annex B (widths, ladders,
+ * substream walk-in, books/dim/sign). Zero ETSI prose copied.
  *
  * Scope: mono/stereo SIMPLE ASF, 48k family, long + short blocks.
- * Stereo M/S + SAP application rides a followup (parse positions
- * exact here; application math = survey-coupling/clause-5.3 lane).
  * SNF: Table 42 + clause 5.1.4.2 implemented (snf_tab.h RNG
  * table); AC4E_SNF retained for API compat, no longer returned.
  */

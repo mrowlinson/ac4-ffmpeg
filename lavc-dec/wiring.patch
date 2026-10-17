@@ -6,8 +6,8 @@ index 249b0fe..5343357 100644
                                            ac3.o kbdwin.o
  OBJS-$(CONFIG_AC3_FIXED_ENCODER)       += ac3enc_fixed.o ac3enc.o ac3tab.o ac3.o kbdwin.o
  OBJS-$(CONFIG_AC3_MF_ENCODER)          += mfenc.o mf_utils.o
-+# AC-4 decoder: wrapper + vendored dec-lib streaming core (in-tree port,
-+# Q1 closed; re-vendor rule in lavc-dec/README.md). No extra libs/flags.
++# AC-4 decoder: wrapper + vendored streaming core (in-tree port).
++# No extra libs/flags.
 +OBJS-$(CONFIG_AC4_DECODER)             += ac4dec.o dec_lib.o entropy.o imdct.o \
 +                                          huffman_tab.o sfb_offsets.o \
 +                                          snf_tab.o aspx_tab.o \
