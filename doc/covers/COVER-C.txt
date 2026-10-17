@@ -1,73 +1,99 @@
-Subject: [PATCH 0/11] native AC-4 encoder
+Subject: [PATCH 0/10] native AC-4 encoder
 
 This series adds a native AC-4 audio encoder (48 kHz, stereo + 5.1),
 fourth link of the stack (A0 -> A -> B -> C -> E -> D, plain `git am`
 on 3e6cd5e). Stack parent: B (extends the docs row, appends the FATE
-mak). Bottom-up split: tables -> core -> lavc wrapper -> docs ->
-tests -> SAMPLES-unset -> silent-fold docs -> negatives gate ->
-fold8 pin -> DSI wire x2; every patch builds in sequence (OBJS added
-under the not-yet-defined CONFIG_AC4_ENCODER guard until 03/11 flips
-the codec live). Revert order is reverse; reverting 03/11 deactivates
-the codec.
+mak appendix). Bottom-up split: tables -> core -> lavc wrapper ->
+docs -> tests -> SAMPLES-unset -> silent-fold docs -> fold8 pin ->
+DSI wire x2; every patch builds in sequence (OBJS added under the
+not-yet-defined CONFIG_AC4_ENCODER guard until 03/10 flips the
+codec live). Revert order is reverse; reverting 03/10 deactivates
+the codec. (Union of the C content re-cut (M10-M18) with the stack
+DAG mechanics: the old 08/11 negatives gate is dropped -- the two
+explicit-layout negatives ride Series B 2/2 as FATE behind the
+encoder ifeq -- and the encoder mak section is an end-of-file
+appendix the later series extend.)
 
 Patches:
-  [PATCH 01/11] avcodec/ac4: add encoder static tables
+  [PATCH 01/10] avcodec/ac4: add encoder static tables
     Huffman/A-SPX/sfb-offset tables + Makefile OBJS. Pure data, no
     deps, reviewable in isolation. Re-cut (r3): standard LGPL
     header block on all 6 files (X2); table bytes identical to r2.
     Re-cut (r5): AC4_-prefix the 34 AJOC/DE/DRC table symbols
     (M3 completion; string book names kept); table bytes identical
     to r4. Fixes the A+C duplicate-symbol link collision.
-  [PATCH 02/11] avcodec/ac4: add encoder core + lib adapter
+    Re-cut (r6): rename to ac4_*_tab.* (M10: *_tables.* match
+    libavcodec CLEANFILES + .gitignore and would be deleted by
+    `make clean`); table bytes identical to r5.
+  [PATCH 02/10] avcodec/ac4: add encoder core + lib adapter
     Engine (enc_core_*), DSP (bits/asf/mdct/loudness), algo modules
     (mc3/jshort/tail59/aspx/acpl), pycompat shim, ac4enc_lib adapter
-    (measured-loudness pass, bake API). No lavc surface yet. Re-cut
-    (r3): re-vendored from parent master 9c7fb2e (R3 loud-refusal
-    guards, policy (a); EL-minors; S5FU stereo x2.0 staging;
-    LLONG_MAX iframe guard; same M3 rename, pipeline-validated
-    33/33) + LGPL headers on all 27 files (X2). Stereo bytes change
-    (x2.0); 5.1 untouched.
-  [PATCH 03/11] avcodec: add native AC-4 encoder
-    ff_ac4_encoder wrapper (ENCODE_CB), allcodecs registration,
-    configure-probed float CFLAGS (MSVC-safe probe, not raw -march
-    flags), version bump, Changelog. Carries wrapper review fixes:
-    initial_padding, 5.1 priming/loudness-fail policy, option set.
+    (measured-loudness pass, bake API). Thread model: the ctx owns
+    all state; concurrent encodes on separate ctx objects are
+    safe. No lavc surface yet. Re-cut (r3): re-vendored from
+    parent master 9c7fb2e (R3 loud-refusal guards, policy (a);
+    EL-minors; S5FU stereo x2.0 staging; LLONG_MAX iframe guard;
+    same M3 rename, pipeline-validated 33/33) + LGPL headers on
+    all 27 files (X2). Stereo bytes change (x2.0); 5.1 untouched.
+    Re-cut (r6): M13 port_sincos via configure probe (HAVE_SINCOS;
+    no Apple __sincos, no bare sincos); M14 raw allocators ->
+    av_ family (298 calls, 10 files); M15 _Thread_local
+    diagnostic deleted (lib ctx already carries err_detail).
+    No behavior change on valid inputs.
+  [PATCH 03/10] avcodec: add native AC-4 encoder
+    ff_ac4_encoder wrapper (ENCODE_CB, EXPERIMENTAL), allcodecs
+    registration, configure-probed float CFLAGS (MSVC-safe probe,
+    not raw -march flags) + sincos probe, Changelog. Carries
+    wrapper review fixes: initial_padding, 5.1 priming/
+    loudness-fail policy, option set.
     Re-cut (r3): two fuzz-found s64 hardenings (FUZZ-CENC crash-1
     pts add -> av_sat_add64, crash-3 bit_rate + 500 -> top-500
     early EINVAL); behavior otherwise identical to r2.
-  [PATCH 04/11] doc: AC-4 encoder docs
-    encoders.texi @section ac4 + private options, general-contents
-    audio-table row, v1-limits paragraph.
-  [PATCH 05/11] fate: add ac4 encoder tests
+    Re-cut (r6): M11 EXPERIMENTAL cap (fate CMDs take -strict -2
+    in 05/10 + 08/10); M12 drop ENCODER_REORDERED_OPAQUE
+    (unplumbed); M16 drop the lavc minor bump (no public API
+    change); M15 wrapper reads ctx-carried err_detail.
+    Encoder bytes unchanged.
+  [PATCH 04/10] doc: AC-4 encoder docs
+    encoders.texi @section ac4 + private options, experimental +
+    limits paragraph, single general-contents audio-table row.
+    Re-cut (r6): M18 single @tab IX @tab IX row merged onto the
+    decoder row (this series stacks on it); M11 experimental +
+    limits paragraph (RAM/sample-cap/loudness-floor notes,
+    streaming on the roadmap).
+  [PATCH 05/10] fate: add ac4 encoder tests
     fate-ac4-encode/-51 (md5) + fate-ac4-framecrc/-tail
     (framecrc) from synth asynth inputs (zero new samples);
-    appends to the Series B ac4.mak (extends fate-ac4).
+    appends the encoder section to the Series B ac4.mak appendix
+    (extends fate-ac4).
     Re-cut (r3): stereo goldens re-pinned for S5FU x2.0 (encode
     md5 0f0e9f60.. -> 86828e84.., same 98193 B; framecrc/tail
     checksums rows 2-7 change, sizes/durations identical). 5.1
     md5 53a44aca.. byte-identical to r2 (MC untouched). No silence
     round-trip.
-  [PATCH 06/11] fate: run ac4 encoder tests without SAMPLES
+    Re-cut (r6): stacked append (no separate mak/include: closes
+    the B/C mak + include collisions); M11 -strict -2 on all 4
+    encode CMDs (output position, acodec.mak DCA precedent).
+    Goldens byte-identical to r5.
+  [PATCH 06/10] fate: run ac4 encoder tests without SAMPLES
     Re-home the asynth-only tests from FATE_SAMPLES_AVCONV to
     FATE_FFMPEG (1 line); `make fate-ac4` passes SAMPLES-unset.
     Aggregate stays fate-ac4.
-  [PATCH 07/11] doc/ac4enc: note CLI silent auto-fold, explicit-layout
+    Re-cut (r6): stacked form (the decoder sets stay
+    SAMPLES-gated).
+  [PATCH 07/10] doc/ac4enc: note CLI silent auto-fold, explicit-layout
   exit 234, immersive deferred
     >6ch inputs fold silently to 5.1 (framework auto_aresample,
     upstream of the encoder); only an explicit -channel_layout
     outside stereo/5.1 fails loud (exit 234). Immersive out of
     scope for this series.
-  [PATCH 08/11] tests/ac4enc: add negatives gate for explicit
-  unsupported layouts
-    Committed tests/ac4-neg-check.sh (run pre-submit until the
-    Series B FATE fold of the same pins supersedes it): explicit
-    7.1 + 5.1.4 each fail loud with `not supported by the ac4
-    encoder', exit 234. Pins S2.2/S3.3. 2/2 PASS.
-  [PATCH 09/11] fate/ac4enc: pin 8ch silent fold to 5.1 (fold8)
+  [PATCH 08/10] fate/ac4enc: pin 8ch silent fold to 5.1 (fold8)
     fate-ac4-fold8: 8ch asynth in, framecrc golden pins the
     5.1(side) output header, exit 0, deterministic (cmp clean).
     Pins S3.1/S3.2-fold. Byte-identical to r2.
-  [PATCH 10/11] avcodec/ac4: emit DSI extradata via putbits serializer
+    Re-cut (r6): M11 -strict -2 on the CMD; comment points at
+    the Series B mak negatives.
+  [PATCH 09/10] avcodec/ac4: emit DSI extradata via putbits serializer
     Vendored DSI serializer (parent DSI-11/DSI-12) + PutBitContext
     emitter: the wrapper builds one raw ac4_dsi_v1 payload at init
     (no atom header; the Series D MP4 muxer wraps it verbatim as
@@ -75,7 +101,7 @@ Patches:
     be silently missing. Packet bytes unchanged (md5 REFs intact);
     the three framecrc refs gain the #extradata line (size 32,
     oracle-verified: stereo 0xb7a30a0b, fold8 0xbafa0ae9).
-  [PATCH 11/11] avcodec/ac4enc: drive DSI layout from the lavc-mask
+  [PATCH 10/10] avcodec/ac4enc: drive DSI layout from the lavc-mask
   table
     Channel trio now comes from ac4dsi_pres_set_layout_mask() fed
     by avctx->ch_layout.u.mask: 0x3 -> stereo, 0x60f (5.1 side)
@@ -88,12 +114,12 @@ S5FU fix note: uniform DIG_GAIN 3.0 decoded every stereo file exactly
 stages stereo at x2.0 and 5.1 at x3.0, so 6 stereo spectral sites now
 take ENC_CORE_DIG_GAIN_STEREO 2.0 while 6 MC sites keep 3.0 (all MC
 parity byte-identical; spliced fixed frames decode within 0.04 dB of
-DEE). This re-pin is the only byte change in 05/11.
+DEE). This re-pin is the only byte change in 05/10.
 
 Overflow guards: fuzzing found three s64 sites, all now safe.
-Wrapper (03/11): crash-1 pts_base add saturates (av_sat_add64,
+Wrapper (03/10): crash-1 pts_base add saturates (av_sat_add64,
 encodes rc 0), crash-3 top-500 bit_rate values take early EINVAL
-(exit 234). Core (02/11): crash-2 LLONG_MAX iframe_interval step
+(exit 234). Core (02/10): crash-2 LLONG_MAX iframe_interval step
 rejected at init (-EINVAL, exit 234; LLONG_MAX-1 still encodes).
 ASan/UBSan clean on all three inputs.
 
@@ -103,16 +129,20 @@ rides this series' DSI-extradata contract (raw DSI bytes as
 extradata, packed per ETSI 103 190-2 E.5, empty = hard error).
 
 Testing:
-  ffmpeg -i asynth-48000-2.wav -c:a ac4 out.ac4   (add
-  -loudness_target 0 for full-span stereo; fail-loud is by design)
-  decode round-trip framecrc; byte-parity gates re-run at 03/11;
-  standalone --enable-encoder=ac4 build each step; ASan/trasher;
-  guard negatives (LLONG_MAX iframe_interval + top-500 bitrate
-  exit 234, saturating-pts encodes rc 0, no abort); patcheck clean;
-  full fate green.
+  ffmpeg -i asynth-48000-2.wav -c:a ac4 -strict -2 out.ac4
+  (add -loudness_target 0 for full-span stereo; fail-loud is by
+  design; without -strict -2 the experimental encoder refuses)
+  decode round-trip framecrc; byte-parity gates re-run at 03/10;
+  per-step builds in stack order (A0+A+B+C gates tree);
+  ASan/trasher; guard negatives (LLONG_MAX iframe_interval +
+  top-500 bitrate exit 234, saturating-pts encodes rc 0, no
+  abort); patcheck clean; full fate green.
 
-FATE: 5 tests (encode/-51/framecrc/tail/fold8) + neg-check
-script; all asynth-only, SAMPLES-unset clean, 5/5 + 2/2 PASS.
+FATE: 5 encoder tests (encode/-51/framecrc/tail/fold8), all
+asynth-only, SAMPLES-unset clean, 5/5 PASS; + 2 Series B encoder
+negatives (fate-ac4-enc-neg71/-neg514) that go live once C lands,
+2/2 PASS. C-tip `make fate-ac4` 23/23 with suite (B 16 + 2
+negatives + C 5).
 
 Open questions for reviewers:
   - H1: v1 loudness is MANUAL-only (measured+neutral); OK?
