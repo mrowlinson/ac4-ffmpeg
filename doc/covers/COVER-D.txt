@@ -15,30 +15,40 @@ Patches:
     ParseContext + combine_frame split loop (AC40/41 sync scan,
     ext-len, AC41 CRC-16, chain-anchor + TOC-head gate, 1-byte
     resync, COMPLETE_FRAMES passthrough for bare carriage); TOC
-    head+bed walk (bail-untouched); duration/rate/channel/bitrate
-    outputs. configure selects for the ac4 demuxer.
+    head+bed walk (bail-untouched); output-domain duration/rate
+    (base x sf_mult, exact Table E.1 counts, never the spf x fps
+    grid), channels/bitrate. Walk lives in the new header-only
+    libavcodec/ac4_toc.h (one walker, one rate table; raw demuxer
+    converges in a follow-up). Changelog line after Series E's.
+    configure selects for the ac4 demuxer.
   [PATCH 2/6] avformat/mov: add AC-4 dac4 box support
     mov_read_dac4 (opaque DSI extradata, v1 no DSI-derived layout),
     parse-table entry, HEADERS need_parsing. Truncated dac4 ->
     INVALIDDATA, no over-read.
   [PATCH 3/6] avformat/movenc: add AC-4 ac-4/dac4 muxing support
     mp4 tag entry, mov_write_dac4_tag (verbatim DSI, EINVAL on
-    empty), stsd arms. 1 packet = 1 sample; no mux-queue/drain
-    hooks, no delay_moov, no btrt v1.
+    empty), stsd arms. 1 packet = 1 sample (exact multi-frame
+    chains fail EINVAL); Changelog line after the parser's. No
+    mux-queue/drain hooks, no delay_moov, no btrt v1.
   [PATCH 4/6] fate: add self-contained ac4 parser tests
     api-ac4-parser-test builds vectors in code (no samples):
     split/resync over noise/lookalike/CRC-corrupt/truncated/ext-len/
     rate-gated shapes, single-at-EOF emits, bounded false-lock
     re-lock, COMPLETE_FRAMES passthrough, each in whole/13-byte/
-    1-byte feeds + 5 synth sub-variants. Wired as fate-ac4-parser.
+    1-byte feeds + 5 synth sub-variants. Builder emits true
+    rate-row shapes; 12 vectors pin the reconciled branches (rows
+    0/3/5/8/11, cm escapes, IMS pres_ver-2 counts). Wired as
+    fate-ac4-parser.
   [PATCH 5/6] fate: add self-contained ac4 mp4 mux/demux roundtrip
   test
     api-ac4-mp4-roundtrip-test synthesizes bare/AC40/AC41/ext-len
     vectors in code (no samples): mux to MP4, demux back, dac4
     byte-exact at box + extradata level, stsz == 4, byte-identical
-    payloads, post-parse 48k stereo. 3 loud negatives (mux-noext
-    EINVAL, trunc-dac4 + shrink-size INVALIDDATA). Wired as
-    fate-ac4-mp4-roundtrip.
+    payloads, post-parse 48k stereo. 4 loud negatives (mux-noext
+    + multiframe EINVAL, trunc-dac4 + shrink-size INVALIDDATA).
+    Plus the T3 encoder->decoder roundtrip (GEN synth stereo to
+    raw AC-4, decode back, framemd5 pins the 4096 first-frame
+    offset). Wired as fate-ac4-mp4-roundtrip + fate-ac4-roundtrip.
   [PATCH 6/6] fate: add self-contained ac4 ts demux test
     api-ac4-ts-demux-test synthesizes Annex G AC41 vectors in code
     (no samples, no encoder): mux to MPEG-TS via the Series E
@@ -46,10 +56,11 @@ Patches:
     demux-level params/payloads, 2 loud negatives (bad-PMT,
     mid-PES trunc). Wired as fate-ac4-ts-demux.
 
-Deferred by design: no shared ac4_header.h in this series -- the mux
-strip stays a local ~23-line framing parse (aacdec.c precedent) and
-the A0-peek/parser dual TOC walk plus the private rate tables
-converge in a follow-up once this stack lands; MP4 demux keeps dac4
+Deferred by design: the parser lands on the new header-only
+libavcodec/ac4_toc.h (one walker, one rate table); the raw demuxer
+converges onto it in a follow-up once its goldens re-pin to parser
+keyflags. The mux strip stays a local framing parse (aacdec.c
+precedent); MP4 demux keeps dac4
 opaque (AAC-esds model); TS param-fill FATE rides a Series-E
 follow-up. Feed-shape contract decided: demuxers/muxers emit bare or
 shape-preserved frames, the decoder sniffs the first 2 bytes.
@@ -62,11 +73,12 @@ Testing:
   sync-in-sample rule confirmed.
 
 FATE: 4/6 + 5/6 + 6/6 (fate-ac4-parser, fate-ac4-mp4-roundtrip,
-fate-ac4-ts-demux); fully self-contained, no samples mail.
+fate-ac4-roundtrip, fate-ac4-ts-demux); fully self-contained, no
+samples mail.
 
 Open: exotic TOC legs (0 wire vectors, spec-positional, flagged in
-review); grid-rate display wart pre-decode (decoder latch decides,
-no fix here).
+review). (The grid-rate display wart is fixed: output-domain
+params everywhere, N5-consistent.)
 
 Provenance: carriage + parser code written for this submission under
 the same cleanroom terms as Series A (ETSI TS 103 190-1 V1.4.1 /
