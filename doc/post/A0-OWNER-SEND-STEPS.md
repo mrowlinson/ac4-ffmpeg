@@ -1,22 +1,25 @@
 # A0-OWNER-SEND-STEPS — Series A0 head post (owner posts)
 
 Final pack, gated 2026-10-16 on master `f23777b` (r2 cover in-tree;
-`COVER-A0.txt` untouched since). Pre-flight record:
+`COVER-A0.txt` untouched since). M21 union re-cut (r3 content:
+shared TOC walk + need_parsing), re-gated 2026-10-17 (A0 3/3
+standalone + parser-stack proof). Pre-flight record:
 `doc/post/A0-PREFLIGHT-CHECKLIST.md`. Stack gates: `ff-submit-fix`
 `FIX-REPORT.md` + `ff-mbp-r4build` `MBP-R4BUILD.md` (carried, cited in
 the checklist).
 
-Pack: `doc/post/series-A0-head.mbox` (1 patch, 35400 B) +
+Pack: `doc/post/series-A0-head.mbox` (1 patch, 43263 B) +
 `doc/covers/COVER-A0.txt` (cover; single-patch series, same subject
 as the patch, as gated).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
 ## 0. Preconditions (all true at gate time)
 
-- Source line: `ac4/A0-submit-r2@fc4866b` (1 commit on `3e6cd5e`,
-  ASCII-only comments re-cut of `c22b0fe`). Mbox is a fresh
-  `format-patch -1 fc4866b`, byte-identical to the gated
-  `submit-fix/A0/0001` (`cmp` clean).
+- Source line: `ac4/A0-submit-r3@f8ddf06` (1 commit on `3e6cd5e`,
+  M21 one-walker re-cut: shared TOC walk `libavcodec/ac4_toc.h` +
+  `need_parsing=HEADERS` for the Series D parser). Mbox is a
+  fresh `format-patch` of the union staging commit (same tree
+  `1ecac2a2`; am-tree `cmp`-identical).
 - NOTHING sent yet: no SENT marker in repo; all series unsent.
 - Head of the stack (stack order A0 -> A -> B -> C -> E -> D):
   applies on pristine `3e6cd5e`; every later series assumes this
@@ -45,11 +48,13 @@ Expected send order / threading:
    (cover; same subject as the patch — single-patch series form,
    exactly as gated in `submit-fix/A0/0000-cover.patch`)
 2. `[PATCH] lavf/ac4: fill codecpar + timestamps from first frame`
-   (1 patch, 6 files: libavformat/ac4dec.c +673 first-frame TOC
-   peek publishing sample rate / channel layout / bit_rate to
-   codecpar + exact per-frame pts synthesis with NOPTS-on-miss
-   seek rebase; tests/fate/demux.mak +4, tests/fate/seek.mak +2,
-   3 new refs: fate-ac4-demux/-51 + fate-seek-extra-ac4)
+   (1 patch, 7 files: libavcodec/ac4_toc.h +678 shared TOC walk
+   (also used by the Series D parser), libavformat/ac4dec.c +290
+   first-frame peek over it publishing sample rate / channel
+   layout / bit_rate to codecpar + exact per-frame pts synthesis
+   with NOPTS-on-miss seek rebase + need_parsing=HEADERS;
+   tests/fate/demux.mak +4, tests/fate/seek.mak +2, 3 new refs:
+   fate-ac4-demux/-51 + fate-seek-extra-ac4)
 
 Expect ZERO `git send-email` warnings (mbox + cover fully ASCII —
 no 8bit warnings possible). Verify the archive/outbox shows cover

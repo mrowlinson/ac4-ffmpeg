@@ -20,6 +20,11 @@ Why first: without params the demuxer cannot drive copy, seek, or the
 mux round-trips the later FATE tests rely on. Raw-first ordering:
 carriage params before codec.
 
+The TOC walk is shared with the Series D frame parser
+(libavcodec/ac4_toc.h) and the stream declares
+need_parsing=HEADERS so the parser refines per-frame keyflags;
+pre-D trees degrade to whole-frame KEY with identical goldens.
+
 Testing:
   ffmpeg -i clip.ac4 -c:a copy -f null -
   ffprobe -show_streams clip.ac4   (rate/ch/bit_rate present)

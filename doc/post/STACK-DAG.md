@@ -48,9 +48,10 @@ with plain settings + `--whitespace=error` is rc=0, 24/24
 | tests/Makefile (ac4.mak include) | B | B adds it; C05's duplicate hunk dropped | — |
 | tests/fate/ac4.mak | B creates; C/E/D append | B 2/2 creates (B section + aggregate); C05 appends encoder section + extends aggregate; C06 flips its own tail line; C09 appends fold8; E 2/2 appends mux section; D 4/6-6/6 append parser/mp4/tsdemux sections. Aggregate grows monotonically: B… → …ENC → …PMT PROBE → …PARSE MP4 TSDEMUX | C/D seats: keep appendix shape, extend aggregate |
 | tests/api/Makefile | D | Untouched by A/B/C/E; D hunks apply as-is | D seat |
+| libavcodec/ac4_toc.h (new) | A0 creates, D uses | A0's patch creates the shared TOC walk; D 1/6's parser includes it (no second walk, no Makefile change) | D seat: must use it (M21) |
 
-A0 (lavf/ac4dec.c, demux.mak, seek.mak) and A (lavc only) touch
-files no other series touches: zero mechanical change needed.
+A0 (lavf/ac4dec.c, demux.mak, seek.mak + new lavc/ac4_toc.h) and
+A (lavc only) otherwise touch files no other series touches.
 
 ## Content fixes in this re-cut (beyond stacking)
 
@@ -108,14 +109,22 @@ files no other series touches: zero mechanical change needed.
   find_stream_info open the experimental decoder, failing the E
   probe test on post-D trees. E 2/2 probe carries -strict -2
   (verified green pre- and post-D).
-- M21: A0 does NOT set need_parsing. Proven: HEADERS parsing is
-  byte-compatible but flags delta frames non-KEY (`, F=0x0`),
-  breaking A0/B goldens on post-D trees with no way to keep both
-  pre-D and post-D trees green (A0-after-D would cycle: B needs
-  A0 needs D needs C needs B). Follow-up after this stack lands:
-  raw demuxer sets need_parsing=HEADERS, goldens re-pinned once
-  to parser keyflags, rate tables converged via one shared
-  header. A0 keeps peek + whole-frame KEY; its message stays true.
+- M21: FIXED in A0 (union seat `ff/doc-union-B-A0`, decision over
+  the stack-seat deferral; triage routes Re-cut Y, A0+D, one
+  walker). A0 carries the shared TOC walk (`libavcodec/ac4_toc.h`,
+  used by the demuxer peek) + `need_parsing=HEADERS`. Proven:
+  pre-D trees degrade to PARSE_NONE (A0 3/3 + B 16/16
+  bit-identical, gate-split 19/19); post-D the parser refines
+  keyflags (12/12 decode legs green; 4 demux goldens drift
+  F-flags/clamp only, re-pinned in D). Deferral refuted:
+  PARSE_NONE + parser present still flags every packet KEY
+  (counterproof on the union rig). No cycle: D re-pins the
+  goldens it intentionally changes (normal stack practice).
+  A-lib convergence still follows. D seat: use `ac4_toc.h` in
+  D 1/6 (no second walk) + carry the post-D re-pins (A0
+  demux/51 F-suffix, seek 695->348 clamp, B copy-stereo/51
+  F-suffix, frac-copy F-suffixes, seek-eof 2-line; exact bytes
+  in the union HO).
 - M3 residue: COVER-A0's UNSENT line refreshed (suite live
   2026-10-16T22:23:09Z 12/12; post at/after +24h clock end).
 - A0 mbox: byte-identical re-cut (verified stack-clean as head;
@@ -134,16 +143,20 @@ files no other series touches: zero mechanical change needed.
   M9 portability, T4 drain+reopen. Preserve: Makefile/allcodecs
   hunk positions (C chains on them).
 - D seat: M19 lines (parser + mov after E's Changelog line), M20
-  split-or-fail, T3 roundtrip (spec above). Preserve: mak appendix
-  shape + aggregate order, api/Makefile chain.
+  split-or-fail, T3 roundtrip (spec above), M21 `ac4_toc.h` use +
+  post-D golden re-pins (A0 demux/51 + seek, B copy pair +
+  frac-copy + seek-eof; bytes in union HO). Preserve: mak
+  appendix shape + aggregate order, api/Makefile chain.
 - No seat may reintroduce a pristine-cut hunk on a chained file:
   re-verify 24/24 (23/24 after C08 drops) on every re-cut.
 
 ## Proof record (this seat, scratch ff-must-fix-stack)
 
-- Mboxes: A0/A kept from master (unchanged); B/C/E/D fresh
-  `format-patch` of the proof stack. Sizes: A 620888, A0 35400,
-  B 40394, C 653750, E 12693, D 129514. 2/1/2/11/2/6 patches.
+- Mboxes: A kept from master (unchanged); A0/B union re-cuts
+  (`ff/doc-union-B-A0`: A0 = M21 one-walker r3, B = stack tests +
+  comment/message adds); C/E/D fresh `format-patch` of the proof
+  stack. Sizes: A 620888, A0 43263, B 40708, C 653750, E 12693,
+  D 129514. 2/1/2/11/2/6 patches.
 - 24/24 plain `git am --whitespace=error` on a fresh pristine
   `3e6cd5e` clone, in DAG order (verify tree == proof tree by
   tree hash). `git show --check` clean all 24; 0 non-ASCII bytes.
@@ -154,6 +167,13 @@ files no other series touches: zero mechanical change needed.
   demux/demux-51/seek-extra PASS; A decode smoke 2 frames; B
   `make fate-ac4` 16/16 + encneg absent pre-C (no-rule, proven);
   C 23/23; E 25/25; D 28/28 + deterministic re-run.
+- Union re-proof (`ff/doc-union-B-A0`, union A0/B bytes): DAG am
+  A0..E 18/18 rc=0 + am-tree `cmp`-identical at A0/B tips; B-tip
+  fate-ac4 16/16 + A0 3/3; gate-split 19/19; encneg-active 18/18
+  (+C01-C03); E-tip fate-ac4 25/25 + A0 3/3; parser probe
+  (D 1/6 code-only): 12/12 decode green, 4 demux reds = predicted
+  F/clamp drift, flips validate 16/16 + 3/3; no-samples shape
+  standard. C-tip 23 entailed (E-tip runs the same C tests).
 - T2 goldens recorded from the proof stack via fate outputs
   (bitexact); T5 +4096 re-pin likewise. Full log: scratch
   `proof-gates.log` (seat-local; not committed).

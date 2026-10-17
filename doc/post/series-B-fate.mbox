@@ -1,4 +1,4 @@
-From 460523e62eb543154c02160be44d0d9c6fb023fe Mon Sep 17 00:00:00 2001
+From fea159e4461847024148de4bcc09c60610d373cd Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Sat, 17 Oct 2026 03:10:00 -0400
 Subject: [PATCH 1/2] doc: AC-4 decoder docs
@@ -72,7 +72,8 @@ index 7032f14..7cf7400 100644
 -- 
 2.56.0
 
-From 78d4bb92dd077ea22dcfe6447e2e167e4f49445f Mon Sep 17 00:00:00 2001
+
+From 4e222bdee510c643c8679743358a26c6ad5a51f3 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Sat, 17 Oct 2026 03:11:00 -0400
 Subject: [PATCH 2/2] fate: add ac4 decoder tests
@@ -92,23 +93,24 @@ pins. fate-ac4-crc-bad is fate-ac4-skip-bad: the wrap performs no
 CRC check, so the honest name pins skip-with-warning, not a reject.
 seek-eof carries -copyts so the golden pins the demuxer's true +4096
 clamp stamp instead of the CLI seek-offset -235904.
+Mono + codec-4 gap tests stay deferred (no public bytes exist for either).
 
 Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
 ---
  tests/Makefile                 |   1 +
- tests/fate/ac4.mak             | 170 +++++++++++++++++++++++++++++++++
+ tests/fate/ac4.mak             | 173 +++++++++++++++++++++++++++++++++
  tests/ref/fate/ac4-51          |  11 +++
  tests/ref/fate/ac4-714         |  12 +++
  tests/ref/fate/ac4-copy-51     |   8 ++
  tests/ref/fate/ac4-copy-stereo |   8 ++
  tests/ref/fate/ac4-delay       |  14 +++
- tests/ref/fate/ac4-frac        | 129 +++++++++++++++++++++++++
+ tests/ref/fate/ac4-frac        | 129 ++++++++++++++++++++++++
  tests/ref/fate/ac4-frac-copy   | 125 ++++++++++++++++++++++++
  tests/ref/fate/ac4-ims120      |  50 ++++++++++
  tests/ref/fate/ac4-seek-eof    |   6 ++
  tests/ref/fate/ac4-skip-bad    |  11 +++
  tests/ref/fate/ac4-stereo51    |  11 +++
- 13 files changed, 556 insertions(+)
+ 13 files changed, 559 insertions(+)
  create mode 100644 tests/fate/ac4.mak
  create mode 100644 tests/ref/fate/ac4-51
  create mode 100644 tests/ref/fate/ac4-714
@@ -136,10 +138,10 @@ index 97e9d39..46d175a 100644
  include $(SRC_PATH)/tests/fate/als.mak
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
 new file mode 100644
-index 0000000..17e49c0
+index 0000000..b31339a
 --- /dev/null
 +++ b/tests/fate/ac4.mak
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,173 @@
 +# AC-4 decoder and demux FATE tests.
 +#
 +# Inputs live in the fate-suite under ac4/ (see the [samples-request]
@@ -204,7 +206,8 @@ index 0000000..17e49c0
 +fate-ac4-frac: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/audio_id_2ch_2997fps.ac4
 +# audio_id_2ch_2997fps.ac4: pre-existing suite file, 29.97 fps (fri row
 +# 3), 120 frames; golden pins the decoder's exact 1601/1602 output
-+# counts (N5 rate fix).
++# counts (N5 rate fix) incl. the nominal-vs-locked +/-1 pts phase
++# wobble on 1001 rows (decoder-side; deterministic, pinned).
 +
 +# --- decode (framemd5): corrupt packet skipped with warning, survivors decode ---
 +FATE_AC4_MD5 += fate-ac4-skip-bad
@@ -250,6 +253,8 @@ index 0000000..17e49c0
 +# -copyts: without it the CLI subtracts the -ss target from every stamp
 +# (ts_offset, ffmpeg_demux.c), hiding the demuxer's true +4096 behind a
 +# -235904. With it the golden pins the clamp (last packet, true pts).
++# No-parser shape: with the Series D parser, keyframe-honoring seek
++# lands on the last KEY first (2-line re-pin rides D, not here).
 +
 +# --- demux: garbage input yields no stream (negative slot) ---
 +FATE_AC4_REMUX += fate-ac4-probe-garbage
