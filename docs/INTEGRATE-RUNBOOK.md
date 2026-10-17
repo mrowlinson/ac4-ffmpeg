@@ -20,7 +20,7 @@ Refresh4 scratch: `/Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-runbook-final`.
 Branch copy: `ff/doc-runbook-final` (A→A0→B→C→E→D throughout; every
 A0-first step/claim now explicitly-marked HISTORICAL).
 Refresh5: 2026-10-17 (post-recut reality: A-r4 READY-TO-POST, C-r5
-L1-closed, B-final pending on suite-live+24h clock, E/D still-clean,
+L1-closed, B-final merged (sends at clock end), E/D still-clean,
 combo-6 record, combo-7 owed — pin sweep only, no new procedures).
 Refresh5 scratch: `/Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-runbook-refresh-2`.
 Branch copy: `ff/doc-runbook-refresh-2` (r4/re-cut-3/staged-B claims
@@ -50,8 +50,8 @@ master 2018c89; HISTORICAL re-cut 3 @ f827e56) +
 `doc/post/B-POST-CHECKLIST.md` (Series-B STAGED, PENDING stubs —
 HISTORICAL stage record, never post) +
 `doc/post/B-PREFLIGHT-CHECKLIST.md` + `B-OWNER-SEND-STEPS.md` +
-`series-B-fate.mbox` (Series-B FINAL re-cut, PENDING on branch
-`ff/doc-B-post-final@2330a26`, unmerged — suite 12/12 live, +24h
+`series-B-fate.mbox` (Series-B FINAL re-cut, merged ef93aa9
+(pack 2330a26) — suite 12/12 live, +24h
 clock ends 2026-10-17T22:23:09Z),
 `doc/post/DEC-POST-CHECKLIST.md` (re-cut-2 behavioral gates, carried),
 `doc/post/C-PREFLIGHT-CHECKLIST.md` (Series-C r5 READY-TO-POST,
@@ -95,13 +95,13 @@ branch). P1 (E2 probe needs `-strict -2` while A experimental)
 stays a post-time note at E post. F2-F6 (C/E/D mak + context
 anchors) describe merge-time assembly on a landed A, not the
 standalone posts. Combo-7 (full-24 re-run on B-final + C-r5 bytes)
-is OWED after B lands — see `docs/ASSEMBLY-PROTOCOL-R2.md`
+is OWED (now runnable on master bytes) — see `docs/ASSEMBLY-PROTOCOL-R2.md`
 R-recut + Steps 2A/2B below.
 
 ## 0. Pin table — r5 post packs + branches (read-only `git log/show/rev-parse`)
 
-Live post set = the six mbox send packs (five on parent master, B-final
-PENDING on its branch — file pins below). The r4 20-commit stack in the
+Live post set = the six mbox send packs (all on parent master —
+file pins below). The r4 20-commit stack in the
 submit-fix scratch clone (`ff-submit-fix/ffmpeg`, A0'→C'→E'→D' over
 pristine 3e6cd5e) is now HISTORICAL as a post source — C superseded by
 the r5 line, the rest carried byte-identical into the Final send packs.
@@ -112,7 +112,7 @@ Parent `Projects/ac4-ffmpeg/ffmpeg` repo + its branches untouched
 |---|---|---|
 | Series A decoder (READY-TO-POST, re-cut 4, post-N5) | `doc/post/series-A-decoder.mbox` 620505 B @ master 2018c89 (pack commit ab0ff5f) | 2 patches: staging 7955a1e (1/2, Makefile + 24 core incl `ac4_src.h` s5.11 header, N5 DSP/API) + 6144274 (2/2, N5-adapted ac4dec.c + allcodecs.c); `git am` 6f026cb/f6a620e ZERO warnings; cover `doc/covers/COVER-A.txt` (`[PATCH 0/2]`, N5 note flipped LANDED); zero sample deps. HISTORICAL re-cut 3: 606385 B @ f827e56 (PRE-N5 core, STALE) |
 | Series A0 head (READY-TO-POST, after A + suite-live+24h) | `doc/post/series-A0-head.mbox` 35400 B @ master c53d99e (pack commit 83dd3d9) | 1 patch: fresh `format-patch -1 fc4866b`, byte-identical to gated `submit-fix/A0/0001`; cover `doc/covers/COVER-A0.txt` |
-| Series B doc + decoder-FATE (FINAL re-cut, PENDING branch) | `doc/post/series-B-fate.mbox` 19113 B on branch `ff/doc-B-post-final@2330a26` (UNMERGED — not on master) | 2 patches: staging 0a49864 (1/2 doc, content-identical to stage, options frozen 6/6) + 42d53d9 (2/2 fate, 11 files, F8 fixed: 9 refs prefix-less + crc-note literal); suite 12/12 live, +24h clock ends 2026-10-17T22:23:09Z; cover `doc/covers/COVER-B.txt` (`[PATCH 0/2]`). Master still carries the STAGED `series-B-decfate.mbox` (13067 B, PENDING stubs — NEVER post) |
+| Series B doc + decoder-FATE (FINAL re-cut, merged) | `doc/post/series-B-fate.mbox` 19113 B @ master ef93aa9 (pack commit 2330a26) | 2 patches: staging 0a49864 (1/2 doc, content-identical to stage, options frozen 6/6) + 42d53d9 (2/2 fate, 11 files, F8 fixed: 9 refs prefix-less + crc-note literal); suite 12/12 live, +24h clock ends 2026-10-17T22:23:09Z; cover `doc/covers/COVER-B.txt` (`[PATCH 0/2]`). Master still carries the STAGED `series-B-decfate.mbox` (13067 B, PENDING stubs — NEVER post) |
 | Series C encoder (READY-TO-POST, r5, L1 closed) | `doc/post/series-C-encoder.mbox` 653799 B @ master 4912272 (pack commit 758fe35) | 11 patches, fresh `format-patch` of `ac4/C-encoder-split-r5@fd578ca` (row below); 01/11 folds the L1 AC4_ completion (34 symbols, table bytes identical), 02/11..11/11 byte-identical to gated r4; cover `doc/covers/COVER-C.txt` (`[PATCH 0/11]`, r5 note) |
 | Series E TS-mux (READY-TO-POST, still-clean, after C) | `doc/post/series-E-ts.mbox` 11605 B @ master f521c36 (pack commit d566f83) | 2 patches, byte-identical to gated pack (`cmp` clean per ED-STILL-CLEAN); no re-cut after N5 re-vendor; cover `doc/covers/COVER-E.txt` |
 | Series D MP4+dac4 (READY-TO-POST, still-clean, after C+E) | `doc/post/series-D-mp4.mbox` 128977 B @ master 96a0bee (pack commit c5c7a3d) | 6 patches, byte-identical to gated pack (`cmp` clean per ED-STILL-CLEAN); no re-cut after N5 re-vendor; cover `doc/covers/COVER-D.txt` |
@@ -157,7 +157,7 @@ commits now append-form + D6),
 ac4/D-parser, ac4/D-demux, ac4/D-demux-r3, ac4/D-demux-r4 (fold branch),
 ac4/D-mux, ac4/fuzz-lavf.
 
-Parent repo (`Projects/ac4-ffmpeg`, master = 2018c89):
+Parent repo (`Projects/ac4-ffmpeg`, master = ef93aa9):
 
 | branch | state |
 |---|---|
@@ -169,10 +169,10 @@ Parent repo (`Projects/ac4-ffmpeg`, master = 2018c89):
 | ff/doc-A-post-final + ff/doc-A-post-r2 + ff/doc-A-post-r4 | MERGED (re-cut 2 a66f84e/a89c3b1; HISTORICAL re-cut 3 6bd03b6/f827e56; re-cut 4 ab0ff5f/2018c89 FINAL post-N5 — step 2A; Series A itself UNSENT, READY-TO-POST) |
 | ff/doc-A0-post-final | MERGED (83dd3d9/c53d99e: Series-A0 Final send pack — step 2; UNSENT, READY-TO-POST after A + suite-live+24h) |
 | ff/doc-B-series-stage | MERGED (d731060/1645e4e: Series-B STAGED — HISTORICAL, never post; superseded by the B-final re-cut below) |
-| ff/doc-B-post-final | PENDING, UNMERGED (2330a26: Series-B FINAL re-cut on the live 12/12 suite — step 2B; sends at +24h clock end 2026-10-17T22:23:09Z) |
+| ff/doc-B-post-final | MERGED (2330a26/ef93aa9: Series-B FINAL re-cut on the live 12/12 suite — step 2B; sends at +24h clock end 2026-10-17T22:23:09Z) |
 | ff/doc-C-post-final + ff/doc-C-post-r2 | MERGED (0553df8 r4 pack; 758fe35/4912272 r5 L1 re-cut FINAL — step 3; UNSENT, READY-TO-POST) |
 | ff/doc-E-post-final + ff/doc-D-post-final | MERGED (d566f83/f521c36 E pack; c5c7a3d/96a0bee D pack; still-clean ceb5c2d/4f3c7a4, no re-cut — steps 7/4; UNSENT, READY-TO-POST) |
-| ff/doc-combo-6 | MERGED (cbe9a9c/de179fe: full-24 CONDITIONAL PASS — combo-7 owed after B lands) |
+| ff/doc-combo-6 | MERGED (cbe9a9c/de179fe: full-24 CONDITIONAL PASS — combo-7 now runnable on master bytes) |
 | ff/doc-torture-upload | MERGED (10ab93b/ec13cba: trio pack READY-AT-CLOCK-END, blocks nothing — step 8d) |
 | ff/doc-runbook-r4, ff/doc-D-cover-align, ff/doc-runbook-final | MERGED (68c8930 r4 sweep; 7919298 D 0/6 decision, D6 legit; 9a2f54d decoder-first flip) |
 | ff/enc-lib, ff/enc-libfix | merged (0d53cc9, cf94072) |
@@ -220,19 +220,19 @@ Series A re-cut 3 FINAL (606385 B, am ZERO warnings); Series B STAGED
 (13067 B, PENDING stubs, re-cut at clock end); N5 still PENDING
 (shadow CONFIRM, fix unlanded, tripwire pinned in cover).
 Recut deltas since Final (live pins in §0): parent master f827e56 ->
-2018c89 (B-nit, E-post, runbook, N5fix, 1344, C-post, D-post, MBP-N5,
+ef93aa9 (B-nit, E-post, runbook, N5fix, 1344, C-post, D-post, MBP-N5,
 N5-repin, A0-post, re-vendor-N5, MBP-wrap-regate, A-post-r4,
-ED-still-clean, C-post-r2 all merged); N5 LANDED (fix + repin +
+ED-still-clean, C-post-r2, B-post-final all merged); N5 LANDED (fix + repin +
 re-vendor + MBP regate, COVER-A flipped, gpac pin 48000/1602/
 5727312B); suite LANDED round 9 22:23:09Z 12/12 (clip-714 accepted,
 no drops); Series A re-cut 4 Final post-N5 (620505 B, supersedes
 STALE re-cut 3); Series A0 Final send pack (35400 B); Series B
-FINAL re-cut on the live suite (19113 B, F8 fixed, PENDING on branch
-2330a26, +24h clock ends 2026-10-17T22:23:09Z); Series C r5 re-cut
+FINAL re-cut on the live suite (19113 B, F8 fixed, merged
+ef93aa9, +24h clock ends 2026-10-17T22:23:09Z); Series C r5 re-cut
 (653799 B, combo-6 L1 closed, 02/11..11/11 byte-identical to r4);
 Series E + D still-clean (byte-identical, no re-cut); combo-6 full-24
 CONDITIONAL PASS (14/24 plain + 10 resolved, mak 230, N5 14/14);
-combo-7 OWED after B lands.
+combo-7 OWED (now runnable on B-final master bytes).
 
 Patch-count rollup: A(2) + A0(1) + B(2) + C(11)
 + E(2) + D(6) = **24 patches** (HISTORICAL A1/A2/A3/B1/B2
@@ -329,15 +329,15 @@ Status: READY-TO-POST, UNSENT (no SENT marker; Owner-at-post blanks
 unfilled). N5: LANDED in-core (labels 48000 Hz / 1601-1602 frames,
 max-latch); mail-1 starts no clock for A.
 
-### Step 2B — Series B doc + decoder-FATE final (PENDING branch, sends at clock end, owner posts)
+### Step 2B — Series B doc + decoder-FATE final (merged, sends at clock end, owner posts)
 
 Pack (pins §0): `doc/post/series-B-fate.mbox` (2 patches vs 3e6cd5e,
-19113 B, FINAL re-cut on the live 12/12 suite, branch
-`ff/doc-B-post-final@2330a26` — UNMERGED, not on master) +
+19113 B, FINAL re-cut on the live 12/12 suite, merged
+ef93aa9 (pack 2330a26) +
 `doc/covers/COVER-B.txt` (`[PATCH 0/2]`).
 HISTORICAL stage pack: `series-B-decfate.mbox` (13067 B, 9
-PENDING-stub goldens — NEVER post as-is; still the file on master
-until the B-final branch merges). Pre-flight record (on the branch):
+PENDING-stub goldens — NEVER post as-is; still beside the final
+`series-B-fate.mbox` on master). Pre-flight record:
 `doc/post/B-PREFLIGHT-CHECKLIST.md` (P1 suite 12/12 sha-ok live
 re-verified first-party; 9 goldens recorded from the real wrapper +
 suite bytes, B2EXEC-REAL F1/F1b/F2/F3 folded, F8 fixed; fate-ac4
@@ -358,9 +358,9 @@ renamed prefix-less per the default-ref strip rule, crc-note REF
 `tests/fate/ac4.mak` + include (B-first creator — C5'/E2/D append at
 their time per combo-6 F2-F6, merge-time assembly); D6 Changelog
 APPENDS decoder line at `<next>` end (no textual conflict with C3's
-prepended encoder line). Status: FINAL re-cut DONE, PENDING merge +
-clock end + A/A0 landed. Combo-7 runs after B lands (full-24 re-run
-on B-final + C-r5 bytes).
+prepended encoder line). Status: Final re-cut DONE + MERGED; sends
+at clock end + A/A0 landed. Combo-7 now runnable (full-24 re-run
+on B-final + C-r5 master bytes).
 
 ### Step 3 — C line (post the r5 send pack, pins §0)
 
@@ -446,7 +446,7 @@ precedent, justified in FIX-REPORT); ASCII-only code+messages+covers;
 ```sh
 export TMPDIR=/Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-runbook-refresh-2
 # detached worktree stacking post-order per ASSEMBLY-PROTOCOL Rules 0-5
-# (pins §0): A(2, step 2A Final re-cut 4) -> A0(1, Final pack) -> B(2, step 2B Final, branch 2330a26)
+# (pins §0): A(2, step 2A Final re-cut 4) -> A0(1, Final pack) -> B(2, step 2B Final, merged ef93aa9)
 #   -> C(11, r5) -> E(2) -> D(6) (24 patches; combo-6: 14/24 plain + 10 resolved, mak 230)
 git -C ~/Projects/ac4-ffmpeg/ffmpeg worktree add --detach /Volumes/NVME/ac4-ffmpeg-ws/scratch/ff-runbook-refresh-2/wt-combo <tip>
 B=/Volumes/NVME/ac4-ffmpeg-ws/build/ff-combo; mkdir -p $B
@@ -462,7 +462,7 @@ Stacking detail (stanza anchors, resolution table, L1/P1 findings):
 `ff-combo-rerun-5/COMBO-RERUN-5.md`; r3 record, 19/19:
 `ff-combo-rerun-4/COMBO-RERUN-4.md`; r2 record, 17/17:
 `ff-combo-rerun/HEARTBEAT.md`). Combo-7 (same recipe on B-final + C-r5
-bytes) OWED after B lands.
+bytes, now runnable) OWED.
 
 Per-component standalone builds (same worktree, separate build dirs):
 `--disable-everything --enable-decoder=ac4`, `--enable-encoder=ac4`,
@@ -537,9 +537,9 @@ Covers = `doc/covers/COVER-*.txt` (A N5-flipped LANDED at re-cut 4;
 C r5 note + branch-state; A0/E/D Final; B post-ready on the branch).
 Send artifacts = `doc/post/series-{A-decoder,A0-head,C-encoder,E-ts,
 D-mp4}.mbox` (all FINAL on master — steps 2A/2/3/7/4) +
-`doc/post/series-B-fate.mbox` (FINAL re-cut, PENDING on branch 2330a26
-— step 2B). HISTORICAL: `series-B-decfate.mbox` (STAGED, on master
-until B-final merges — NEVER post) + `ff-submit-fix/mbox/
+`doc/post/series-B-fate.mbox` (FINAL re-cut, on master ef93aa9
+— step 2B). HISTORICAL: `series-B-decfate.mbox` (STAGED, beside the final on master
+— NEVER post) + `ff-submit-fix/mbox/
 series-{A0,C,E,D}.mbox` (r4-era cuts, superseded by the Final packs).
 Per-series mechanics: every series via its `*-OWNER-SEND-STEPS.md`
 (mailsplit + cover-as-0000 + send-email); A0/C/E/D no longer need the
@@ -560,14 +560,14 @@ Order: A(2) -> A0(1) -> B(2) -> C(11) -> E(2) -> D(6).
   suite-live+24h (clock ends 2026-10-17T22:23:09Z — step 8d).
   HISTORICAL "posts first" — superseded by the flip.
   (Rest of B assumes copy exit 0 + seekable pts.)
-- B: Step 2B Final re-cut DONE on branch 2330a26 (P1-P5 green, F8 fixed;
-  PENDING merge); owner sends at clock end per B-OWNER-SEND-STEPS.md
-  (branch copy); preconditions A + A0 LANDED + clock end
+- B: Step 2B Final re-cut DONE + MERGED 2330a26/ef93aa9 (P1-P5
+green, F8 fixed); owner sends at clock end per B-OWNER-SEND-STEPS.md;
+  preconditions A + A0 LANDED + clock end
   2026-10-17T22:23:09Z. HISTORICAL B1/B2 decomposition FOLDED — docs +
   FATE IS this 2-patch send. HISTORICAL stage pack (PENDING stubs —
   NEVER post). Landing = B-FIRST creator (creates ac4.mak + include;
   C5'/E2/D append at their time — see `## B2 landing addendum` recut
-  cross-check). Combo-7 runs after B lands.
+  cross-check). Combo-7 now runnable on master bytes.
 - C: Step 3 all-DONE on `ac4/C-encoder-split-r5@fd578ca` (r5 send pack
   FINAL, READY-TO-POST); EL-B1/B2 + EL-M/m, C-B1/M1-M5/m1-m9 closed;
   C-M3 syms, C-M4 MSVC; R3 guards, S5FU x2.0, fuzz guards, DSI C7/C8
@@ -584,8 +584,8 @@ Order: A(2) -> A0(1) -> B(2) -> C(11) -> E(2) -> D(6).
   -r3 line); D6 LANDED in-series (08b4f00, placement closed); Step 1c
   contract DONE; D1 review; TOR-1/2/3 asserts in D4; no samples mail
   needed (self-contained); full `make fate` green.
-- Parallelizable prep (never post early): B-final merge at clock end;
-  combo-7 prep w/ B landing; C4 w/ C3-tail; mak/docs prep anytime. Each
+- Parallelizable prep (never post early): combo-7 run on master
+bytes; C4 w/ C3-tail; mak/docs prep anytime. Each
   series independently reviewable + revertable.
 
 ### Step 11 — Rollback notes
@@ -672,5 +672,5 @@ Final live procedure end-to-end (B-staged creator + C5'/E2/D4/D5/D6
 appends, all byte-faithful, single aggregate 9 vars at mak 230) —
 residual (a) closed for staged bytes. The B-final re-cut (staging
 0a49864/42d53d9, F8 fixed) changes the creator bytes, so the same
-procedure re-runs as combo-7 after B lands (B-final + C-r5 bytes);
-mechanism unchanged, anchors re-verified there.
+procedure re-runs as combo-7 (B-final + C-r5 master bytes, now
+runnable); mechanism unchanged, anchors re-verified there.

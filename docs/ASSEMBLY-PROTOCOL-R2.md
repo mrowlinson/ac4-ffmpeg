@@ -16,7 +16,7 @@ order A→A0→B→C→E→D: Series-A pre-step + Series-B creator-flip recorded
 validated A0→C→E→D 20-stack core stands as combo-5 left it; B-first
 re-validation is a disclosed residual, not done here).
 R-recut refresh: 2026-10-17, branch `ff/doc-runbook-refresh-2` (post-recut
-pins: A-r4, A0/C-r5/E/D Final packs on master, B-final PENDING branch;
+pins: A-r4/A0/B-final/C-r5/E/D Final packs all on master;
 combo-6 executed the full 24-stack with resolutions — residuals (a)/(b)
 closed for staged bytes, re-owed as combo-7 on B-final + C-r5 bytes;
 r4/re-cut-3/staged-B SHAs survive only in explicitly-marked historical
@@ -31,14 +31,14 @@ recut: `doc/post/COMBO-RERUN-6.md`, 24/24 with resolutions).
 
 ## Tip verification (all `git rev-parse`, read-only; C-r5 line in the
 `ff-C-post-r2-retry/ffmpeg` scratch clone; E/D lines UNCHANGED in the
-`ff-submit-fix/ffmpeg` clone; send packs on parent master, file pins;
-B-final pack on its branch)
+`ff-submit-fix/ffmpeg` clone; all six send packs on parent master,
+file pins)
 
 | Series | Shape used | Tip | Verified |
 |---|---|---|---|
 | A | Series-A decoder re-cut 4 (FINAL, post-N5, post-ready) | mbox 620505 B @ 2018c89 | staging 7955a1e/6144274, `git am` 6f026cb/f6a620e ZERO warnings on pristine 3e6cd5e |
 | A0 | A0-submit-r2 (resquash + ASCII recut) + Final pack | fc4866b / mbox 35400 B @ c53d99e | UNCHANGED (fresh `-1` byte-identical per A0 preflight) |
-| B | Series-B doc + decoder-FATE FINAL (PENDING branch) | mbox 19113 B @ 2330a26 | staging 0a49864/42d53d9, `git am` clean pristine+A0; F8 fixed; suite 12/12 live, clock ends 2026-10-17T22:23:09Z |
+| B | Series-B doc + decoder-FATE FINAL (merged) | mbox 19113 B @ ef93aa9 | staging 0a49864/42d53d9, `git am` clean pristine+A0; F8 fixed; suite 12/12 live, clock ends 2026-10-17T22:23:09Z |
 | C | C-split-r5 11/11 (C1-C3 + C4'/C5' + C6 + W1-W3 + C7/C8 DSI) | fd578ca | 6c07969,065c5e5,2cd9378,bd7a122,1985788,c8c74e1,1f76f88,1ef16bd,6a4733d,383a1e9,fd578ca (01/11 L1 fix, 02-11 byte-identical to r4) |
 | E | E-ts-r3 2/2 still-clean (E2 protocol-form) + Final pack | a2485a9 / mbox 11605 B @ f521c36 | UNCHANGED (fresh format-patch byte-identical per ED-STILL-CLEAN) |
 | D | D-split-r3 6/6 still-clean (D4/D5/D6 append-form) + Final pack | 08b4f00 / mbox 128977 B @ 96a0bee | UNCHANGED (fresh format-patch byte-identical per ED-STILL-CLEAN) |
@@ -62,13 +62,13 @@ re-cut 3 (606385 B @ f827e56: PRE-N5, STALE), re-cut 2 (606436 B @
 a89c3b1) and re-cut 1 (605740 B) superseded by re-cut 4 (620505 B @
 2018c89: post-N5 core). HISTORICAL Series-B stage (02bc75b/af19c5e,
 13067 B @ 1645e4e, PENDING stubs) superseded by the B-final re-cut
-(0a49864/42d53d9, 19113 B @ 2330a26, PENDING branch).
+(0a49864/42d53d9, 19113 B @ ef93aa9, merged).
 
 ## Rule 0 — what each series is (post set, 24 patches: A→A0→B→C→E→D)
 
 A: 7955a1e (1/2 decoder core, 25 files, post-N5) + 6144274 (2/2 wire,
 2 files). A0: fc4866b. B: 0a49864 (1/2 doc, 3 files) + 42d53d9 (2/2
-fate, 11 files, F8 fixed — FINAL re-cut, PENDING branch 2330a26).
+fate, 11 files, F8 fixed — FINAL re-cut, merged ef93aa9).
 C: 6c07969, 065c5e5, 2cd9378, bd7a122, 1985788,
 c8c74e1, 1f76f88, 1ef16bd, 6a4733d, 383a1e9, fd578ca. E: 5e2d5d5,
 a2485a9 (protocol-form in-branch). D: 083c676, c01ad3f, 499892d,
@@ -79,8 +79,8 @@ byte-faithful) + 2 resolution commits; build rc=0, 0 ac4 warnings;
 14/14 executable + 10/10 nosamples fate + aliases + neg 2/2; N5
 14/14; mak 230 lines, single aggregate 9 vars (see Validation).
 HISTORICAL core: A0→C→E→D 20/20 as-is, zero rebases (combo-5).
-Re-validation owed as combo-7 on B-final + C-r5 bytes after B lands
-(Verdict). R5 notes: C6 (c8c74e1)
+Re-validation owed as combo-7 on B-final + C-r5 master bytes
+(now runnable — Verdict). R5 notes: C6 (c8c74e1)
 flips FATE_SAMPLES_AVCONV→FATE_FFMPEG (SAMPLES-unset); W3 (6a4733d)
 adds the 10-line fold8 block; W2 adds tests/ac4-neg-check.sh (not fate);
 C1 (6c07969) folds the L1 AC4_ completion (34 symbols, decoder untouched);
@@ -126,7 +126,7 @@ post (same mechanical drop E2/D4 already carry; combo-6 dropped the
 C5 Makefile hunk, single include confirmed). The r2/r3-era conflict
 record (identical line after `…/ac3.mak`, before `adpcm.mak`; add/add,
 `git apply` failed for the 2nd and 3rd) is why only the creator keeps
-it. Re-verified on final bytes by combo-7 after B lands.
+it. Re-verified on final bytes by combo-7 (now runnable).
 
 ## Rule 3 — tests/fate/ac4.mak: B creates, C/E2/D4/D5/D6 append before aggregate
 
@@ -144,7 +144,7 @@ create→append rebase + E2/D re-anchor onto the B(+C) tail + full
 B-first-stack fate green all ran — every stanza byte-faithful
 (E2 43/43, D4 11/11, D5 11/11, D6 10/10 non-aggregate +lines),
 single aggregate 9 vars at mak 230. Re-verified on B-final + C-r5
-bytes by combo-7 after B lands (same mechanism, new creator bytes).
+bytes by combo-7 (same mechanism, new creator bytes — now runnable).
 
 - B2 creates the file verbatim (decoder stanzas + wiring + seed
   aggregate); C5' appends the encoder stanza (41 lines + blank) before
@@ -175,7 +175,7 @@ bytes by combo-7 after B lands (same mechanism, new creator bytes).
   all 9 vars; HISTORICAL 20-stack-core form was line 126:
   `fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes)
   $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes)
-  $(FATE_AC4_TSDEMUX-yes)`). Combo-7 re-verifies the line on final bytes.
+  $(FATE_AC4_TSDEMUX-yes)`). Combo-7 re-verifies the line on final bytes (now runnable).
 - No `--- Series X ---` merge markers in posted patches (4c65a7e's marker
   was scratch-only); each stanza's own comment header is the section header.
 
@@ -223,7 +223,7 @@ expected-disjoint was wrong; resolutions proven byte-faithful):
   (identical bytes) → 34 duplicate symbols at link. Fixed in C r5
   01/11 (AC4_ completion, decoder untouched); A+C links ZERO dup syms,
   rename byte-neutral per 5/5 fate + goldens.
-Re-verified on B-final + C-r5 bytes by combo-7 after B lands.
+Re-verified on B-final + C-r5 master bytes by combo-7 (now runnable).
 
 ## Validation (combo-6: `git am` 24/24 with resolutions onto pristine
 3e6cd5e, read-only sources; record `doc/post/COMBO-RERUN-6.md` —
@@ -328,10 +328,10 @@ Recut cross-check (ff/doc-runbook-refresh-2): combo-6 EXECUTED the
 Final mechanism on staged bytes (C5'/E2/D4/D5/D6 appends +
 aggregate extension, no wholesale mak copy anywhere) — residual (a)
 closed for staged bytes. B-final changes the creator bytes (F8
-fixes), so combo-7 re-executes on B-final + C-r5 bytes after B lands;
-mechanism unchanged.
+fixes), so combo-7 re-executes on B-final + C-r5 master bytes
+(now runnable); mechanism unchanged.
 
-## Verdict: ASSEMBLES-WITH-RESOLUTIONS (combo-6) — combo-7 owed: 1 OPEN
+## Verdict: ASSEMBLES-WITH-RESOLUTIONS (combo-6) — combo-7 runnable: 1 OPEN
 
 Stack verdict: A→A0→B→C→E→D 24/24 `git am` with 2 `-3`-auto + 8 hand
 resolutions (all byte-faithful) + 2 resolution commits, build rc=0
@@ -341,7 +341,7 @@ PASS — the 10 B failures were pre-existing stage-state F8, since
 fixed in the B-final re-cut). HISTORICAL core verdict (combo-5):
 A0→C→E→D 20/20 clean, zero rebases.
 Residual list (post-recut follow-up, NOT validated here, owned by a
-combo-7 lane after B lands):
+combo-7 lane — now runnable on master ef93aa9 bytes):
 
 (c) Final-bytes re-validation: `am` full A→A0→B-final→C-r5→E→D 24/24
     + build + fate green both SAMPLES modes + single-aggregate check;
