@@ -1,20 +1,22 @@
 # C-OWNER-SEND-STEPS — Series C encoder post (owner posts)
 
-Final pack, gated 2026-10-16 on master `f827e56` (r4 covers in-tree;
-`COVER-C.txt` untouched since). Pre-flight record:
-`doc/post/C-PREFLIGHT-CHECKLIST.md`. Stack gates: `ff-submit-fix`
-`FIX-REPORT.md` + `ff-mbp-r4build` `MBP-R4BUILD.md` (carried, cited in
-the checklist).
+Final pack, gated 2026-10-16 on master `240dad8` (r5 re-cut for the
+combo-6 L1 link fix; cover carries the r5 01/11 note + branch-state).
+Pre-flight record: `doc/post/C-PREFLIGHT-CHECKLIST.md`. Stack gates:
+`ff-submit-fix` `FIX-REPORT.md` + `ff-mbp-r4build` `MBP-R4BUILD.md`
+(carried, cited in the checklist) + `ff-combo-6-verify`
+`COMBO-RERUN-6.md` (L1 source + goldens).
 
 Pack: `doc/post/series-C-encoder.mbox` (11 patches vs `3e6cd5e`,
-653094 B) + `doc/covers/COVER-C.txt` (`[PATCH 0/11]`).
+653799 B) + `doc/covers/COVER-C.txt` (`[PATCH 0/11]`).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
 ## 0. Preconditions (all true at gate time)
 
-- Source line: `ac4/C-encoder-split-r4@1ccd10a` (11 commits, linear,
-  no merges). Mbox is a fresh `format-patch` of that line,
-  byte-identical to the gated `submit-fix/C/0001..0011`.
+- Source line: `ac4/C-encoder-split-r5@fd578ca` (11 commits, linear,
+  no merges). Mbox is a fresh `format-patch` of that line; 02/11..
+  11/11 byte-identical to the gated r4 `submit-fix/C/0002..0011`,
+  01/11 carries only the L1 AC4_ completion (table bytes identical).
 - NOTHING sent yet: no SENT marker in repo; all series unsent. No
   suite/sample wait for this series (asynth-only, zero new samples).
 - Sequencing only: this series applies standalone onto pristine
@@ -42,7 +44,8 @@ Expected send order / threading:
 
 1. `[PATCH 0/11] native AC-4 encoder` (cover)
 2. `[PATCH 01/11] avcodec/ac4: add encoder static tables` (7 files:
-   Makefile OBJS + 6 tables; build no-op, guard undefined)
+   Makefile OBJS + 6 tables; build no-op, guard undefined; r5
+   AC4_-prefixes the 34 AJOC/DE/DRC table symbols, bytes identical)
 3. `[PATCH 02/11] avcodec/ac4: add encoder core + lib adapter`
    (28 files: engine + DSP + algo + adapter; no lavc surface)
 4. `[PATCH 03/11] avcodec: add native AC-4 encoder` (7 files:
