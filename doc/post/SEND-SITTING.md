@@ -2,9 +2,11 @@
 
 Owner sends A0, A, B, C, E, D back-to-back in one sitting, in
 stack order (see STACK-DAG.md). No drip-sends. Source: the six
-`*-OWNER-SEND-STEPS.md` in this dir (A = re-cut 5 guard fix, B/E =
-stack re-cut with T2/M17/M22/T5 fixes, C/D = stack-context re-cut;
-see Per-series notes). Mail-1 already done (suite live
+`*-OWNER-SEND-STEPS.md` in this dir (MUST-final bytes: A0/A/B =
+MUST-fix union re-cuts incl. M21 one-walker + T2/T5, A = r6 with
+M4-M9 + guard fix, C = union 10 mails with M10-M18 and C08
+dropped, E = stack re-cut with M22/M19, D = union with
+M19/M21/T3). Mail-1 already done (suite live
 2026-10-16T22:23:09Z) — no mail step here.
 
 To: `ffmpeg-devel@ffmpeg.org` every series. Patches only — NO
@@ -21,14 +23,15 @@ ifconfig | grep 169.254.103.231  # TB-only send link; must print a line; else ST
 ## 1. Global preflight (repo root, merged master)
 
 ```sh
-git log --oneline -1                     # expect e72a4b9 ff/merged: runbook-r2 (or later parent merge)
+git log --oneline -1                     # expect 2def950 ff/merged: must-fix-A-r6 (or later parent merge)
 ls -l doc/post/*.mbox                    # sizes MUST read:
 ```
 Expected bytes: `series-A-decoder` 507373, `series-A0-head` 43263,
 `series-B-fate` 40708, `series-C-encoder` 650974, `series-E-ts`
-12693, `series-D-mp4` 162643. A/B/A0/D sizes are the MUST-fix union
-re-cuts; C is the union re-cut (`ff/doc-union-C`, 10 mails);
-E size is the stack re-cut (STACK-DAG.md); stale STAGED
+12693, `series-D-mp4` 162643. All six are the MUST-fix union
+re-cuts at master `2def950` (C is the corrected union,
+`ff/doc-union-C`, 10 mails — old 08/11 neg gate dropped, its two
+layout negatives now ride B 2/2 as FATE); stale STAGED
 `series-B-decfate.mbox` removed from tree; B pack is
 `series-B-fate.mbox` only.
 
@@ -38,7 +41,7 @@ perl -ne '$c += tr/\x80-\xFF//; END { print "non-ascii=$c (want 0)\n" }' \
 grep -c "^From " doc/post/series-A-decoder.mbox doc/post/series-A0-head.mbox \
   doc/post/series-B-fate.mbox doc/post/series-C-encoder.mbox \
   doc/post/series-E-ts.mbox doc/post/series-D-mp4.mbox
-# want 2 1 2 11 2 6 in that file order
+# want 2 1 2 10 2 6 in that file order (23 patch mails)
 ```
 
 B cover note (closed post-guard-fix): `COVER-B.txt` Testing block now
@@ -55,7 +58,8 @@ No owner call needed; confirm the incl-fate-source line pre-split.
 
 Stack order (accepted by running this): the six packs form ONE
 ordered stack (A0 -> A -> B -> C -> E -> D, see STACK-DAG.md) and
-apply with plain `git am` in that order only -- 24/24 verified.
+apply with plain `git am` in that order only -- 23/23 per the
+union re-proof (24/24 pre-drop, C08 dropped after).
 One sitting sends before anything lands, so tell the maintainer
 the application order in each cover thread if asked: A0 first,
 then A, B, C, E, D. B's A/A0 need stays functional (FATE legs),
@@ -75,6 +79,8 @@ R=<repo-root>   # the merged-master checkout from step 1
 
 Preflight: suite live +24h (step 0 clock); M3 FATE refs need
 `ac4/clip-stereo.ac4` + `ac4/clip-51-real.ac4` in the suite.
+MUST-final: M21 one-walker (`libavcodec/ac4_toc.h`) +
+`need_parsing=HEADERS`.
 
 ```sh
 mkdir -p sendA0 && git mailsplit -osendA0 $R/doc/post/series-A0-head.mbox  # -> 0001
@@ -91,7 +97,8 @@ Expect zero warnings.
 ## 4. Series A — decoder (2 patches + cover)
 
 Preflight: stack order (applies after A0); P3 decoder-first flip
-approved by posting.
+approved by posting. MUST-final: r6 (M4 strip, M5 scrub, M6
+pres_sel-only, M7 unref, M8 skip-bad, M9 portability) + guard fix.
 
 ```sh
 mkdir -p sendA && git mailsplit -osendA $R/doc/post/series-A-decoder.mbox  # -> 0001 0002
@@ -108,7 +115,9 @@ Thread: `[PATCH 0/2] native AC-4 decoder for raw .ac4 streams`,
 ## 5. Series B — doc + decoder FATE (2 patches + cover)
 
 Preflight: step-0 clock (P1); B cover call from step 1 recorded;
-packs: `series-B-fate.mbox` ONLY.
+packs: `series-B-fate.mbox` ONLY. MUST-final: union re-cut (M17
+layout negatives folded as FATE, T2 frac pair, T5 seek-eof
+-copyts, M8 skip-bad rename).
 
 ```sh
 mkdir -p sendB && git mailsplit -osendB $R/doc/post/series-B-fate.mbox  # -> 0001 0002
@@ -122,30 +131,40 @@ Thread: `[PATCH 0/2] doc + FATE for the native AC-4 decoder`,
 `[PATCH 1/2] doc: AC-4 decoder docs`,
 `[PATCH 2/2] fate: add ac4 decoder tests`. Expect zero 8bit warnings.
 
-## 6. Series C — encoder (11 patches + cover)
+## 6. Series C — encoder (10 patches + cover)
 
-Preflight: r5 L1 fix in (01/11 `AC4_`-prefixed tables); asynth-only,
-no sample wait.
+Preflight: M10-M18 union in (01/10 `AC4_`-prefixed `*_tab` tables,
+M11 EXPERIMENTAL, M18 single-row docs chained on B); old C08 neg
+gate dropped (negatives ride B 2/2); asynth-only, no sample wait.
 
 ```sh
-mkdir -p sendC && git mailsplit -osendC $R/doc/post/series-C-encoder.mbox  # -> 0001..0011
+mkdir -p sendC && git mailsplit -osendC $R/doc/post/series-C-encoder.mbox  # -> 0001..0010
 cp $R/doc/covers/COVER-C.txt sendC/0000
 git send-email --to=ffmpeg-devel@ffmpeg.org \
   --from="Michael Rowlinson <mrowlinson@gmail.com>" \
   sendC/0000 sendC/0001 sendC/0002 sendC/0003 sendC/0004 sendC/0005 \
-  sendC/0006 sendC/0007 sendC/0008 sendC/0009 sendC/0010 sendC/0011
+  sendC/0006 sendC/0007 sendC/0008 sendC/0009 sendC/0010
 ```
 
-Thread: `[PATCH 0/11] native AC-4 encoder` + 01/11 tables, 02/11
-core+adapter, 03/11 encoder, 04/11 docs, 05/11 fate, 06/11 no-SAMPLES,
-07/11 CLI note, 08/11 neg gate, 09/11 fold8, 10/11 DSI extradata,
-11/11 DSI layout. Expect zero warnings.
+Thread: `[PATCH 0/10] native AC-4 encoder`,
+`[PATCH 01/10] avcodec/ac4: add encoder static tables`,
+`[PATCH 02/10] avcodec/ac4: add encoder core + lib adapter`,
+`[PATCH 03/10] avcodec: add native AC-4 encoder`,
+`[PATCH 04/10] doc: AC-4 encoder docs`,
+`[PATCH 05/10] fate: add ac4 encoder tests`,
+`[PATCH 06/10] fate: run ac4 encoder tests without SAMPLES`,
+`[PATCH 07/10] doc/ac4enc: note CLI silent auto-fold, explicit-layout`,
+`[PATCH 08/10] fate/ac4enc: pin 8ch silent fold to 5.1 (fold8)`,
+`[PATCH 09/10] avcodec/ac4: emit DSI extradata via putbits serializer`,
+`[PATCH 10/10] avcodec/ac4enc: drive DSI layout from the lavc-mask`.
+Expect zero warnings.
 
 ## 7. Series E — TS mux (2 patches + cover)
 
 Preflight: none beyond global (asynth-only); posts-after-C is
 functional (2/2 appends the B-created, C-extended `ac4.mak`) —
-landing order covers it.
+landing order covers it. MUST-final: M22 message rewrite, M19
+Changelog line, probe `-strict -2` (post-D parser).
 
 ```sh
 mkdir -p sendE && git mailsplit -osendE $R/doc/post/series-E-ts.mbox  # -> 0001 0002
@@ -164,6 +183,8 @@ Thread: `[PATCH 0/2] MPEG-TS mux descriptors for AC-4`,
 Preflight: none beyond global (self-contained); posts-after-C+E is
 functional (4/6-6/6 append the B/C/E-extended `ac4.mak` + the
 `tests/api/Makefile` entries) — landing order covers it.
+MUST-final: union (M19 lines after E, M21 `ac4_toc.h` use +
+post-D re-pins, T3 roundtrip area, M20 split).
 
 ```sh
 mkdir -p sendD && git mailsplit -osendD $R/doc/post/series-D-mp4.mbox  # -> 0001..0006
@@ -180,9 +201,10 @@ roundtrip fate, 6/6 ts demux fate. Expect zero warnings.
 ## 9. After each series
 
 Verify the archive/outbox shows the full thread in order, then record
-Message-IDs + date in Owner-at-post. 30 messages total
-(3+2+3+12+3+7). If ANY series shows warnings or a broken thread:
-STOP the sitting, do not continue to the next series (rollback notes).
+Message-IDs + date in Owner-at-post. 29 messages total on the wire
+(23 patch mails + 6 covers: 2+3+3+11+3+7). If ANY series shows
+warnings or a broken thread: STOP the sitting, do not continue to
+the next series (rollback notes).
 
 ## Rollback notes
 
@@ -205,30 +227,30 @@ Mail cannot be unsent. Per-series recovery, worst first:
 - B landed before A/A0: B FATE legs fail upstream until A+A0 land;
   no repost needed once they do (same bytes).
 
-## Dry-run record (this seat, 2026-10-17T01:05Z, git 2.56.0)
+## Dry-run record (this seat, 2026-10-17T09:12Z, git 2.56.0)
 
 Every command in steps 0-8 EXCEPT the six live `git send-email`
-invocations was run verbatim against master `e72a4b9` bytes in
-scratch `ff-send-sitting-prep/dry`: all six `mailsplit -osendX`
-rc=0 with exact file counts (2/1/2/11/2/6); all six cover copies
-0000 shape (Subject + blank + body); `git send-email --dry-run`
-`Result: OK` on all 30 messages with ZERO warning lines; subjects
-match the threads above; non-ASCII byte count 0 across all mboxes +
-covers; signoff counts 2/1/2/11/2/6. Attached `-osendX` form used
-throughout (`-o send/` fails on this git — see
-`A-SENDSTEPS-NITFIX.md`; C/D/E/A0 per-series docs showed the broken
-form at dry-run time, fixed since to the attached form). TB-IP
-check dry-ran absent here (owner link only).
+invocations was run verbatim against master `2def950` bytes in
+scratch `ff-send-sitting-2/dry`: all six `mailsplit -osendX`
+rc=0 with exact file counts (1/2/2/10/2/6 = 23 patch files); all
+six cover copies 0000 shape (Subject + blank + body);
+`git send-email --dry-run` `Result: OK` on all 29 wire messages
+(2+3+3+11+3+7) with ZERO warning lines; subjects match the threads
+above; non-ASCII byte count 0 across all mboxes + covers; signoff
+counts 2/1/2/10/2/6; byte sizes match the MUST-union table exactly.
+Attached `-osendX` form used throughout (`-o send/` fails on this
+git — see `A-SENDSTEPS-NITFIX.md`). TB-IP check dry-ran absent
+here (owner link only).
 
 ## Owner-at-post (fill when sending)
 
 - [ ] Clock >= 2026-10-17T22:23:09Z confirmed: _______________
 - [ ] TB link 169.254.103.231 confirmed: _______________
 - [ ] B cover Testing refresh confirmed (incl. fate-source): _______________
-- [ ] A sent date + Message-IDs (0/2,1/2,2/2): _______________
 - [ ] A0 sent date + Message-IDs (cover,1/1): _______________
+- [ ] A sent date + Message-IDs (0/2,1/2,2/2): _______________
 - [ ] B sent date + Message-IDs (0/2,1/2,2/2): _______________
-- [ ] C sent date + Message-IDs (0/11..11/11): _______________
+- [ ] C sent date + Message-IDs (0/10..10/10): _______________
 - [ ] E sent date + Message-IDs (0/2,1/2,2/2): _______________
 - [ ] D sent date + Message-IDs (0/6..6/6): _______________
 - [ ] Archive shows all six threads complete, in order.
