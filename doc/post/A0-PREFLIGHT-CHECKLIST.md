@@ -1,5 +1,13 @@
 # A0-PREFLIGHT-CHECKLIST — Series A0 head FINAL (owner posts)
 
+> SCOPE NOTE (size sweep `COVER-SIZE-SWEEP.md`): this file records
+> the r2 bytes (staging `submit-fix/A0/0001` 35400 B, 6 files).
+> The merged mbox is the M21 union re-cut (r3 content):
+> `series-A0-head.mbox` 43263 B, 1 patch, 7 files (adds
+> `libavcodec/ac4_toc.h` +678). Subject/signoff/ASCII/mailsplit
+> claims below still hold on current bytes; size/file claims
+> describe r2, not current bytes.
+
 Branch: `ff/doc-A0-post-final` from master `f23777b`.
 Gated 2026-10-16 in scratch `ff-A0-post-pack` (TMPDIR there);
 parent repos untouched, nothing pushed, no MBP/remote, nothing sent.

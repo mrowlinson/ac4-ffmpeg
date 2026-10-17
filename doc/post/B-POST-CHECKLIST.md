@@ -1,5 +1,11 @@
 # B-POST-CHECKLIST -- Series B doc + decoder-FATE STAGE (post at clock end)
 
+> SCOPE NOTE (size sweep `COVER-SIZE-SWEEP.md`): this file records
+> the STAGED pack (`series-B-decfate.mbox`, 13067 B, PENDING stubs,
+> never post). That file is removed from the tree; the merged B
+> pack is `series-B-fate.mbox` only (40708 B, 2 patches).
+> Size/count claims below describe the staged pack, not current bytes.
+
 Branch: `ff/doc-B-series-stage` from master `cc42e2c`.
 Staged 2026-10-16 in scratch `ff-B-series-stage` (TMPDIR there);
 parent repo untouched, nothing pushed, no MBP/remote, nothing sent.

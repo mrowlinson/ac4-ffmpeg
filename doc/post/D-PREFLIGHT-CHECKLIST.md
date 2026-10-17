@@ -1,5 +1,15 @@
 # D-PREFLIGHT-CHECKLIST — Series D MP4+dac4 FINAL (owner posts)
 
+> SCOPE NOTE (size sweep `COVER-SIZE-SWEEP.md`): this file records
+> the r3 pre-union bytes (staging 128977 B; C(11)+E(2)+D(6) 19/19;
+> zero TAB lines). The merged mbox is the union re-cut:
+> `series-D-mp4.mbox` 162643 B, 6 patches; C is 10 (C08 dropped)
+> so the stack arithmetic is C(10)+E(2)+D(6) = 18 (arithmetic
+> only, gates not re-proven here); the mbox has 6 TAB lines
+> (make-recipe indentation, ASCII). The "identical bytes" carries
+> below predate the union. Size/count claims below describe r3,
+> not current bytes.
+
 Branch: `ff/doc-D-post-final` from master `2436f47`.
 Gated 2026-10-16 in scratch `ff-D-post-pack` (TMPDIR there);
 parent repo untouched, nothing pushed, no MBP/remote, nothing sent.

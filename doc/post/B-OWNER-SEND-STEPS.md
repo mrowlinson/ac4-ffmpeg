@@ -61,7 +61,7 @@ Expected send order / threading:
 2. `[PATCH 1/2] doc: AC-4 decoder docs` (table row + @section ac4
    + Changelog)
 3. `[PATCH 2/2] fate: add ac4 decoder tests` (tests/fate/ac4.mak
-   + Makefile include + 9 goldens)
+   + Makefile include + 11 goldens)
 
 Mbox is ASCII-only: expect no 8bit warnings. Verify the
 archive/outbox shows 0/2 + 1/2 + 2/2 threaded in order, then
@@ -70,7 +70,7 @@ record the Message-IDs + date in the checklist copy.
 ## 2. Post order (full sequence)
 
 Series A (landed, precondition) -> A0 (landed, precondition) ->
-B1/B2 (this send) -> C(11) -> E(2) -> D(6).
+B (this send) -> C(10) -> E(2) -> D(6).
 
 Constraints: mail-1+24h before B2 (this series' FATE, P1); A0
 before B2 (demux copy/pts + garbage shape); B2-before-C NOT

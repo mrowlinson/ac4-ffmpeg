@@ -1,5 +1,13 @@
 # DEC-POST-CHECKLIST — decoder-first post pack (Series A), RE-CUT 2
 
+> SCOPE NOTE (size sweep `COVER-SIZE-SWEEP.md`): this file records
+> the RE-CUT-2 staging (606436 B). The merged mbox is re-cut 6:
+> `series-A-decoder.mbox` 507373 B, 2 patches (see
+> `A-PREFLIGHT-CHECKLIST.md`). The recommended sequence below
+> (C(11), D(5), D6 TBD) is re-cut-2-era; current stack is
+> A0(1)+A(2)+B(2)+C(10)+E(2)+D(6) = 23. Size/count claims below
+> describe re-cut 2, not current bytes.
+
 Branch: `ff/dec-wrap-revendor` from master `7ba72eb`. Staged
 2026-10-16 in scratch `ff-wrap-revendor` (TMPDIR there); parent repo
 untouched, nothing pushed, no MBP/remote. Staging commits live only
