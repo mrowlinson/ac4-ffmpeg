@@ -4,13 +4,16 @@ Final pack re-cut 2 on the live suite, gated 2026-10-16 on master
 `e72a4b9` (supersedes the `2330a26` FINAL pack with the stale 51200
 714 golden -- never post that one -- and the `d731060` STAGED pack
 with PENDING golden stubs -- never post that one either).
+Union re-cut (MUST-fix B/A0 union, branch `ff/doc-union-B-A0`):
+same 16 tests + encoder negatives, comment/message adds only,
+re-gated 2026-10-17 (fate-ac4 16/16, gate-split 19/19, E-tip 25).
 Pre-flight record: `doc/post/B-PREFLIGHT-CHECKLIST.md`. Stage
 background (deltas, stanza parity, suite gate history):
 `doc/post/B-POST-CHECKLIST.md`. Blocker record:
 `doc/post/COMBO-RERUN-7.md` (finding F1, closed by this re-cut).
 
 Pack: `doc/post/series-B-fate.mbox` (2 patches on Series A,
-40394 B) + `doc/covers/COVER-B.txt` (`[PATCH 0/2]`).
+40708 B) + `doc/covers/COVER-B.txt` (`[PATCH 0/2]`).
 Stack order: A0 -> A -> B -> C -> E -> D (see STACK-DAG.md).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
