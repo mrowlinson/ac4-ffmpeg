@@ -1,4 +1,4 @@
-From bae9b34c91b9ae926b460ae71e20858c688f0b07 Mon Sep 17 00:00:00 2001
+From c79797839e9e4aa21d75d7b1ac04d31947b2f5a1 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Sat, 17 Oct 2026 03:13:00 -0400
 Subject: [PATCH 1/2] lavf/mpegtsenc: write AC-4 descriptors
@@ -88,7 +88,7 @@ index 7d04ad0..f48b8f0 100644
 -- 
 2.56.0
 
-From c36401f64f8fbf7116f92961d49fd920c108f811 Mon Sep 17 00:00:00 2001
+From ba84f796c67a3135626405d1166503f82353f142 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Sat, 17 Oct 2026 03:14:00 -0400
 Subject: [PATCH 2/2] fate: ac4 ts mux tests
@@ -107,7 +107,7 @@ makes find_stream_info open the experimental decoder). No new samples;
 framecrc stage yet: demux-side sample rate/channels stay unknown until
 the Series D parser lands.
 
-The GEN step runs at loglevel error: mpegtsenc's default-PCR helper
+The GEN step runs at loglevel error and passes -strict -2 (the native encoder is EXPERIMENTAL): mpegtsenc's default-PCR helper
 calls av_get_audio_frame_duration2(par, 0), and with frame_bytes 0 the
 frame_size fallback cannot fire while AC-4 has no switch case, so it
 warns once and uses 512 (PCR cadence only; the encoder does set
@@ -238,11 +238,11 @@ index 0000000..640cbe2
 +    exit 1
 +}'
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
-index 58c8af2..04e6e5d 100644
+index 69e0295..81db40d 100644
 --- a/tests/fate/ac4.mak
 +++ b/tests/fate/ac4.mak
-@@ -218,4 +218,46 @@ fate-ac4-tail: SRC = $(TARGET_PATH)/tests/data/asynth-48000-2.wav
- fate-ac4-tail: CMD = framecrc -i $(SRC) -c:a ac4 -ab 128k -af aresample,atrim=end_sample=12097
+@@ -222,4 +222,46 @@ fate-ac4-tail: SRC = $(TARGET_PATH)/tests/data/asynth-48000-2.wav
+ fate-ac4-tail: CMD = framecrc -i $(SRC) -c:a ac4 -strict -2 -ab 128k -af aresample,atrim=end_sample=12097
  FATE_FFMPEG += $(FATE_AC4_ENC-yes)
  
 -fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes)
@@ -263,7 +263,7 @@ index 58c8af2..04e6e5d 100644
 +	$(M)$(TARGET_EXEC) $(TARGET_PATH)/$< \
 +	-hide_banner -loglevel error -nostdin \
 +	-i $(TARGET_PATH)/tests/data/asynth-48000-2.wav \
-+	-c:a ac4 -ab 128k -loudness_target 0 -mpegts_flags system_b \
++	-c:a ac4 -strict -2 -ab 128k -loudness_target 0 -mpegts_flags system_b \
 +	-flags +bitexact -fflags +bitexact -af aresample \
 +	-f mpegts -y $(TARGET_PATH)/$@
 +

@@ -1,4 +1,4 @@
-From 1dccbbf7d6c085a25447d5c44ccd376384710509 Mon Sep 17 00:00:00 2001
+From 1f05f12f77c30b1e40d27e3b1e4ee038e6a86275 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:10:53 -0400
 Subject: [PATCH 01/10] avcodec/ac4: add encoder static tables
@@ -41,7 +41,7 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  create mode 100644 libavcodec/ac4_sfb_offsets.h
 
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index 1e8a0c8..4b5c998 100644
+index 54c74ee..6b35695 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
 @@ -219,6 +219,8 @@ OBJS-$(CONFIG_AC3_FIXED_DECODER)       += ac3dec_fixed.o ac3dec_data.o ac3.o \
@@ -51,8 +51,8 @@ index 1e8a0c8..4b5c998 100644
 +OBJS-$(CONFIG_AC4_ENCODER)             += ac4_huffman_tab.o \
 +                                          ac4_aspx_tab.o ac4_sfb_offsets.o
  OBJS-$(CONFIG_AC3_MF_ENCODER)          += mfenc.o mf_utils.o
- # AC-4 decoder: wrapper + vendored dec-lib streaming core (in-tree port,
- # Q1 closed; re-vendor rule in lavc-dec/README.md). No extra libs/flags.
+ # AC-4 decoder: wrapper + vendored streaming core (in-tree port).
+ # No extra libs/flags.
 diff --git a/libavcodec/ac4_aspx_tab.c b/libavcodec/ac4_aspx_tab.c
 new file mode 100644
 index 0000000..b5b47d4
@@ -2087,8 +2087,7 @@ index 0000000..4eb179d
 -- 
 2.56.0
 
-
-From cf1a3961068a32b80e8145b012370f9bfe415ac6 Mon Sep 17 00:00:00 2001
+From d1e2ec440c742d6095a75f445f4fa8b71128ba95 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:11:00 -0400
 Subject: [PATCH 02/10] avcodec/ac4: add encoder core + lib adapter
@@ -2174,7 +2173,7 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  create mode 100644 libavcodec/ac4enc_lib.h
 
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index 4b5c998..dcff004 100644
+index 6b35695..323f52f 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
 @@ -221,6 +221,15 @@ OBJS-$(CONFIG_AC3_ENCODER)             += ac3enc_float.o ac3enc.o ac3tab.o \
@@ -2191,8 +2190,8 @@ index 4b5c998..dcff004 100644
 +                                          ac4_enc_tail59.o ac4_enc_aspx.o \
 +                                          ac4_enc_acpl.o ac4_pycompat.o
  OBJS-$(CONFIG_AC3_MF_ENCODER)          += mfenc.o mf_utils.o
- # AC-4 decoder: wrapper + vendored dec-lib streaming core (in-tree port,
- # Q1 closed; re-vendor rule in lavc-dec/README.md). No extra libs/flags.
+ # AC-4 decoder: wrapper + vendored streaming core (in-tree port).
+ # No extra libs/flags.
 diff --git a/libavcodec/ac4_asf.c b/libavcodec/ac4_asf.c
 new file mode 100644
 index 0000000..c6512ac
@@ -16132,8 +16131,7 @@ index 0000000..a503a1c
 -- 
 2.56.0
 
-
-From b3dc278dcc0dbd8be65f6b7fdac43623b783194c Mon Sep 17 00:00:00 2001
+From aca8c029ac49a83eb7cfacb7bb3b1956cab2f1fa Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:11:24 -0400
 Subject: [PATCH 03/10] avcodec: add native AC-4 encoder
@@ -16225,7 +16223,7 @@ index c97ddb1..9c3f59e 100755
  LIB_INSTALL_EXTRA_CMD=$LIB_INSTALL_EXTRA_CMD
  EXTRALIBS=$extralibs
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index dcff004..79ec911 100644
+index 323f52f..ecb917d 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
 @@ -230,6 +230,23 @@ OBJS-$(CONFIG_AC4_ENCODER)             += ac4enc_lib.o \
@@ -16250,8 +16248,8 @@ index dcff004..79ec911 100644
 +libavcodec/ac4_sfb_offsets.o libavcodec/ac4_pycompat.o libavcodec/ac4enc.o: \
 +    CFLAGS += $(CFLAGS-ac4enc_float)
  OBJS-$(CONFIG_AC3_MF_ENCODER)          += mfenc.o mf_utils.o
- # AC-4 decoder: wrapper + vendored dec-lib streaming core (in-tree port,
- # Q1 closed; re-vendor rule in lavc-dec/README.md). No extra libs/flags.
+ # AC-4 decoder: wrapper + vendored streaming core (in-tree port).
+ # No extra libs/flags.
 diff --git a/libavcodec/ac4enc.c b/libavcodec/ac4enc.c
 new file mode 100644
 index 0000000..15fea61
@@ -16995,8 +16993,7 @@ index 5921bfb..f23acf7 100644
 -- 
 2.56.0
 
-
-From 4eed00caefd4c643157776d89cbda48040e73ec4 Mon Sep 17 00:00:00 2001
+From 94306f8aee9cf824ffc1d45bcbb644082352c788 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:11:28 -0400
 Subject: [PATCH 04/10] doc: AC-4 encoder docs
@@ -17093,8 +17090,7 @@ index 7cf7400..0a27aa0 100644
 -- 
 2.56.0
 
-
-From 27632d589c3290c1f298367cde0fe906687a844c Mon Sep 17 00:00:00 2001
+From ea4c5b4a9ab8cd0cacd34a49ec75e1a564beadcc Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:15:39 -0400
 Subject: [PATCH 05/10] fate: add ac4 encoder tests
@@ -17130,7 +17126,7 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  create mode 100644 tests/ref/fate/ac4-tail
 
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
-index 17e49c0..98ce70b 100644
+index c2aa001..735ee9d 100644
 --- a/tests/fate/ac4.mak
 +++ b/tests/fate/ac4.mak
 @@ -1,12 +1,12 @@
@@ -17151,7 +17147,7 @@ index 17e49c0..98ce70b 100644
  
  # --- decode (pcm): stereo, byte-exact pcm vs suite ref ---
  FATE_AC4 += fate-ac4-stereo
-@@ -167,4 +167,45 @@ FATE_AC4_REMUX-$(call REMUX, AC4) += $(FATE_AC4_REMUX)
+@@ -170,4 +170,45 @@ FATE_AC4_REMUX-$(call REMUX, AC4) += $(FATE_AC4_REMUX)
  FATE_SAMPLES_AVCONV += $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes)
  FATE_FFMPEG += $(FATE_AC4_ENCNEG-yes)
  
@@ -17239,8 +17235,7 @@ index 0000000..f6ebafd
 -- 
 2.56.0
 
-
-From 8c3b4869420c6a1485deae342b40c563f9ad8a8c Mon Sep 17 00:00:00 2001
+From 6cfa875b3fae7392b7e566ef6953814bd913f568 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:15:44 -0400
 Subject: [PATCH 06/10] fate: run ac4 encoder tests without SAMPLES
@@ -17260,10 +17255,10 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
-index 98ce70b..4c60be5 100644
+index 735ee9d..40836bf 100644
 --- a/tests/fate/ac4.mak
 +++ b/tests/fate/ac4.mak
-@@ -206,6 +206,6 @@ FATE_AC4_ENC-$(call FRAMECRC, WAV, PCM_S16LE, ARESAMPLE_FILTER ATRIM_FILTER AC4_
+@@ -209,6 +209,6 @@ FATE_AC4_ENC-$(call FRAMECRC, WAV, PCM_S16LE, ARESAMPLE_FILTER ATRIM_FILTER AC4_
  fate-ac4-tail: tests/data/asynth-48000-2.wav
  fate-ac4-tail: SRC = $(TARGET_PATH)/tests/data/asynth-48000-2.wav
  fate-ac4-tail: CMD = framecrc -i $(SRC) -c:a ac4 -strict -2 -ab 128k -af aresample,atrim=end_sample=12097
@@ -17274,8 +17269,7 @@ index 98ce70b..4c60be5 100644
 -- 
 2.56.0
 
-
-From 7a6df90a04a9440f09463fc64b76194f1445ee18 Mon Sep 17 00:00:00 2001
+From 83b9a6054e4c689d5049be7cbb1be0109adeed42 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:15:44 -0400
 Subject: [PATCH 07/10] doc/ac4enc: note CLI silent auto-fold, explicit-layout
@@ -17311,8 +17305,7 @@ index 28f66c9..ec96c4e 100644
 -- 
 2.56.0
 
-
-From ad5e6a1f9d64c742d4b55f262a8ae1d41818de43 Mon Sep 17 00:00:00 2001
+From 1b0c60be627ff2da5f21e1915c0bf37a85791fbe Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:15:44 -0400
 Subject: [PATCH 08/10] fate/ac4enc: pin 8ch silent fold to 5.1 (fold8)
@@ -17333,10 +17326,10 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  create mode 100644 tests/ref/fate/ac4-fold8
 
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
-index 4c60be5..8f017f0 100644
+index 40836bf..69e0295 100644
 --- a/tests/fate/ac4.mak
 +++ b/tests/fate/ac4.mak
-@@ -201,6 +201,17 @@ fate-ac4-framecrc: tests/data/asynth-48000-2.wav
+@@ -204,6 +204,17 @@ fate-ac4-framecrc: tests/data/asynth-48000-2.wav
  fate-ac4-framecrc: SRC = $(TARGET_PATH)/tests/data/asynth-48000-2.wav
  fate-ac4-framecrc: CMD = framecrc -i $(SRC) -c:a ac4 -strict -2 -ab 128k -frames:a 6 -af aresample
  
@@ -17376,8 +17369,7 @@ index 0000000..da08b13
 -- 
 2.56.0
 
-
-From dcca457c4f118f8ca67a2ae8ade565ab2ca7d545 Mon Sep 17 00:00:00 2001
+From ea2fa8c0bc120664a93a877c9784e9c886436eed Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:16:02 -0400
 Subject: [PATCH 09/10] avcodec/ac4: emit DSI extradata via putbits serializer
@@ -17428,7 +17420,7 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  create mode 100644 libavcodec/ac4dsi_putbits.h
 
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index 79ec911..81a4488 100644
+index ecb917d..2863615 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
 @@ -231,6 +231,7 @@ OBJS-$(CONFIG_AC4_ENCODER)             += ac4enc_lib.o \
@@ -18336,8 +18328,7 @@ index f6ebafd..24b0eae 100644
 -- 
 2.56.0
 
-
-From 80933ad768bd2864633f6d5e13fdcfc5bb9aebb8 Mon Sep 17 00:00:00 2001
+From 49a5e9c4aca829e18b23301b60261ea0afa8ece0 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:16:02 -0400
 Subject: [PATCH 10/10] avcodec/ac4enc: drive DSI layout from the lavc-mask
