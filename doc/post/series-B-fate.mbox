@@ -1,4 +1,4 @@
-From 0a4986449d5d20b0d8c18031f0b1291d6613cf53 Mon Sep 17 00:00:00 2001
+From f33da8d3cd5a036f9411e29379f996b96787024f Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 14:44:01 -0400
 Subject: [PATCH 1/2] doc: AC-4 decoder docs
@@ -90,7 +90,7 @@ index 7032f14..7cf7400 100644
 2.56.0
 
 
-From 42d53d9de3b3e40c2ebbf3d8c41a3d3095e8fed6 Mon Sep 17 00:00:00 2001
+From b26048f13f9a96ace2acc954a4969aaced26e565 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 19:44:10 -0400
 Subject: [PATCH 2/2] fate: add ac4 decoder tests
@@ -136,7 +136,7 @@ index 97e9d39..46d175a 100644
  include $(SRC_PATH)/tests/fate/als.mak
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
 new file mode 100644
-index 0000000..f9414fd
+index 0000000..f2e0b2b
 --- /dev/null
 +++ b/tests/fate/ac4.mak
 @@ -0,0 +1,116 @@
@@ -181,7 +181,7 @@ index 0000000..f9414fd
 +FATE_AC4_MD5 += fate-ac4-714
 +fate-ac4-714: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-714.ac4
 +# clip-714.ac4: cm253 7.1 excerpt (broadcast capture, suite-accepted);
-+# 51200 Hz clip reality, 3 frames, no skips.
++# 48000 Hz / 1920 spf N5 output (out_sr = base_fs x sf_mult), 3 frames, no skips.
 +
 +# --- decode (framemd5): stereo program in a 5.1 bed ---
 +FATE_AC4_MD5 += fate-ac4-stereo51
@@ -275,22 +275,22 @@ index 0000000..4dd59cf
 +0,       4096,       4096,     2048,    24576, 05c6406ca7dfd3549e9279d0d8f6ec25
 diff --git a/tests/ref/fate/ac4-714 b/tests/ref/fate/ac4-714
 new file mode 100644
-index 0000000..ed66524
+index 0000000..513c572
 --- /dev/null
 +++ b/tests/ref/fate/ac4-714
 @@ -0,0 +1,12 @@
 +#format: frame checksums
 +#version: 2
 +#hash: MD5
-+#tb 0: 1/51200
++#tb 0: 1/48000
 +#media_type 0: audio
 +#codec_id 0: pcm_s16le
-+#sample_rate 0: 51200
++#sample_rate 0: 48000
 +#channel_layout_name 0: 7.1
 +#stream#, dts,        pts, duration,     size, hash
-+0,          0,          0,     2048,    32768, bc4535ed2217e9937f07c17ff50ae935
-+0,       2048,       2048,     2048,    32768, b4c527a1d37a11bf93da1b4678153355
-+0,       4096,       4096,     2048,    32768, b323424cff8082cbe5d831e59ec99550
++0,          0,          0,     1920,    30720, 6f5b3a6ab5f16a4190de2baa79ebd1f9
++0,       1920,       1920,     1920,    30720, 6d73c3fef3e44831a4f348f9817664da
++0,       3840,       3840,     1920,    30720, 89090903b8a5939523044a75651df977
 diff --git a/tests/ref/fate/ac4-copy-51 b/tests/ref/fate/ac4-copy-51
 new file mode 100644
 index 0000000..c744cba
