@@ -15,7 +15,8 @@ hunks. No out-of-tree link, no extra libs/flags.
   `ac4_src.h` included: N5 s5.11 count rules, header-only, no OBJS),  landing flat in `libavcodec/`. Filenames kept except the 8 static
   table files, renamed `*_tables.c/h` → `*_tab.c/h` (zero collisions
   at `3e6cd5e` either way); port delta is headers + CLI strip +
-  that rename + the scripted ASCII map (see Q1).
+  that rename + inclusion-guard remap to `AVCODEC_<file>_H` +
+  the scripted ASCII map (see Q1).
 - `wiring.patch` — `allcodecs.c` extern + `Makefile` OBJS hunks, vs
   ffmpeg master `3e6cd5e`. Apply with `git apply` inside the tree,
   then copy `ac4dec.c` + `core/*` in. `configure` auto-detects
@@ -66,21 +67,31 @@ Answer:
   spliced inline; guards verified else-free) + one provenance line
   atop `dec_lib.c` + rename of the 8 static table files
   `aspx/huffman/qwin/snf _tables.c/h` → `*_tab.c/h` (with their
-  `#include`s, `wiring.patch` OBJS, and sibling comments; include
-  guards and dec-lib-provenance `src/*` comments keep the old
-  spelling) + the scripted ASCII map (the `5c8740a` 8-char comment
-  map + entropy-tail rule: dec-lib keeps comment UTF-8, `core/`
+  `#include`s, `wiring.patch` OBJS, and sibling comments;
+  dec-lib-provenance `src/*` comments keep the old spelling) +
+  inclusion-guard remap on all 13 headers to the in-tree form
+  `AVCODEC_<file>_H` (e.g. `ac4d.h` → `AVCODEC_AC4D_H`,
+  `huffman_tab.h` → `AVCODEC_HUFFMAN_TAB_H`; `#endif` carries the
+  `/* MACRO */` comment per the `ac3.h`/`aactab.h` precedent) +
+  the scripted ASCII map (the `5c8740a` 8-char comment map +
+  entropy-tail rule: dec-lib keeps comment UTF-8, `core/`
   ships pure ASCII). Nothing else: no behavior edits.  Provenance pin: dec-lib tree `8e27f25`.
   The rename dodges `libavcodec/Makefile CLEANFILES =
   *_tables.c *_tables.h` (plus the matching `libavcodec/.gitignore`
   lines), which otherwise deletes the committed sources on `make
   clean`; `*_tab` follows the in-tree `ac3tab`/`aactab` precedent.
+  The guard remap satisfies `fate-source` (it derives the required
+  macro from the in-tree path); dec-lib keeps its standalone `AC4_*`
+  guards — they are correct for the out-of-tree lib and never enter
+  the ffmpeg tree.
 - RE-VENDOR RULE (mechanical): take `dec-lib/src/*` at the new pin
   → apply the delta above (headers, strip, then the rename map
   `s/_tables\./_tab./` on filenames + `#include`s + OBJS + sibling
-  comments only — never on `src/*` provenance or guard macros,
-  then the ASCII map) → diff against staged `core/` (expect DSP
-  changes only) → update the pin → re-run the full gate table below.
+  comments only — never on `src/*` provenance comments — then the
+  guard map `#ifndef/#define <OLD>` → `AVCODEC_<file>_H` + trailing
+  `#endif` → `#endif /* AVCODEC_<file>_H */` on every header, then
+  the ASCII map) → diff against staged `core/` (expect DSP changes
+  only) → update the pin → re-run the full gate table below.
   Never hand-edit `core/` (generate, then diff); never re-prepend
   headers over headed files (always regenerate from dec-lib source).
 - SUB-ISSUE (already settled): 24-bit packing pinned s16LE+`0x00`
@@ -197,8 +208,9 @@ extras — the Q1 close is visible in the artifact itself.
   zero warnings under dec-lib's own flags too, with no `-D`.
 - Port equivalence (mechanical): ported `dec_lib.c` preprocessed
   output is byte-identical to `-DAC4D_LIB_ONLY` dec-lib source
-  modulo blank lines; all other core files are comment-prepend
-  only. Neg outputs (`bad40`, `ims`) are `cmp`-identical to the
+  modulo blank lines; all other core `.c` files are comment-prepend
+  only and every core `.h` is comment-prepend + the guard remap.
+  Neg outputs (`bad40`, `ims`) are `cmp`-identical to the
   out-of-tree wrap's own outputs.
 - Byte-exact vs dec-lib: 11/11 vectors `cmp`-identical to BOTH the
   shim (`build/shim decode --bits 16`) and an independent streaming

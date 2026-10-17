@@ -1,22 +1,22 @@
 # A-OWNER-SEND-STEPS — Series A decoder post (owner posts)
 
-Final pack re-cut 4, gated 2026-10-16 on master `df3f2de`
-(re-vendor-N5 merged: `lavc-dec/` N5-current; supersedes the 606385-B
-re-cut-3 pack, which embeds the PRE-N5 core and is STALE).
+Final pack re-cut 5, gated 2026-10-16 on master `ef93aa9` +
+the guard fix on this branch (fate-source conformance; supersedes
+the 620505-B re-cut-4 pack, whose 13 `AC4_*` header guards fail
+`fate-source` — upstream CI would fail on it — and is STALE).
 Pre-flight record: `doc/post/A-PREFLIGHT-CHECKLIST.md`.
 Behavioral gates re-proven on these bytes (smoke/F2) or carried via
 byte-identity from the revendor-N5 validation: see the checklist.
 
 Pack: `doc/post/series-A-decoder.mbox` (2 patches vs `3e6cd5e`,
-620505 B) + `doc/covers/COVER-A.txt` (`[PATCH 0/2]`, N5 note flipped
-to LANDED in this re-cut — the re-cut-3 cover's pending-re-pin prose
-is false against this core).
+620888 B) + `doc/covers/COVER-A.txt` (`[PATCH 0/2]`, unchanged from
+re-cut 4 — subjects and prose still exact).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
 ## 0. Preconditions (all true at gate time)
 
 - P3 confirmed: Series-A letter + decoder-first flip approved. (This
-  file existing on `ff/doc-A-post-r4` with READY-TO-POST = the flip
+  file existing on `ff/doc-A-guard-fix` with READY-TO-POST = the flip
   is approved; runbook step 10 still says A0 first — stale, fix later.)
 - NOTHING sent yet: no SENT marker in repo; Series A and mail-1 both
   unsent. No suite/sample wait for this series (zero sample deps).
@@ -43,14 +43,14 @@ Expected send order / threading:
 
 1. `[PATCH 0/2] native AC-4 decoder for raw .ac4 streams` (cover)
 2. `[PATCH 1/2] avcodec: add native AC-4 decoder core` (25 files:
-   Makefile OBJS + 24 core incl. new `ac4_src.h` s5.11 count header,
-   builds inert under undefined CONFIG_AC4_DECODER)
+   Makefile OBJS + 24 core incl. `ac4_src.h` s5.11 count header,
+   guards in `AVCODEC_<file>_H` form, builds inert under undefined
+   CONFIG_AC4_DECODER)
 3. `[PATCH 2/2] avcodec: wire ff_ac4_decoder` (ac4dec.c + allcodecs.c)
 
 Expect ZERO 8bit warnings from `git send-email`: mbox + cover are
-pure ASCII in this re-cut (the carried FINDING-1 em-dash is gone via
-the re-vendor ASCII map; the 2 cover em-dashes transliterated with
-the N5-note flip). No MIME headers in the mbox.
+pure ASCII in this re-cut (carried from re-cut 4; the guard fix adds
+ASCII-only lines). No MIME headers in the mbox.
 Verify the archive/outbox shows 0/2 + 1/2 + 2/2 threaded
 in order, then record the Message-IDs + date in the checklist copy.
 

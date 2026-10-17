@@ -29,10 +29,10 @@
  * regenerate with tools/snf_gen.py.
  * Values: RANDOM_NOISE_TABLE (Annex C.11), binary32.
  */
-#ifndef AC4_SNF_TABLES_H
-#define AC4_SNF_TABLES_H
+#ifndef AVCODEC_SNF_TAB_H
+#define AVCODEC_SNF_TAB_H
 
 #define SNF_RANDOM_NOISE_N 256
 extern const float SNF_RANDOM_NOISE[SNF_RANDOM_NOISE_N];
 
-#endif
+#endif /* AVCODEC_SNF_TAB_H */

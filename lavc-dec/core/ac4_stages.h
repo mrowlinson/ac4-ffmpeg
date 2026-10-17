@@ -46,8 +46,8 @@
  * - Overlap state zero-init (e2 assumption, QUESTION-e2-3).
  * - Long-block only until block-switch bits settle.
  */
-#ifndef AC4_STAGES_H
-#define AC4_STAGES_H
+#ifndef AVCODEC_AC4_STAGES_H
+#define AVCODEC_AC4_STAGES_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -159,4 +159,4 @@ static short __attribute__((unused)) imdct_d2s16(double v) {
 }
 #endif
 
-#endif /* AC4_STAGES_H */
+#endif /* AVCODEC_AC4_STAGES_H */

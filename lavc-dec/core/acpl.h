@@ -19,8 +19,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AC4_ACPL_H
-#define AC4_ACPL_H
+#ifndef AVCODEC_ACPL_H
+#define AVCODEC_ACPL_H
 
 #include <complex.h>
 
@@ -144,4 +144,4 @@ void acpl_5x_frame(acpl_5x_t *s, const double *L, const double *R,
                    const acpl_mod_t *P, int spf, double *oL,
                    double *oR, double *oLs, double *oRs, acpl_state_t *st);
 
-#endif
+#endif /* AVCODEC_ACPL_H */

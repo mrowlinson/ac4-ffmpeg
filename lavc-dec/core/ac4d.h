@@ -33,8 +33,8 @@
  * ctx instances are fully independent (all decode state lives in the
  * heap ctx, ~16 MB).
  */
-#ifndef AC4D_H
-#define AC4D_H
+#ifndef AVCODEC_AC4D_H
+#define AVCODEC_AC4D_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -133,4 +133,4 @@ int ac4d_get_info(const ac4d_ctx *c, ac4d_info *i);
 }
 #endif
 
-#endif
+#endif /* AVCODEC_AC4D_H */

@@ -32,8 +32,8 @@
  * ENV_BALANCE_30/NOISE_LEVEL/NOISE_BALANCE x F0/DF/DT.
  * Codeword convention: low LEN bits, MSB first on the wire.
  */
-#ifndef AC4_ASPX_TABLES_H
-#define AC4_ASPX_TABLES_H
+#ifndef AVCODEC_ASPX_TAB_H
+#define AVCODEC_ASPX_TAB_H
 
 #include <stdint.h>
 
@@ -92,4 +92,4 @@ static inline int aspx_book(int fam, int ht) {
 int aspx_decode(const aspx_book_t *b,
                 int (*getbit)(void *ctx), void *ctx);
 
-#endif
+#endif /* AVCODEC_ASPX_TAB_H */

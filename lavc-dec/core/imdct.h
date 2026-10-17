@@ -44,8 +44,8 @@
  * row alpha, so switch boundaries are exactly PR (1e-12 gated);
  * uniform path 1e-12 exact.
  */
-#ifndef AC4_IMDCT_H
-#define AC4_IMDCT_H
+#ifndef AVCODEC_IMDCT_H
+#define AVCODEC_IMDCT_H
 
 #include <stddef.h>
 
@@ -134,4 +134,4 @@ float imdct_d2f32(double v); /* clamp to [-1,1] */
 }
 #endif
 
-#endif /* AC4_IMDCT_H */
+#endif /* AVCODEC_IMDCT_H */
