@@ -1,14 +1,16 @@
 # B-OWNER-SEND-STEPS -- Series B doc + decoder-FATE post (owner posts)
 
-Final pack re-cut on the live suite, gated 2026-10-16 on master
-`df3f2de` (supersedes the `d731060` STAGED pack with PENDING golden
-stubs -- never post that one). Pre-flight record:
-`doc/post/B-PREFLIGHT-CHECKLIST.md`. Stage background (deltas,
-stanza parity, suite gate history):
-`doc/post/B-POST-CHECKLIST.md`.
+Final pack re-cut 2 on the live suite, gated 2026-10-16 on master
+`e72a4b9` (supersedes the `2330a26` FINAL pack with the stale 51200
+714 golden -- never post that one -- and the `d731060` STAGED pack
+with PENDING golden stubs -- never post that one either).
+Pre-flight record: `doc/post/B-PREFLIGHT-CHECKLIST.md`. Stage
+background (deltas, stanza parity, suite gate history):
+`doc/post/B-POST-CHECKLIST.md`. Blocker record:
+`doc/post/COMBO-RERUN-7.md` (finding F1, closed by this re-cut).
 
 Pack: `doc/post/series-B-fate.mbox` (2 patches vs `3e6cd5e`,
-19113 B) + `doc/covers/COVER-B.txt` (`[PATCH 0/2]`).
+19150 B) + `doc/covers/COVER-B.txt` (`[PATCH 0/2]`).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
 ## 0. Preconditions (all true before step 1)
@@ -23,10 +25,13 @@ From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
   2026-10-16T22:23:09Z -> clock ends 2026-10-17T22:23:09Z.
 - P2-P5 done by the re-cut lane (preflight): 9 goldens recorded
   from the real wrapper + suite bytes, B2EXEC-REAL F1/F1b/F2/F3
-  calls folded, `make fate-ac4` 14/14 + gate-split 14/14 green,
-  negatives green, mbox re-cut with zero PENDING stubs.
-- Cover `COVER-B.txt` Testing block refreshed for the fate-source
-  finding (cover track; see preflight disclosed carries).
+  calls folded, combo-7 F1 (stale 714 golden) fixed + re-gated,
+  `make fate-ac4` 14/14 + gate-split 14/14 green, full `make fate`
+  3054 green (fate-source fixed via A-r5), negatives green
+  (carried -- comment-only mak delta), mbox re-cut with zero
+  PENDING stubs.
+- Cover `COVER-B.txt` Testing block re-verified for literal
+  full-fate-green (cover track; see preflight disclosed carries).
 
 ## 1. Send Series B to ffmpeg-devel (this pack only)
 
