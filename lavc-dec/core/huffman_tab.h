@@ -1,5 +1,5 @@
 /*
- * Huffman codebook tables, E0 transcription (JOBS#32).
+ * Huffman codebook tables, ETSI transcription.
  * Copyright (c) 2026 Michael Rowlinson
  *
  * This file is part of FFmpeg.
@@ -19,15 +19,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/* Huffman codebook tables, E0 transcription (JOBS#32).
- * Sources (public ETSI deliverables, fetched 2026-10-02):
- *   P1 V1.4.1 ts_10319001v010401p0.zip sha 8c827f84...e3ea4
- *   P2 V1.3.1 ts_10319002v010301p0.zip sha 44105a06...eef9c6
- *   URLs + full shas: tmp/wave05/WEB-e0.md. Generator:
- *   tools/huffman_gen.py (gates on prefix-free + survey pins).
- * Layout below is own; numeric values transcribed by the
- * generator; zero ETSI prose or code copied. DO NOT HAND-EDIT:
- * regenerate with tools/huffman_gen.py.
+/* Huffman codebook tables, ETSI transcription.
+ * Sources: ETSI TS 103 190-1 V1.4.1 (ts_10319001v010401p0.zip,
+ * sha 8c827f84...e3ea4) + TS 103 190-2 V1.3.1
+ * (ts_10319002v010301p0.zip, sha 44105a06...eef9c6).
+ * Layout below is own; numeric values transcribed by machine
+ * (prefix-free verified); zero ETSI prose or code copied. DO NOT
+ * HAND-EDIT.
  * Order: 0-10 ASF 1-11, 11 SCALEFAC, 12 SNF, 13-36 ACPL
  * (dtype ALPHA/BETA/BETA3/GAMMA x COARSE/FINE x F0/DF/DT),
  * 37-48 AJOC (DRY/WET x COARSE/FINE x F0/DF/DT),

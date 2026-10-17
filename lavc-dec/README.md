@@ -2,7 +2,7 @@
 
 `ff/dec-wrap` stages the Series-A decoder; `ff/dec-wrap-q1` closes
 Q1 by staging the in-tree core port with it. Lands in-tree as
-`libavcodec/ac4dec.c` + the 24 `core/` files + the two wiring
+`libavcodec/ac4dec.c` + the 23 `core/` files + the two wiring
 hunks. No out-of-tree link, no extra libs/flags.
 
 ## Files
@@ -11,12 +11,14 @@ hunks. No out-of-tree link, no extra libs/flags.
   `libavcodec/ac4dec.c`. UNCHANGED by the Q1 port (it already calls
   only the public `ac4d_*` API; the port swaps the provider, not the
   wrapper logic).
-- `core/` — the 24 vendored dec-lib sources (11 `.c` + 13 `.h`,
-  `ac4_src.h` included: N5 s5.11 count rules, header-only, no OBJS),  landing flat in `libavcodec/`. Filenames kept except the 8 static
+- `core/` — the 23 vendored dec-lib sources (11 `.c` + 12 `.h`,
+  `ac4_src.h` included: N5 s5.11 count rules, header-only, no OBJS;
+  `ac4_stages.h` NOT ported: unreferenced dead header, dropped),
+  landing flat in `libavcodec/`. Filenames kept except the 8 static
   table files, renamed `*_tables.c/h` → `*_tab.c/h` (zero collisions
   at `3e6cd5e` either way); port delta is headers + CLI strip +
-  that rename + inclusion-guard remap to `AVCODEC_<file>_H` +
-  the scripted ASCII map (see Q1).
+  env/dump/probe strip + that rename + inclusion-guard remap to
+  `AVCODEC_<file>_H` + the scripted ASCII map (see Q1).
 - `wiring.patch` — `allcodecs.c` extern + `Makefile` OBJS hunks, vs
   ffmpeg master `3e6cd5e`. Apply with `git apply` inside the tree,
   then copy `ac4dec.c` + `core/*` in. `configure` auto-detects
@@ -52,8 +54,9 @@ Answer:
 - WHERE: in-tree, `libavcodec/` flat, same filenames except the 8
   table files below (zero collisions at `3e6cd5e`), built under
   `CONFIG_AC4_DECODER` with no defines and no extra flags — the
-  `AC4D_LIB_ONLY` behavior (no `main`, callback logging) is
-  unconditional in the ported copy.
+  `AC4D_LIB_ONLY` behavior (no `main`, no logging: the log callback
+  is deleted, failures surface as return codes) is unconditional in
+  the ported copy.
 - WHO OWNS: snapshot-vendoring, i.e. (b) before upstream acceptance
   and (a) after. Until the patch lands upstream, dec-lib stays
   authoritative for DSP and `core/` is a pinned snapshot, re-ported
@@ -65,17 +68,28 @@ Answer:
   (title = original title verbatim, DSI-L3 precedent) + `dec_lib.c`
   `AC4D_LIB_ONLY` strip (39 CLI/shim spans deleted, 2 lib spans
   spliced inline; guards verified else-free) + one provenance line
-  atop `dec_lib.c` + rename of the 8 static table files
-  `aspx/huffman/qwin/snf _tables.c/h` → `*_tab.c/h` (with their
-  `#include`s, `wiring.patch` OBJS, and sibling comments;
+  atop `dec_lib.c` + env/dump/probe strip (all `AC4DEC_*` environment
+  knobs, `fopen` dumps, and `fprintf` probes deleted; behavior knobs
+  pinned to their defaults: M4 HF rolloff on, M4CURVE builtin, SHF
+  off, KBD table alphas, cached IMDCT kernels, SYNK 5, KEEP67
+  zeroing, compand defaults + hot-gap-fill on; the `fprintf`-to-log
+  shim and the `log`/`log_u` callback are deleted with them) +
+  in-tree allocator conversion (`calloc`/`malloc`/`free` →
+  `av_calloc`/`av_malloc`/`av_free`; `<signal.h>`/`<unistd.h>`/`stdlib.h`
+  dropped where unused) + comment scrub to table/clause citations +
+  `ac4_stages.h` dropped (unreferenced) + rename of the 8 static
+  table files `aspx/huffman/qwin/snf _tables.c/h` → `*_tab.c/h`
+  (with their `#include`s, `wiring.patch` OBJS, and sibling comments;
   dec-lib-provenance `src/*` comments keep the old spelling) +
-  inclusion-guard remap on all 13 headers to the in-tree form
+  inclusion-guard remap on all 12 headers to the in-tree form
   `AVCODEC_<file>_H` (e.g. `ac4d.h` → `AVCODEC_AC4D_H`,
   `huffman_tab.h` → `AVCODEC_HUFFMAN_TAB_H`; `#endif` carries the
   `/* MACRO */` comment per the `ac3.h`/`aactab.h` precedent) +
   the scripted ASCII map (the `5c8740a` 8-char comment map +
   entropy-tail rule: dec-lib keeps comment UTF-8, `core/`
-  ships pure ASCII). Nothing else: no behavior edits.  Provenance pin: dec-lib tree `8e27f25`.
+  ships pure ASCII). Default behavior preserved (proven by the
+  byte-exact gates, not by text equivalence). Provenance pin:
+  dec-lib tree `8e27f25`.
   The rename dodges `libavcodec/Makefile CLEANFILES =
   *_tables.c *_tables.h` (plus the matching `libavcodec/.gitignore`
   lines), which otherwise deletes the committed sources on `make
@@ -85,7 +99,9 @@ Answer:
   guards — they are correct for the out-of-tree lib and never enter
   the ffmpeg tree.
 - RE-VENDOR RULE (mechanical): take `dec-lib/src/*` at the new pin
-  → apply the delta above (headers, strip, then the rename map
+  → drop `ac4_stages.h` (never ported) → apply the delta above
+  (headers, CLI strip, env/dump/probe strip with defaults pinned,
+  allocator conversion, comment scrub, then the rename map
   `s/_tables\./_tab./` on filenames + `#include`s + OBJS + sibling
   comments only — never on `src/*` provenance comments — then the
   guard map `#ifndef/#define <OLD>` → `AVCODEC_<file>_H` + trailing
@@ -125,12 +141,15 @@ extras — the Q1 close is visible in the artifact itself.
   `AC4D_ERR`, no reset API. Flush drops FIFO/pts/sticky error and
   re-opens; stream params re-latch from the first post-seek frame
   (T2/T3 prove equivalence + relatch).
-- UNSUPPORTED at init (`ac4_lib_open`): `drc=1` or `de_level!=0`
-  fails open with `EINVAL` + a log naming the option. (Also note the
-  lib reads `AC4DEC_DRC=1` from the environment — ambient-env wart,
-  lib-owned, documented not fixed. `AC4DEC_CMPLEAD`/`AC4DEC_HEIGHTS`
-  are silently dropped by the lib (REVIEW MINOR-5/6); `AC4DEC_*DUMP`
-  file writes stay lib-owned too.)
+- DRC/DE surface deleted (`ac4dec.c` exposes `pres_sel` only): the
+  old `drc`/`drc_out_ref`/`drc_boost`/`drc_cut`/`de_level` options
+  never worked (`drc=1` or `de_level!=0` failed open; the `drc_*`
+  levels were stored but never acted on), so no reserved surface
+  ships. The lib still returns `AC4D_UNSUPPORTED` if a caller sets
+  `drc_on`/`de_level`, but the wrapper cannot set them.
+  Environment knobs (`AC4DEC_DRC` et al), silently-dropped knobs,
+  and `AC4DEC_*DUMP` file writes are stripped in-tree (dec-lib keeps
+  them out-of-tree only).
 - Error table (`ac4_lib_fatal` + feed map): BAD_PACKET skips loud
   (`WARNING` per packet); BITSTREAM(-5) -> `INVALIDDATA` fatal
   (never skip); CONFIG_CHANGE -> `INVALIDDATA` fatal (D6, not
@@ -143,8 +162,10 @@ extras — the Q1 close is visible in the artifact itself.
   class → `EINVAL` naming channels/mask/note. Mask→layout must also
   agree with the channel count.
 - In-tree, the `AC4D_LIB_ONLY` behavior is unconditional (no
-  `main`, lib diagnostics via the log callback); the define no longer
-  exists in the ported copy. (In dec-lib proper, its `Makefile` still
+  `main`, no logging); the define no longer exists in the ported
+  copy, and the `log`/`log_u` callback is deleted (failures surface
+  as return codes plus `gap_note`/`strerror` text, logged at the
+  wrapper's sites). (In dec-lib proper, its `Makefile` still
   passes `-DAC4D_LIB_ONLY` for `lib_*.o`.)
 - 24-bit packing pinned s16LE+`0x00` (3-byte LE): known, NOT wired
   (carries no true 24-bit path); S16-only v1 per D3. FLT is
@@ -204,12 +225,15 @@ extras — the Q1 close is visible in the artifact itself.
 
 - Build: pure in-tree (`configure --disable-doc`, no extras):
   `make ffmpeg` exit 0, zero `ac4` warnings (normal and ASan/UBSan
-  builds; 34 pre-existing tree warnings, none `ac4`). Ported core:
-  zero warnings under dec-lib's own flags too, with no `-D`.
-- Port equivalence (mechanical): ported `dec_lib.c` preprocessed
-  output is byte-identical to `-DAC4D_LIB_ONLY` dec-lib source
-  modulo blank lines; all other core `.c` files are comment-prepend
-  only and every core `.h` is comment-prepend + the guard remap.
+  builds; pre-existing tree warnings only, none `ac4`). The
+  standalone-core build is retired: the ported core now includes
+  `libavutil/mem.h`, so it builds in-tree only by design.
+- Port equivalence (behavioral): the r6 port delta (env/dump/probe
+  strip with defaults pinned, allocator conversion, comment scrub,
+  `ac4_stages.h` drop) is past text equivalence, so equivalence is
+  proven by bytes, not diff: the 11/11 gate below pins the port
+  `cmp`-identical to BOTH the N5-current shim and the independent
+  streaming driver AND to the r5 bytes (unchanged-bytes proof).
   Neg outputs (`bad40`, `ims`) are `cmp`-identical to the
   out-of-tree wrap's own outputs.
 - Byte-exact vs dec-lib: 11/11 vectors `cmp`-identical to BOTH the
@@ -225,7 +249,8 @@ extras — the Q1 close is visible in the artifact itself.
   (divergence at frame 40, inside the ~2-frame DN latch horizon,
   expected); garbage file → 17 skips + cap abort, terminates;
   under-cap all-skip → decoder-clean EOF (mux reports empty);
-  `drc=1` / `de_level=6` → init `UNSUPPORTED` fail-open;
+  `-drc 1` / `-de_level 6` → lavc `Option not found` (options
+  deleted, no reserved surface);
   `request_sample_fmt=FLT` → init `EINVAL` (API-level, T4);
   empty file → loud mux-level failure.
 - C-API suite (`tseek`, scratch): T1 straight, T2 flush+re-decode
@@ -266,5 +291,6 @@ D5 `priming` + D2 delay/trim (re-vendor + re-gate per the Q1 rule when
 it lands); drain-and-reopen upgrade for Q3 (the ims splice is live
 evidence real streams switch); MAJOR-1/2 silent corners (ap5 tripwire,
 cross-splice DN compare); MAJOR-3/4 MT/cache redesign (wrapper
-serializes; env + DUMP-file warts stay lib-owned); CRC-at-demux/parser;
+serializes; env + DUMP-file warts are stripped in-tree and stay
+dec-lib-only out-of-tree); CRC-at-demux/parser;
 ffprobe flag export (declined: writer lacks the field).

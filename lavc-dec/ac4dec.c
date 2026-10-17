@@ -22,9 +22,10 @@
 /**
  * @file
  * Native AC-4 decoder. Thin lavc wrapper: re-frames demuxer payloads to
- * AC40 sync frames, feeds the dec-lib streaming core (ac4d_*), drains
- * every feed to NEED_MORE, and emits one AVFrame per ready lib frame.
- * No DSP lives here.
+ * AC40 sync frames (wire CRC is never checked on this path -- the raw
+ * demuxer strips it and AC40 carries none; see ac4_feed_packet), feeds
+ * the dec-lib streaming core (ac4d_*), drains every feed to NEED_MORE,
+ * and emits one AVFrame per ready lib frame. No DSP lives here.
  *
  * Lib contract honored (REVIEW-DEC-LIB APPROVE-WRAP + WRAP-DRIFTCHECK):
  * - drain-per-feed: get_frame is called until AC4D_NEED_MORE after every
@@ -38,8 +39,8 @@
  *   even distinct contexts unsafe; REVIEW MAJOR-3).
  * - error table: BAD_PACKET skips loud with a consecutive cap (a bad
  *   pres_sel fails every feed identically, and with no parser there is
- *   no resync); BITSTREAM/CONFIG_CHANGE/ERR are fatal and sticky;
- *   UNSUPPORTED at init maps DRC/DE fail-open. Truncation mirrors the
+ *   no resync); BITSTREAM/CONFIG_CHANGE/ERR are fatal and sticky.
+ *   Truncation mirrors the
  *   shim's sync-chain rule: a lone clean framing (one unflagged
  *   packet) followed by skipped packets is unanchored sync, so the
  *   lone prefix is discarded and EOF fails loud (INVALIDDATA,
@@ -64,7 +65,7 @@
  * (post-s5.11-converter) values, sample_rate = base_fs x sf_mult on
  * every fri row, and per-frame fi->spf varies on fractional rows
  * (Table-70 pattern; get_info reports the latched max). The wrapper
- * passes them through; see lavc-dec/README.md.
+ * passes them through unchanged.
  */
 
 #include <stddef.h>
@@ -113,11 +114,6 @@ typedef struct AC4DecodeContext {
     ac4d_ctx *lib;
 
     int pres_sel;
-    int drc_on;
-    int drc_out_ref;
-    int drc_boost_pct;
-    int drc_cut_pct;
-    double de_level;
 
     AVPacket *pkt;         /* borrows avctx->internal->in_pkt */
     uint8_t *frame_buf;    /* re-frame scratch (AC40 header + payload) */
@@ -156,33 +152,14 @@ typedef struct AC4DecodeContext {
  * ac4d_* call below runs under this lock. */
 static AVMutex ac4d_mutex = AV_MUTEX_INITIALIZER;
 
-static void ac4_lib_log(int lvl, const char *msg, void *u)
-{
-    AVCodecContext *avctx = u;
-    /* The lib routes all diagnostics at a single level; they are
-     * supplementary (gap notes and strerror are logged at their own
-     * sites), so DEBUG keeps default output clean. */
-    (void) lvl;
-    av_log(avctx, AV_LOG_DEBUG, "lib: %s", msg);
-}
-
 static int ac4_lib_open(AC4DecodeContext *s, AVCodecContext *avctx)
 {
     ac4d_opts opts;
     int rc;
 
     memset(&opts, 0, sizeof(opts));
-    opts.pres_sel      = s->pres_sel;
-    opts.drc_on        = s->drc_on;
-    opts.drc_out_ref   = s->drc_out_ref;
-    opts.drc_ref_given = 1;
-    opts.drc_boost_pct = s->drc_boost_pct;
-    opts.drc_cut_pct   = s->drc_cut_pct;
-    opts.de_given      = 1;
-    opts.de_level      = s->de_level;
-    opts.bits          = 16;
-    opts.log           = ac4_lib_log;
-    opts.log_u         = avctx;
+    opts.pres_sel = s->pres_sel;
+    opts.bits     = 16;
 
     ff_mutex_lock(&ac4d_mutex);
     rc = ac4d_open(&s->lib, &opts);
@@ -193,13 +170,6 @@ static int ac4_lib_open(AC4DecodeContext *s, AVCodecContext *avctx)
     s->lib = NULL;
     if (rc == AC4D_NO_MEM)
         return AVERROR(ENOMEM);
-    if (rc == AC4D_UNSUPPORTED) {
-        av_log(avctx, AV_LOG_ERROR,
-               "unsupported option: DRC and dialog enhancement need "
-               "whole-stream legs the streaming core lacks; keep drc off "
-               "and de_level at 0\n");
-        return AVERROR(EINVAL);
-    }
     av_log(avctx, AV_LOG_ERROR, "ac4d_open failed: %s\n",
            ac4d_strerror(rc));
     return AVERROR(EINVAL);
@@ -568,9 +538,16 @@ static int ac4_emit(AC4DecodeContext *s, AVCodecContext *avctx,
     return 0;
 }
 
-/* Feed one demuxer payload: re-frame to AC40 (the raw demuxer strips
- * sync/size/CRC; the lib wants exactly one sync frame per feed) and
- * drain. Returns 0 (fed, maybe queued), a fatal AVERROR, or 1 meaning
+/* Feed one demuxer payload: re-frame to AC40 and drain. The raw
+ * demuxer strips sync/size/CRC (payload-only packets) and the lib
+ * wants exactly one sync frame per feed, so the wrapper rebuilds an
+ * AC40 header around each payload. Disclosed consequence: wire CRC is
+ * NEVER checked on this path -- a CRC-corrupted AC41 frame is
+ * accepted here (its payload decodes or fails on content), where a
+ * reader of the raw file would reject it on CRC. CRC validation
+ * belongs at demuxer/parser (a future parser should check or pass
+ * CRC through); this layer cannot recover bytes the demuxer dropped.
+ * Returns 0 (fed, maybe queued), a fatal AVERROR, or 1 meaning
  * "packet skipped, pull the next". */
 static int ac4_feed_packet(AC4DecodeContext *s, AVCodecContext *avctx)
 {
@@ -797,7 +774,8 @@ static void ac4_decode_flush(AVCodecContext *avctx)
     AC4DecodeContext *s = avctx->priv_data;
 
     ac4_queue_reset(s);
-    av_packet_unref(s->pkt);
+    /* NOTE: s->pkt borrows avctx->internal->in_pkt, which decode.c
+     * owns; flush must not unref it (no packet was gotten here). */
     s->draining = 0;
     s->flush_done = 0;
     s->fatal = 0;
@@ -838,28 +816,12 @@ static av_cold int ac4_decode_close(AVCodecContext *avctx)
     return 0;
 }
 
-#define AC4DEC_PARAM (AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_DECODING_PARAM)
+#define AC4_PARAM (AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_DECODING_PARAM)
 
 static const AVOption ac4_options[] = {
     { "pres_sel", "presentation select (-1 = default)",
       offsetof(AC4DecodeContext, pres_sel),
-      AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 63, AC4DEC_PARAM },
-    { "drc", "apply dynamic range control (unsupported: fails open)",
-      offsetof(AC4DecodeContext, drc_on),
-      AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, AC4DEC_PARAM },
-    { "drc_out_ref", "DRC output reference level",
-      offsetof(AC4DecodeContext, drc_out_ref),
-      AV_OPT_TYPE_INT, { .i64 = -31 }, -31, 0, AC4DEC_PARAM },
-    { "drc_boost", "DRC boost factor percent",
-      offsetof(AC4DecodeContext, drc_boost_pct),
-      AV_OPT_TYPE_INT, { .i64 = 100 }, 0, 200, AC4DEC_PARAM },
-    { "drc_cut", "DRC cut factor percent",
-      offsetof(AC4DecodeContext, drc_cut_pct),
-      AV_OPT_TYPE_INT, { .i64 = 100 }, 0, 200, AC4DEC_PARAM },
-    { "de_level", "dialog enhancement level dB, 0 = off "
-      "(nonzero unsupported: fails open)",
-      offsetof(AC4DecodeContext, de_level),
-      AV_OPT_TYPE_DOUBLE, { .dbl = 0.0 }, -12.0, 12.0, AC4DEC_PARAM },
+      AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 63, AC4_PARAM },
     { NULL },
 };
 

@@ -63,10 +63,10 @@ implementation in C, written from the published ETSI specifications
 TS 103 190-1 V1.4.1 and TS 103 190-2 V1.3.1 plus black-box behavioral
 observation. No Dolby SDK, reference code, or disassembly was used in
 the submitted code; numeric codebook/coefficient tables are
-value-only transcriptions from the ETSI deliverables (generators and
-source versions cited per table), and comments are original prose (a
-scrub pass is folding stray internal pointers to table/clause
-citations). Note AC-4 is covered by Dolby patents; this submission
+value-only transcriptions from the ETSI deliverables (source
+versions cited per table), and comments are original prose (stray
+internal pointers folded to table/clause citations in this
+re-cut). Note AC-4 is covered by Dolby patents; this submission
 addresses copyright-clean code only and implementers/distributors
 should consider patent licensing.
 

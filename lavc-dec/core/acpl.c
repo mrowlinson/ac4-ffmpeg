@@ -1,5 +1,5 @@
 /*
- * acpl.c -- A-CPL data parse + diff-decode + dequant (duet3-dec-writerB).
+ * acpl.c -- A-CPL data parse + diff-decode + dequant.
  * Copyright (c) 2026 Michael Rowlinson
  *
  * This file is part of FFmpeg.
@@ -19,14 +19,11 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/* acpl.c -- A-CPL data parse + diff-decode + dequant (duet3-dec-writerB).
+/* acpl.c -- A-CPL data parse + diff-decode + dequant.
  * Own code from ETSI P1 Tables 61/63/64/65 (syntax), Pseudocode 8
  * (book select), Pseudocode 121 (diff decode), Tables 203-206
- * (dequant). Probe phase: parse + print (alpha_dq, beta_dq); QMF
- * module (decorr/ducker/Pseudocode 116) lands next.
+ * (dequant), and the QMF module (decorr/ducker/Pseudocode 116).
  */
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include <complex.h>
@@ -97,8 +94,7 @@ void acpl_reset(acpl_state_t *st) {
     memset(st, 0, sizeof *st);
 }
 
-/* ---- Decorrelator + ducker + interpolation (P1 5.7.7.2/5.7.7.3/5.7.7.4,
- * own C port of tools/acpl_decorr_bed.py). ---- */
+/* ---- Decorrelator + ducker + interpolation (P1 5.7.7.2/5.7.7.3/5.7.7.4). ---- */
 
 /* Table 197: sb -> pbid per nbands (cols 15/12/9/7). */
 static int sb_to_pb_c(int sb, int nbands) {
@@ -386,15 +382,6 @@ int acpl_parse_1ch(ac4_ebr_t *b, int nbands, int fine, int module,
             st->diff.prev_q[module][1][i] = bq[i];
         }
         st->diff.prev_have[module][0] = st->diff.prev_have[module][1] = 1;
-        if (getenv("AC4DEC_ACPLPROBE")) {
-            fprintf(stderr, "AQ m=%d ps=%d aq:", module, ps);
-            for (int i = 0; i < nbands; i++)
-                fprintf(stderr, " %d", aq[i]);
-            fprintf(stderr, "\nAQ m=%d ps=%d bq:", module, ps);
-            for (int i = 0; i < nbands; i++)
-                fprintf(stderr, " %d", bq[i]);
-            fprintf(stderr, "\n");
-        }
         int amax = fine ? 32 : 16, bmax = fine ? 8 : 4;
         for (int i = 0; i < 15; i++) {
             out->a[ps][i] = 0;
@@ -416,26 +403,6 @@ int acpl_parse_1ch(ac4_ebr_t *b, int nbands, int fine, int module,
     return 0;
 }
 
-int acpl_probe_1ch(ac4_ebr_t *b, int nbands, int fine, int module,
-                   long frameno, const char **note, acpl_state_t *st) {
-    acpl_mod_t m;
-    if (acpl_parse_1ch(b, nbands, fine, module, &m, note, st))
-        return -1;
-    for (int ps = 0; ps < m.npset; ps++) {
-        fprintf(stderr, "ACPL f=%ld m=%d ps=%d nb=%d %s adt=%d bdt=%d\n",
-                frameno, module, ps, nbands, fine ? "FINE" : "COARSE",
-                m.adt[ps], m.bdt[ps]);
-        fprintf(stderr, "  a:");
-        for (int i = 0; i < nbands; i++)
-            fprintf(stderr, " %.3f", m.a[ps][i]);
-        fprintf(stderr, "\n  b:");
-        for (int i = 0; i < nbands; i++)
-            fprintf(stderr, " %.4f", m.b[ps][i]);
-        fprintf(stderr, "\n");
-    }
-    return 0;
-}
-
 void acpl_imm_init(acpl_imm_t *s) {
     memset(s, 0, sizeof *s);
     for (int i = 0; i < 4; i++)
@@ -446,7 +413,6 @@ void acpl_imm_init(acpl_imm_t *s) {
     for (int i = 0; i < 4; i++)
         acpl_decorr_init(&s->dd[i], dx[i]);
     s->init = 1;
-    s->dump_frame = 0;
 }
 
 /* QMF work buffers: per-instance acpl_state_t work area (param). */
@@ -504,39 +470,6 @@ void acpl_imm_frame(acpl_imm_t *s, const double *D, const double *E,
             H[2 * spf + j] = st->wk.O[3][j];
             H[3 * spf + j] = st->wk.O[5][j];
         }
-    }
-    { /* ZDUMP (H-SPLIT forensics): z-synth time + y @ sb2/3. */
-        const char *zp = getenv("AC4DEC_ZDUMP");
-        if (zp) {
-            char p1[1024], p2[1024];
-            snprintf(p1, sizeof p1, "%s.z.f64", zp);
-            snprintf(p2, sizeof p2, "%s.y2.f64", zp);
-            FILE *f1 = fopen(p1, "ab");
-            if (f1) {
-                fwrite(st->wk.O[2], sizeof(double), (size_t)spf, f1);
-                fwrite(st->wk.O[3], sizeof(double), (size_t)spf, f1);
-                fwrite(st->wk.O[4], sizeof(double), (size_t)spf, f1);
-                fwrite(st->wk.O[5], sizeof(double), (size_t)spf, f1);
-                fclose(f1);
-            }
-            FILE *f2 = fopen(p2, "ab");
-            if (f2) {
-                for (int m = 2; m < 4; m++)
-                    for (int sb = 2; sb < 4; sb++)
-                        for (int ts = 0; ts < nslots; ts++) {
-                            double re = creal(st->wk.Y[m][ts][sb]);
-                            double im = cimag(st->wk.Y[m][ts][sb]);
-                            double xe = creal(st->wk.X[m][ts][sb]);
-                            double xi = cimag(st->wk.X[m][ts][sb]);
-                            fwrite(&re, sizeof re, 1, f2);
-                            fwrite(&im, sizeof im, 1, f2);
-                            fwrite(&xe, sizeof xe, 1, f2);
-                            fwrite(&xi, sizeof xi, 1, f2);
-                        }
-                fclose(f2);
-            }
-        }
-        s->dump_frame++;
     }
     /* Interp prev tails (Pseudocode 110). */
     for (int m = 0; m < 4; m++) {

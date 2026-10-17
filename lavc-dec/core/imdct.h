@@ -21,28 +21,25 @@
 
 /* imdct.h -- clean AC-4 IMDCT + KBD window + overlap-add core.
  *
- * Lane e2, wave5. C11, zero deps. Math from public DSP textbook
- * formulas (tmp/wave05/WEB-e2.md) + clean specs spec/mdct-sizes.md
- * (sizes, KBD alphas) and spec/imdct-probe-beds-flex2w3.md (geometry).
+ * C11, zero deps. MDCT/OLA math follows the public DSP textbook
+ * formulation; block sizes and KBD alphas follow the ETSI tables
+ * (see IMDCT_MAXN / IMDCT_ALPHA_* below).
  *
- * LATTICE (derived, see spec/imdct-clean-e2.md S2): blocks own tiles
- * (= their length N; tiles tile the timeline, N coeffs -> N PCM, zero
- * priming). Each block's window spans 2N CENTERED on its tile
- * (extends N/2 each side). Equal neighbors overlap 50% (standard KBD).
- * Unequal neighbors use flat/taper/zero bridge halves (widths
- * (N-T)/2, T, (N-T)/2 with T = min(N, neighbor)); tapers use the
- * block's OWN row alpha (ANSWER-e2-1 settled). This lattice pairs
- * MDCT alias terms structurally at every boundary; the naive
- * window-at-block-start lattice cannot switch short->long (proven).
+ * LATTICE: blocks own tiles (= their length N; tiles tile the
+ * timeline, N coeffs -> N PCM, zero priming). Each block's window
+ * spans 2N CENTERED on its tile (extends N/2 each side). Equal
+ * neighbors overlap 50% (standard KBD). Unequal neighbors use
+ * flat/taper/zero bridge halves (widths (N-T)/2, T, (N-T)/2 with
+ * T = min(N, neighbor)). This lattice pairs MDCT alias terms
+ * structurally at every boundary; the naive window-at-block-start
+ * lattice cannot switch short->long.
  *
  * Cold start = zero state (silence before t=0): first tile fades in
- * over N/2; NO fade shaper (ANSWER-e2-3 verdict (b)). Stream end
- * fades symmetrically; flush cuts the trailing ring at the last tile
- * end (oracle emits exact tiles).
+ * over N/2; no fade shaper. Stream end fades symmetrically; flush
+ * cuts the trailing ring at the last tile end.
  *
- * EXACT (wave6 e3-pcm, drop e3-pcm-1): tapers use the taper-length
- * row alpha, so switch boundaries are exactly PR (1e-12 gated);
- * uniform path 1e-12 exact.
+ * Tapers use the taper-length row alpha, so switch boundaries are
+ * exactly PR (1e-12 gated); uniform path 1e-12 exact.
  */
 #ifndef AVCODEC_IMDCT_H
 #define AVCODEC_IMDCT_H
@@ -53,10 +50,10 @@
 extern "C" {
 #endif
 
-/* Max block length: 8192 (192 kHz x4 full, mdct-sizes S3). */
+/* Max block length: 8192 (192 kHz x4 full IMDCT size). */
 #define IMDCT_MAXN 8192
 
-/* KBD alpha rows, longest -> shortest (mdct-sizes S5). */
+/* KBD alpha rows, longest -> shortest. */
 #define IMDCT_ALPHA_0 3.0
 #define IMDCT_ALPHA_1 4.0
 #define IMDCT_ALPHA_2 4.5
@@ -79,11 +76,11 @@ void imdct_kbd(double *w, int n, double alpha);
  * self/prev/next. Tile-centered: left half covers
  * [tile-n/2, tile+n/2), right half [tile+n/2, tile+3n/2).
  * Shorter-neighbor side: flat((n-T)/2) + taper(T) + zeros((n-T)/2),
- * T = min, taper = KBD-2T at the TAPER-LENGTH row alpha (wave6 e3-pcm,
- * drop e3-pcm-1: both sides share alpha(min), 1e-15 complementary;
- * ANSWER-e2-1 own-row refuted at 3.4e-2). palpha/nalpha = neighbor-row
- * alphas, used for the taper on the shorter-neighbor side. Equal sides:
- * plain KBD half. Switch boundaries are exactly PR (gated in test 4). */
+ * T = min, taper = KBD-2T at the TAPER-LENGTH row alpha (both sides
+ * share alpha(min), 1e-15 complementary; mixed alphas break
+ * complementarity). palpha/nalpha = neighbor-row alphas, used for
+ * the taper on the shorter-neighbor side. Equal sides: plain KBD
+ * half. Switch boundaries are exactly PR. */
 void imdct_bridge(double *w, int n, int pn, int nn, double alpha,
                   double palpha, double nalpha);
 

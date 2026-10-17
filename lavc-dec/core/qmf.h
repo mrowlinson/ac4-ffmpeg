@@ -24,10 +24,10 @@
 
 #include <complex.h>
 
-/* Complex QMF analysis/synthesis (P1 5.7.1-5.7.4, pseudocodes 65/66).
- * Own C port of tools/qmf_bed.py (same structure, f64). Tables from
- * src/qwin_tables.c (P1 Annex D.3). Modulation matrices precomputed
- * once (constant). Single-threaded use. */
+/* Complex QMF analysis/synthesis (P1 5.7.1-5.7.4, pseudocodes 65/66),
+ * f64 throughout. Prototype table from P1 Annex D.3 (qwin_tab.c).
+ * Modulation matrices precomputed once (constant). Single-threaded
+ * use. */
 
 #define QMF_NSB 64
 #define QMF_NW 640

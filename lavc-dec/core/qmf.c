@@ -1,5 +1,5 @@
 /*
- * qmf.c -- complex QMF analysis/synthesis C port (duet3-dec-writerB).
+ * qmf.c -- complex QMF analysis/synthesis.
  * Copyright (c) 2026 Michael Rowlinson
  *
  * This file is part of FFmpeg.
@@ -19,15 +19,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/* qmf.c -- complex QMF analysis/synthesis C port (duet3-dec-writerB).
- * Own code from tools/qmf_bed.py structure (P1 pseudocodes 65/66):
- * 64 subbands, 640-tap QWIN prototype, 640-sample analysis memory,
- * 1280-sample synthesis memory. f64 throughout.
+/* qmf.c -- complex QMF analysis/synthesis.
+ * Own code from P1 pseudocodes 65/66: 64 subbands, 640-tap QWIN
+ * prototype, 640-sample analysis memory, 1280-sample synthesis
+ * memory. f64 throughout.
  */
 #include <complex.h>
 #include <math.h>
 #include <stddef.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "qmf.h"
@@ -116,19 +115,8 @@ void qmf_synthesis(const double complex (*Q)[QMF_NSB], int nslots,
         }
         for (int sb = 0; sb < QMF_NSB; sb++) {
             double acc = 0.0;
-            /* AC4DEC_SYNK=n (duet26 M4-spread discriminant):
-             * synthesis prototype sections 1..5 (default 5).
-             * Narrower (fewer) = less time-spread. */
-            int synk = 5;
-            {
-                const char *skp = getenv("AC4DEC_SYNK");
-                if (skp && skp[0]) {
-                    long v = strtol(skp, NULL, 10);
-                    if (v >= 1 && v <= 5)
-                        synk = (int)v;
-                }
-            }
-            for (int k = 0; k < synk; k++)
+            /* All five synthesis prototype sections. */
+            for (int k = 0; k < 5; k++)
                 acc += filt[256 * k + sb] * QWIN_C[128 * k + sb] +
                        filt[256 * k + 192 + sb] *
                            QWIN_C[128 * k + 64 + sb];

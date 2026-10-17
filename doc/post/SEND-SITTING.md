@@ -24,7 +24,7 @@ ifconfig | grep 169.254.103.231  # TB-only send link; must print a line; else ST
 git log --oneline -1                     # expect e72a4b9 ff/merged: runbook-r2 (or later parent merge)
 ls -l doc/post/*.mbox                    # sizes MUST read:
 ```
-Expected bytes: `series-A-decoder` 620888, `series-A0-head` 35400,
+Expected bytes: `series-A-decoder` 507373, `series-A0-head` 35400,
 `series-B-fate` 40394, `series-C-encoder` 653750, `series-E-ts`
 12693, `series-D-mp4` 129514. B/C/E/D sizes are the stack re-cut
 (STACK-DAG.md); stale STAGED `series-B-decfate.mbox` removed from
