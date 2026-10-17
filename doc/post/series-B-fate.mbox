@@ -1,0 +1,446 @@
+From 0a4986449d5d20b0d8c18031f0b1291d6613cf53 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 14:44:01 -0400
+Subject: [PATCH 1/2] doc: AC-4 decoder docs
+
+Decoder table row, @section ac4 with the Series A private options,
+Changelog entry. No APIchanges entry (no public API change).
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ Changelog                 |  1 +
+ doc/decoders.texi         | 38 ++++++++++++++++++++++++++++++++++++++
+ doc/general_contents.texi |  1 +
+ 3 files changed, 40 insertions(+)
+
+diff --git a/Changelog b/Changelog
+index 32e7c8b..8bff2da 100644
+--- a/Changelog
++++ b/Changelog
+@@ -19,6 +19,7 @@ version <next>:
+ - Panasonic RW2 decoder
+ - xHE-AAC encoding via libfdk-xhe-aac
+ - jpegapp bitstream filter
++- native AC-4 audio decoder
+ 
+ 
+ version 9.0:
+diff --git a/doc/decoders.texi b/doc/decoders.texi
+index 5652252..9fef5a3 100644
+--- a/doc/decoders.texi
++++ b/doc/decoders.texi
+@@ -317,6 +317,44 @@ Loud sounds are fully compressed.  Soft sounds are enhanced.
+ 
+ @end table
+ 
++@section ac4
++
++AC-4 audio decoder.
++
++Native decoder for Dolby AC-4 (ATSC A/344), handling mono, stereo
++and multichannel beds up to 7.1. Output is 16-bit PCM.
++
++@subsection AC-4 Decoder Options
++
++@table @option
++
++@item -pres_sel @var{value}
++Presentation select. Default @option{-1} decodes the default
++presentation; @option{0} to @option{63} select a specific one.
++
++@item -drc @var{boolean}
++Apply dynamic range control. Reserved for future use: enabling it is
++currently rejected at decoder init. Default off.
++
++@item -drc_out_ref @var{value}
++DRC output reference level, @option{-31} to @option{0}. Takes effect
++only when DRC is supported. Default @option{-31}.
++
++@item -drc_boost @var{value}
++DRC boost factor in percent, @option{0} to @option{200}. Takes effect
++only when DRC is supported. Default @option{100}.
++
++@item -drc_cut @var{value}
++DRC cut factor in percent, @option{0} to @option{200}. Takes effect
++only when DRC is supported. Default @option{100}.
++
++@item -de_level @var{value}
++Dialog enhancement level in dB, @option{-12} to @option{12}.
++Reserved for future use: nonzero values are currently rejected at
++decoder init. Default @option{0} (off).
++
++@end table
++
+ @section flac
+ 
+ FLAC audio decoder.
+diff --git a/doc/general_contents.texi b/doc/general_contents.texi
+index 7032f14..7cf7400 100644
+--- a/doc/general_contents.texi
++++ b/doc/general_contents.texi
+@@ -1307,6 +1307,7 @@ following image formats are supported:
+ @item AAC+                   @tab  E  @tab  IX
+     @tab encoding supported through external library libfdk-aac
+ @item AC-3                   @tab IX  @tab  IX
++@item AC-4                   @tab     @tab  X
+ @item ACELP.KELVIN           @tab     @tab  X
+ @item ADPCM 4X Movie         @tab     @tab  X
+ @item ADPCM Yamaha AICA      @tab     @tab  X
+-- 
+2.56.0
+
+
+From 42d53d9de3b3e40c2ebbf3d8c41a3d3095e8fed6 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 19:44:10 -0400
+Subject: [PATCH 2/2] fate: add ac4 decoder tests
+
+framemd5/framecrc decode tests over the uploaded suite clips, plus probe/copy/seek demux tests. Goldens recorded from the real decoder. ims120 pins presentation 1 (default pres hits a v1-fatal mid-stream config change in that clip).
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ tests/Makefile                 |   1 +
+ tests/fate/ac4.mak             | 116 +++++++++++++++++++++++++++++++++
+ tests/ref/fate/ac4-51          |  11 ++++
+ tests/ref/fate/ac4-714         |  12 ++++
+ tests/ref/fate/ac4-copy-51     |   8 +++
+ tests/ref/fate/ac4-copy-stereo |   8 +++
+ tests/ref/fate/ac4-crc-bad     |  11 ++++
+ tests/ref/fate/ac4-delay       |  14 ++++
+ tests/ref/fate/ac4-ims120      |  50 ++++++++++++++
+ tests/ref/fate/ac4-seek-eof    |   6 ++
+ tests/ref/fate/ac4-stereo51    |  11 ++++
+ 11 files changed, 248 insertions(+)
+ create mode 100644 tests/fate/ac4.mak
+ create mode 100644 tests/ref/fate/ac4-51
+ create mode 100644 tests/ref/fate/ac4-714
+ create mode 100644 tests/ref/fate/ac4-copy-51
+ create mode 100644 tests/ref/fate/ac4-copy-stereo
+ create mode 100644 tests/ref/fate/ac4-crc-bad
+ create mode 100644 tests/ref/fate/ac4-delay
+ create mode 100644 tests/ref/fate/ac4-ims120
+ create mode 100644 tests/ref/fate/ac4-seek-eof
+ create mode 100644 tests/ref/fate/ac4-stereo51
+
+diff --git a/tests/Makefile b/tests/Makefile
+index 97e9d39..46d175a 100644
+--- a/tests/Makefile
++++ b/tests/Makefile
+@@ -154,6 +154,7 @@ include $(SRC_PATH)/tests/fate/seek.mak
+ 
+ include $(SRC_PATH)/tests/fate/aac.mak
+ include $(SRC_PATH)/tests/fate/ac3.mak
++include $(SRC_PATH)/tests/fate/ac4.mak
+ include $(SRC_PATH)/tests/fate/adpcm.mak
+ include $(SRC_PATH)/tests/fate/alac.mak
+ include $(SRC_PATH)/tests/fate/als.mak
+diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
+new file mode 100644
+index 0000000..f9414fd
+--- /dev/null
++++ b/tests/fate/ac4.mak
+@@ -0,0 +1,116 @@
++# AC-4 decoder and demux FATE tests.
++#
++# Inputs live in the fate-suite under ac4/ (see the [samples-request]
++# AC-4 decoder mail for the 12-file set); pcm REF files are suite
++# files too, while framemd5/framecrc goldens live in tests/ref/fate/.
++# The Series A decoder is experimental, so every decode CMD carries
++# -strict -2 (fate/acodec.mak DCA precedent).
++
++# --- decode (pcm): stereo, byte-exact pcm vs suite ref ---
++FATE_AC4 += fate-ac4-stereo
++fate-ac4-stereo: CMD = pcm -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-stereo.ac4
++fate-ac4-stereo: REF = $(SAMPLES)/ac4/clip-stereo-ref.pcm
++# clip-stereo.ac4: 3 packets stereo, middle skipped w/ warning; suite
++# ref 16384 B s16le 48 kHz (2 frames).
++fate-ac4-stereo: CMP = oneoff
++
++# --- decode (pcm): input seek decodes the 2-packet suffix ---
++FATE_AC4 += fate-ac4-seek
++fate-ac4-seek: CMD = pcm -ss 0.05 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-stereo.ac4
++fate-ac4-seek: REF = $(SAMPLES)/ac4/clip-stereo-seek-0.05.pcm
++# Suite slice ref 8192 B (2nd half of the stereo ref).
++fate-ac4-seek: CMP = oneoff
++
++# --- decode (framemd5): 5.1 real clip ---
++FATE_AC4_MD5 += fate-ac4-51
++fate-ac4-51: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-51-real.ac4
++# clip-51-real.ac4: 5.1 beds; golden pins saturated S16 bytes as-is
++# (middle packet skipped w/ warning, 2 survivors).
++
++# --- decode (framemd5): immersive clip, presentation 1 (stereo) ---
++FATE_AC4_MD5 += fate-ac4-ims120
++fate-ac4-ims120: CMD = framemd5 -strict -2 -pres_sel 1 -i $(TARGET_SAMPLES)/ac4/clip-ims120.ac4
++# clip-ims120.ac4: cm120 immersive (BSD-3 Chromium test file). Default
++# pres hits a v1-fatal mid-stream config change at packet 17 (clip
++# carries a distinct 16-packet region); pres 1 skips that region with
++# warnings and decodes 41 stereo frames (exit 0). Golden pins pres 1.
++
++# --- decode (framemd5): 7.1 clip, 8ch presented ---
++FATE_AC4_MD5 += fate-ac4-714
++fate-ac4-714: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-714.ac4
++# clip-714.ac4: cm253 7.1 excerpt (broadcast capture, suite-accepted);
++# 51200 Hz clip reality, 3 frames, no skips.
++
++# --- decode (framemd5): stereo program in a 5.1 bed ---
++FATE_AC4_MD5 += fate-ac4-stereo51
++fate-ac4-stereo51: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-stereo51.ac4
++# L/R content + 4 digital-silent channels; golden pins c2-c5 exact-zero
++# (middle packet skipped w/ warning, 2 survivors).
++
++# --- decode (framemd5): impulse pins the codec delay ---
++FATE_AC4_MD5 += fate-ac4-delay
++fate-ac4-delay: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-impulse.ac4
++# Golden is post-trim bytes; any delay change shifts bytes and fails
++# (middle packet skipped w/ warning, 5 survivors).
++
++# --- decode (framemd5): corrupt packet skipped, survivors decode ---
++FATE_AC4_MD5 += fate-ac4-crc-bad
++fate-ac4-crc-bad: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-crc-bad.ac4
++# Bad packet skipped with warning, 2 survivors decode (exit 0); bytes
++# equal the stereo decode (wrap performs no CRC check: AC40 re-frame).
++# Decode-phase only: the demuxer passes corrupt payloads through.
++FATE_AC4_MD5 += fate-ac4-crc-bad-note
++fate-ac4-crc-bad-note: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-crc-bad.ac4
++fate-ac4-crc-bad-note: CMP = grep
++fate-ac4-crc-bad-note: REF = skipping bad packet
++# Stderr companion: asserts the skip warning (astc.mak grep idiom). The
++# same warning fires on the clean stereo clip (no CRC check); the test
++# pins the skip, not a reject count.
++
++# --- decode (framemd5+grep): truncated input fails loudly ---
++FATE_AC4_MD5 += fate-ac4-gap-trunc
++fate-ac4-gap-trunc: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-gap-fail.ac4 ; test $$? -ne 0
++fate-ac4-gap-trunc: CMP = grep
++fate-ac4-gap-trunc: REF = no-sync
++# clip-gap-fail.ac4: 500 B truncated mid-frame; nonzero exit, no-sync
++# diagnostic, no output. Must never silent-pass.
++
++# --- demux: copy roundtrips, framecrc CMP (muxer rewrites file bytes) ---
++FATE_AC4_REMUX += fate-ac4-copy-stereo
++fate-ac4-copy-stereo: CMD = framecrc -i $(TARGET_SAMPLES)/ac4/clip-stereo.ac4 -c copy
++# Compares framecrc, never file bytes: the muxer rewrites framing.
++FATE_AC4_REMUX += fate-ac4-copy-51
++fate-ac4-copy-51: CMD = framecrc -i $(TARGET_SAMPLES)/ac4/clip-51-real.ac4 -c copy
++# Same framecrc-not-file-bytes rule as copy-stereo.
++
++# --- demux: past-EOF seek clamps to the last packet ---
++FATE_AC4_REMUX += fate-ac4-seek-eof
++fate-ac4-seek-eof: CMD = framecrc -ss 5 -i $(TARGET_SAMPLES)/ac4/clip-stereo.ac4 -c copy
++# Emits the last packet, exit 0; golden is never empty.
++
++# --- demux: garbage input yields no stream (negative slot) ---
++FATE_AC4_REMUX += fate-ac4-probe-garbage
++fate-ac4-probe-garbage: CMD = framecrc -i $(TARGET_SAMPLES)/ac4/garbage.ac4 -c copy ; test $$? -eq 234
++fate-ac4-probe-garbage: CMP = grep
++fate-ac4-probe-garbage: REF = Output file does not contain any stream
++# 1 KiB noise probes by extension; exit 234 (EINVAL) + pinned message.
++
++FATE_AC4-$(call PCM, AC4, AC4, ARESAMPLE_FILTER) += $(FATE_AC4)
++FATE_AC4_MD5-$(call FRAMEMD5, AC4, AC4, ARESAMPLE_FILTER) += $(FATE_AC4_MD5)
++FATE_AC4_REMUX-$(call REMUX, AC4) += $(FATE_AC4_REMUX)
++# Three split gates (PCM / FRAMEMD5 / REMUX) so --disable-everything
++# runs pull only the deps each group needs. REMUX needs no decoder.
++
++# --- deferred slots (comment-only; no sample bytes exist) ---
++# fate-ac4-mono: needs ac4/clip-mono.ac4 + suite ref. No public mono
++#   AC-4 exists anywhere; add the stanza once a sample is proposed.
++# fate-ac4-gap-fails: needs ac4/clip-51-acpl4.ac4 (codec-4 5.1 stub).
++#   No public codec-4 bytes exist; pins deterministic-silence bytes
++#   via framemd5 once they do.
++# fate-ac4-delay-1536: needs a 1536-spf impulse ref (does not exist).
++# fate-ac4-float: needs float-stage plumbing; no quantized-float
++#   golden is ever pinned before then.
++
++FATE_SAMPLES_AVCONV += $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes)
++
++fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes)
+diff --git a/tests/ref/fate/ac4-51 b/tests/ref/fate/ac4-51
+new file mode 100644
+index 0000000..4dd59cf
+--- /dev/null
++++ b/tests/ref/fate/ac4-51
+@@ -0,0 +1,11 @@
++#format: frame checksums
++#version: 2
++#hash: MD5
++#tb 0: 1/48000
++#media_type 0: audio
++#codec_id 0: pcm_s16le
++#sample_rate 0: 48000
++#channel_layout_name 0: 5.1
++#stream#, dts,        pts, duration,     size, hash
++0,          0,          0,     2048,    24576, 0a417775259dc49d2315862b42fb13d4
++0,       4096,       4096,     2048,    24576, 05c6406ca7dfd3549e9279d0d8f6ec25
+diff --git a/tests/ref/fate/ac4-714 b/tests/ref/fate/ac4-714
+new file mode 100644
+index 0000000..ed66524
+--- /dev/null
++++ b/tests/ref/fate/ac4-714
+@@ -0,0 +1,12 @@
++#format: frame checksums
++#version: 2
++#hash: MD5
++#tb 0: 1/51200
++#media_type 0: audio
++#codec_id 0: pcm_s16le
++#sample_rate 0: 51200
++#channel_layout_name 0: 7.1
++#stream#, dts,        pts, duration,     size, hash
++0,          0,          0,     2048,    32768, bc4535ed2217e9937f07c17ff50ae935
++0,       2048,       2048,     2048,    32768, b4c527a1d37a11bf93da1b4678153355
++0,       4096,       4096,     2048,    32768, b323424cff8082cbe5d831e59ec99550
+diff --git a/tests/ref/fate/ac4-copy-51 b/tests/ref/fate/ac4-copy-51
+new file mode 100644
+index 0000000..c744cba
+--- /dev/null
++++ b/tests/ref/fate/ac4-copy-51
+@@ -0,0 +1,8 @@
++#tb 0: 1/48000
++#media_type 0: audio
++#codec_id 0: ac4
++#sample_rate 0: 48000
++#channel_layout_name 0: 5.1(side)
++0,          0,          0,     2048,      683, 0x9c591a26
++0,       2048,       2048,     2048,      682, 0x469a1126
++0,       4096,       4096,     2048,      683, 0xada5fdc8
+diff --git a/tests/ref/fate/ac4-copy-stereo b/tests/ref/fate/ac4-copy-stereo
+new file mode 100644
+index 0000000..530102b
+--- /dev/null
++++ b/tests/ref/fate/ac4-copy-stereo
+@@ -0,0 +1,8 @@
++#tb 0: 1/48000
++#media_type 0: audio
++#codec_id 0: ac4
++#sample_rate 0: 48000
++#channel_layout_name 0: stereo
++0,          0,          0,     2048,      342, 0x23081287
++0,       2048,       2048,     2048,      341, 0xbad70aae
++0,       4096,       4096,     2048,      341, 0x27346f7e
+diff --git a/tests/ref/fate/ac4-crc-bad b/tests/ref/fate/ac4-crc-bad
+new file mode 100644
+index 0000000..9da7b25
+--- /dev/null
++++ b/tests/ref/fate/ac4-crc-bad
+@@ -0,0 +1,11 @@
++#format: frame checksums
++#version: 2
++#hash: MD5
++#tb 0: 1/48000
++#media_type 0: audio
++#codec_id 0: pcm_s16le
++#sample_rate 0: 48000
++#channel_layout_name 0: stereo
++#stream#, dts,        pts, duration,     size, hash
++0,          0,          0,     2048,     8192, 8aaebed40a883399539c9c3631e2c7ed
++0,       4096,       4096,     2048,     8192, 023db1dd1a24286c1f836f66e61ac9ae
+diff --git a/tests/ref/fate/ac4-delay b/tests/ref/fate/ac4-delay
+new file mode 100644
+index 0000000..b45a019
+--- /dev/null
++++ b/tests/ref/fate/ac4-delay
+@@ -0,0 +1,14 @@
++#format: frame checksums
++#version: 2
++#hash: MD5
++#tb 0: 1/48000
++#media_type 0: audio
++#codec_id 0: pcm_s16le
++#sample_rate 0: 48000
++#channel_layout_name 0: stereo
++#stream#, dts,        pts, duration,     size, hash
++0,          0,          0,     2048,     8192, 6aacc0027174baf86e4ef17deaa0dbbd
++0,       4096,       4096,     2048,     8192, af09da08531bd5f15cf72da7372362ae
++0,       6144,       6144,     2048,     8192, 75be8d1a741eff1152a48ee0e2d0bbae
++0,       8192,       8192,     2048,     8192, 2ac4648fce88bb02528926c91b94ee70
++0,      10240,      10240,     2048,     8192, 5f393eb9acc1421f86da8566a233e5c0
+diff --git a/tests/ref/fate/ac4-ims120 b/tests/ref/fate/ac4-ims120
+new file mode 100644
+index 0000000..3d3d2dc
+--- /dev/null
++++ b/tests/ref/fate/ac4-ims120
+@@ -0,0 +1,50 @@
++#format: frame checksums
++#version: 2
++#hash: MD5
++#tb 0: 1/48000
++#media_type 0: audio
++#codec_id 0: pcm_s16le
++#sample_rate 0: 48000
++#channel_layout_name 0: stereo
++#stream#, dts,        pts, duration,     size, hash
++0,          0,          0,     2048,     8192, 53ea3a9d6f9d3b5fced7c99b4eab4685
++0,       2048,       2048,     2048,     8192, 7688cd2c281399a755fa9db380afd08e
++0,       4096,       4096,     2048,     8192, 4714d8ae9c07b924cb0aedb949d34f76
++0,       6144,       6144,     2048,     8192, 0e5ef0ab45cc7c14daf7c0134d83af1d
++0,       8192,       8192,     2048,     8192, 745df05da6dbb6e3a3d912c88bccef14
++0,      10240,      10240,     2048,     8192, 36c7cb96809636737aaf9a8cd68812f6
++0,      12288,      12288,     2048,     8192, 92dfdedea91aa407b8a2fa440b0bcb7b
++0,      14336,      14336,     2048,     8192, 3e8af2e78585771f1cff599be1b052e2
++0,      16384,      16384,     2048,     8192, 0c2d038e35df3c30d4628b33dd397c1a
++0,      18432,      18432,     2048,     8192, e0bc7b1b420875ec001ead96ce85a379
++0,      20480,      20480,     2048,     8192, d98045ee93b1c5872a2d93063e649c63
++0,      22528,      22528,     2048,     8192, b8cdb03dd020a763c22c5292f365e3a1
++0,      24576,      24576,     2048,     8192, 8a6c9758a143b48e9f63929245a55abd
++0,      26624,      26624,     2048,     8192, f10286310bc6baf61ce43a5220aaea8c
++0,      28672,      28672,     2048,     8192, 7fb386dc753240a064a8fe6ab9a00e84
++0,      30720,      30720,     2048,     8192, 7de1669962fb05d4b6ac987676061302
++0,      65536,      65536,     2048,     8192, b295f8b13291c2bf15df7691ff83c655
++0,      67584,      67584,     2048,     8192, f068650190fcd978b1556d0a698cc493
++0,      69632,      69632,     2048,     8192, 533f5555fd058f7b85c690bad2176e31
++0,      71680,      71680,     2048,     8192, bd1c92369fdaf7bae39c946ef514ee76
++0,      73728,      73728,     2048,     8192, 6a13c56ac9b9726b7e17864f9dd14345
++0,      75776,      75776,     2048,     8192, e78438d60eb30ef29969ab7bba93e31d
++0,      77824,      77824,     2048,     8192, 6e2e2140ea723b72343244cf91c4afe4
++0,      79872,      79872,     2048,     8192, 6038a18bc61548dc0505002139ed6cf2
++0,      81920,      81920,     2048,     8192, 231f3dbe7642fc30033ec6a33934b4d2
++0,      83968,      83968,     2048,     8192, 8daf4c0d1789f66f08dd685bc522066a
++0,      86016,      86016,     2048,     8192, 0b229d720ce8ae2e1133027bb1def1d0
++0,      88064,      88064,     2048,     8192, a1f89de7a7605d0821211bd38af45a49
++0,      90112,      90112,     2048,     8192, 62305d0e4706561081c1b461c5436966
++0,      92160,      92160,     2048,     8192, 6346dc079a8cdce39cce1de9415149cb
++0,      94208,      94208,     2048,     8192, 72406622be82f01dc9a3bd3f13884aa8
++0,      96256,      96256,     2048,     8192, b1e0cffb70374fc78d24a8767b757533
++0,      98304,      98304,     2048,     8192, 055694e3e87fd3a3d3f8560c6c930c38
++0,     100352,     100352,     2048,     8192, c2515b32b73dd6dee07c0d8f1f8fdb2d
++0,     102400,     102400,     2048,     8192, b3e20ac5ccfd320015f36897a4013ee1
++0,     104448,     104448,     2048,     8192, a8068b9c65fb2a946057d8cee645a06f
++0,     106496,     106496,     2048,     8192, c7028ee9bd7c792ace354aa445921518
++0,     108544,     108544,     2048,     8192, 887fdc02fcab7d91b6851d377c54352f
++0,     110592,     110592,     2048,     8192, 32eacb997d4014a188ca42c8763b6c8d
++0,     112640,     112640,     2048,     8192, 24fd0c497bd153188543ec17b07903d9
++0,     114688,     114688,     2048,     8192, 3a6aea9294694955729a45ecfdaa1c69
+diff --git a/tests/ref/fate/ac4-seek-eof b/tests/ref/fate/ac4-seek-eof
+new file mode 100644
+index 0000000..3695d2d
+--- /dev/null
++++ b/tests/ref/fate/ac4-seek-eof
+@@ -0,0 +1,6 @@
++#tb 0: 1/48000
++#media_type 0: audio
++#codec_id 0: ac4
++#sample_rate 0: 48000
++#channel_layout_name 0: stereo
++0,    -235904,    -235904,     2048,      341, 0x27346f7e
+diff --git a/tests/ref/fate/ac4-stereo51 b/tests/ref/fate/ac4-stereo51
+new file mode 100644
+index 0000000..c2def7c
+--- /dev/null
++++ b/tests/ref/fate/ac4-stereo51
+@@ -0,0 +1,11 @@
++#format: frame checksums
++#version: 2
++#hash: MD5
++#tb 0: 1/48000
++#media_type 0: audio
++#codec_id 0: pcm_s16le
++#sample_rate 0: 48000
++#channel_layout_name 0: 5.1
++#stream#, dts,        pts, duration,     size, hash
++0,          0,          0,     2048,    24576, 4a29e9d1e34d75a3d3f5ebe464d04e50
++0,       4096,       4096,     2048,    24576, 14bb4d9cf1bd01ecdc29ab981a75175f
+-- 
+2.56.0
+
