@@ -22,7 +22,8 @@ gates, independently revertable.
 
 Testing:
   make fate-ac4 (suite: ac4/clip-* live +24h)
-  full make fate green; pre-patch negative (tests fail without A).
+  full make fate green incl. fate-source (Series-A guard fix in);
+  pre-patch negative (tests fail without A).
 
 Provenance: docs/tests only; the tested decoder is the Series A
 independent cleanroom implementation (ETSI TS 103 190-1 V1.4.1 /

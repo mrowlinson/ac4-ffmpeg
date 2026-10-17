@@ -32,7 +32,7 @@ Patches only — NO attachments (no samples, no .md docs, no mbox file).
 In a scratch dir (NOT the project repo):
 
 ```sh
-git mailsplit -o send/ doc/post/series-C-encoder.mbox   # -> 0001..0011
+mkdir -p send && git mailsplit -osend doc/post/series-C-encoder.mbox   # -> 0001..0011
 cp doc/covers/COVER-C.txt send/0000                       # whole file: Subject line + blank + body
 git send-email --to=ffmpeg-devel@ffmpeg.org \
   --from="Michael Rowlinson <mrowlinson@gmail.com>" \
