@@ -6,7 +6,7 @@ Final pack, gated 2026-10-16 on master `2436f47` (r4 covers in-tree;
 `FIX-REPORT.md` + `ff-mbp-r4build` `MBP-R4BUILD.md` (carried, cited in
 the checklist).
 
-Pack: `doc/post/series-D-mp4.mbox` (6 patches on Series E, 129514 B) +
+Pack: `doc/post/series-D-mp4.mbox` (6 patches on Series E, 162643 B, union: D-seat content + stack mechanics + T3) +
 `doc/covers/COVER-D.txt` (`[PATCH 0/6]`).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 

@@ -26,9 +26,10 @@ ls -l doc/post/*.mbox                    # sizes MUST read:
 ```
 Expected bytes: `series-A-decoder` 620888, `series-A0-head` 35400,
 `series-B-fate` 40394, `series-C-encoder` 653750, `series-E-ts`
-12693, `series-D-mp4` 129514. B/C/E/D sizes are the stack re-cut
-(STACK-DAG.md); stale STAGED `series-B-decfate.mbox` removed from
-tree; B pack is `series-B-fate.mbox` only.
+12693, `series-D-mp4` 162643. B/C/E sizes are the stack re-cut
+(STACK-DAG.md); D is the union re-cut (UNION-D.md); stale STAGED
+`series-B-decfate.mbox` removed from tree; B pack is
+`series-B-fate.mbox` only.
 
 ```sh
 perl -ne '$c += tr/\x80-\xFF//; END { print "non-ascii=$c (want 0)\n" }' \
