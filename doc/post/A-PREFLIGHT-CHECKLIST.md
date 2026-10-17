@@ -164,10 +164,10 @@ undefined without 2/2.
   placeholder; behavioral gates pass with it.
 - This series pins no goldens; Series B FATE goldens are recorded
   against the fixed N5 labels (cover says so).
-- C 01/11's Makefile context quotes r5's 2-line decoder comment;
-  the C seat refreshes those 2 context lines with the M10 re-cut
-  (STACK-DAG assigns C's A-context to the C seat; hunk positions
-  preserved here). E/D stack behind C, unaffected otherwise.
+- C 01/10's Makefile context quotes the pre-r6 2-line decoder
+  comment (union kept the old context lines: C08 dropped, renumbered
+  01/11→01/10, A-context still C-seat-owned per STACK-DAG; hunk
+  positions preserved here). E/D stack behind C, unaffected otherwise.
 - T4 drain+reopen stays future work (code + cover disclose the
   v1-fatal; README tracked follow-ups); out of the M4-M9 brief.
 - A-xx/Q-x/Dx finding IDs remain in a few comments (out of the

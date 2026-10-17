@@ -75,7 +75,7 @@ A0/B2 post. This series MUST wait for it (M3 fate refs).
 ## 3. Post order (full sequence)
 
 Series A now -> mail-1 (any time, owner) -> A0 (after A merges AND
-mail-1 +24 h; this send) -> B1/B2 -> C(11) -> E(2) -> D(6) ->
+mail-1 +24 h; this send) -> B -> C(10) -> E(2) -> D(6) ->
 (parser follow-ups).
 
 Constraints: A-before-A0 (runbook sequencing; standalone proven,
