@@ -24,8 +24,8 @@ ls -l doc/post/*.mbox                    # sizes MUST read:
 ```
 Expected bytes: `series-A-decoder` 620888, `series-A0-head` 35400,
 `series-B-fate` 19113, `series-C-encoder` 653799, `series-E-ts`
-11605, `series-D-mp4` 128977. NEVER post `series-B-decfate.mbox`
-(13067 B, PENDING-stub STAGED pack).
+11605, `series-D-mp4` 128977. Stale STAGED `series-B-decfate.mbox`
+removed from tree; B pack is `series-B-fate.mbox` only.
 
 ```sh
 perl -ne '$c += tr/\x80-\xFF//; END { print "non-ascii=$c (want 0)\n" }' \
@@ -36,17 +36,17 @@ grep -c "^From " doc/post/series-A-decoder.mbox doc/post/series-A0-head.mbox \
 # want 2 1 2 11 2 6 in that file order
 ```
 
-B cover caveat (open at pack time): `COVER-B.txt` Testing block still
-says `full make fate green` although `fate-source` fails on the
-Series-A headers (A-owned, escalated; see `B-PREFLIGHT-CHECKLIST.md`
-disclosed carries). Check:
+B cover note (closed post-guard-fix): `COVER-B.txt` Testing block now
+reads `full make fate green incl. fate-source (Series-A guard fix
+in)` -- true since the A re-cut-5 guard fix closed the `fate-source`
+CI blocker (`A-PREFLIGHT-CHECKLIST.md` gate GREEN; B-cut-time failure
+history in `B-PREFLIGHT-CHECKLIST.md` disclosed carries). Check:
 
 ```sh
-sed -n '20,26p' doc/covers/COVER-B.txt
+sed -n '23,26p' doc/covers/COVER-B.txt
 ```
 
-Owner call at post: refresh that line before splitting B, or send
-as-is. Either way note the choice in Owner-at-post below.
+No owner call needed; confirm the incl-fate-source line pre-split.
 
 Sitting deviation (accepted by running this): B/C/E/D preconditions
 were written for drip-landing (B wants A+A0 landed, E wants C landed,
@@ -208,14 +208,15 @@ rc=0 with exact file counts (2/1/2/11/2/6); all six cover copies
 match the threads above; non-ASCII byte count 0 across all mboxes +
 covers; signoff counts 2/1/2/11/2/6. Attached `-osendX` form used
 throughout (`-o send/` fails on this git — see
-`A-SENDSTEPS-NITFIX.md`; C/D/E/A0 per-series docs still show the
-broken form). TB-IP check dry-ran absent here (owner link only).
+`A-SENDSTEPS-NITFIX.md`; C/D/E/A0 per-series docs showed the broken
+form at dry-run time, fixed since to the attached form). TB-IP
+check dry-ran absent here (owner link only).
 
 ## Owner-at-post (fill when sending)
 
 - [ ] Clock >= 2026-10-17T22:23:09Z confirmed: _______________
 - [ ] TB link 169.254.103.231 confirmed: _______________
-- [ ] B cover Testing call (refresh / as-is): _______________
+- [ ] B cover Testing refresh confirmed (incl. fate-source): _______________
 - [ ] A sent date + Message-IDs (0/2,1/2,2/2): _______________
 - [ ] A0 sent date + Message-IDs (cover,1/1): _______________
 - [ ] B sent date + Message-IDs (0/2,1/2,2/2): _______________
