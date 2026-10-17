@@ -1,11 +1,12 @@
 Subject: [PATCH 0/2] native AC-4 decoder for raw .ac4 streams
 
-This series adds a native AC-4 audio decoder, wired to the raw .ac4
-demuxer already upstream. Base is master 3e6cd5e; the series applies
-and decodes standalone -- no earlier series required for decode. The
-A0 carriage patch (codecpar + timestamps, posted separately) pairs
-with it for stream copy and seekable pts, but decode-to-PCM is proven
-on pristine master without it.
+This series adds a native AC-4 audio decoder. It is the second link
+of a six-series stack that applies in one order with plain `git am`
+on master 3e6cd5e: A0 (raw demux params) -> A (this decoder) -> B
+(decoder docs/FATE) -> C (encoder) -> E (TS mux) -> D (parser +
+MP4). Stack parent: A0 (assumes the carriage fill; decode-to-PCM
+needs only this series' two patches, while stream copy and seekable
+pts need A0's fill).
 
 Patches:
   [PATCH 1/2] avcodec: add native AC-4 decoder core
@@ -22,22 +23,25 @@ Patches:
     lib serialization, S16-only v1, EXPERIMENTAL (decode needs
     -strict experimental). Truncated-tail rule: a lone unanchored
     framing fails loud at EOF (no-sync diagnostic, zero output).
-    First patch exposing decoder behavior.
+    Private options: pres_sel only (DRC/DE options deleted as
+    never-working, no reserved surface). First patch exposing
+    decoder behavior.
 
-Why first: FFmpeg has no AC-4 decoder, and this series has zero
-sample dependencies, so it can post without waiting on the samples
+Why here: FFmpeg has no AC-4 decoder, and this series has zero
+sample dependencies, so it posts without waiting on the samples
 mail that gates the FATE-carrying patches (A0's folded M3 tests,
 Series B). Minimal reviewable unit before docs/FATE (Series B) and
 encoder (Series C) build on it.
 
 Testing:
   ./ffmpeg -strict experimental -i clip.ac4 -map 0:a out.wav
-  byte-exact vs the dec-lib oracle on stereo / 5.1 / 7.1 / IMS /
-  all-gap vectors (11/11 cmp-identical); negative controls loud and
+  byte-identical to the dec-lib snapshot it ports (11/11
+  cmp-identical; pins the port, not an independent reference --
+  an external output anchor is pending); negative controls loud and
   terminating (mid-stream config change, garbage cap, no-bed,
   truncated tail); standalone --enable-decoder=ac4 build; ASan/UBSan
-  clean on decode paths; patcheck clean-under-triage; full make
-  green; `make clean` preserves all committed sources.
+  clean on decode paths; full make fate green; `make clean`
+  preserves all committed sources.
 
 FATE: none in this series; decoder tests land in Series B (B2),
 which posts only after the samples-request mail is confirmed and
@@ -60,10 +64,10 @@ TS 103 190-1 V1.4.1 and TS 103 190-2 V1.3.1 plus black-box behavioral
 observation. No Dolby SDK, reference code, or disassembly was used in
 the submitted code; numeric codebook/coefficient tables are
 value-only transcriptions from the ETSI deliverables (generators and
-source versions cited per table), and all comments are original prose
-referencing the standards by table/clause number only. Note AC-4 is
-covered by Dolby patents; this submission addresses copyright-clean
-code only and implementers/distributors should consider patent
-licensing.
+source versions cited per table), and comments are original prose (a
+scrub pass is folding stray internal pointers to table/clause
+citations). Note AC-4 is covered by Dolby patents; this submission
+addresses copyright-clean code only and implementers/distributors
+should consider patent licensing.
 
 Signed-off-by on each patch: Michael Rowlinson <mrowlinson@gmail.com>

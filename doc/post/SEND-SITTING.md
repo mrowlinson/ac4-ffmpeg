@@ -1,9 +1,11 @@
 # SEND-SITTING — all six series in ONE sitting (owner posts)
 
-Owner sends A, A0, B, C, E, D back-to-back in one sitting. No
-drip-sends. Source: the six `*-OWNER-SEND-STEPS.md` in this dir (A =
-re-cut 5 guard fix, B = `series-B-fate` re-cut; see Per-series notes).
-Mail-1 already done (suite live 2026-10-16T22:23:09Z) — no mail step here.
+Owner sends A0, A, B, C, E, D back-to-back in one sitting, in
+stack order (see STACK-DAG.md). No drip-sends. Source: the six
+`*-OWNER-SEND-STEPS.md` in this dir (A = re-cut 5 guard fix, B/E =
+stack re-cut with T2/M17/M22/T5 fixes, C/D = stack-context re-cut;
+see Per-series notes). Mail-1 already done (suite live
+2026-10-16T22:23:09Z) — no mail step here.
 
 To: `ffmpeg-devel@ffmpeg.org` every series. Patches only — NO
 attachments (no samples, no .md, no mbox files).
@@ -23,9 +25,10 @@ git log --oneline -1                     # expect e72a4b9 ff/merged: runbook-r2 
 ls -l doc/post/*.mbox                    # sizes MUST read:
 ```
 Expected bytes: `series-A-decoder` 620888, `series-A0-head` 35400,
-`series-B-fate` 19113, `series-C-encoder` 653799, `series-E-ts`
-11605, `series-D-mp4` 128977. Stale STAGED `series-B-decfate.mbox`
-removed from tree; B pack is `series-B-fate.mbox` only.
+`series-B-fate` 40394, `series-C-encoder` 653750, `series-E-ts`
+12693, `series-D-mp4` 129514. B/C/E/D sizes are the stack re-cut
+(STACK-DAG.md); stale STAGED `series-B-decfate.mbox` removed from
+tree; B pack is `series-B-fate.mbox` only.
 
 ```sh
 perl -ne '$c += tr/\x80-\xFF//; END { print "non-ascii=$c (want 0)\n" }' \
@@ -43,19 +46,19 @@ CI blocker (`A-PREFLIGHT-CHECKLIST.md` gate GREEN; B-cut-time failure
 history in `B-PREFLIGHT-CHECKLIST.md` disclosed carries). Check:
 
 ```sh
-sed -n '23,26p' doc/covers/COVER-B.txt
+grep -n "incl. fate-source" doc/covers/COVER-B.txt  # must print one line
 ```
 
 No owner call needed; confirm the incl-fate-source line pre-split.
 
-Sitting deviation (accepted by running this): B/C/E/D preconditions
-were written for drip-landing (B wants A+A0 landed, E wants C landed,
-D wants C+E landed). One sitting sends before anything lands. Contained:
-every pack applies standalone on pristine `3e6cd5e` except the proven-confined
-appends (E 2/2 and D 4/6-6/6 onto C's `ac4.mak`; D 5/6-6/6 onto C's
-`tests/api/Makefile`); B's A/A0 need is functional (FATE legs), not
-textual. Upstream landing order must still be A,A0,B,C,E,D — say so in
-each cover thread if the maintainer asks.
+Stack order (accepted by running this): the six packs form ONE
+ordered stack (A0 -> A -> B -> C -> E -> D, see STACK-DAG.md) and
+apply with plain `git am` in that order only -- 24/24 verified.
+One sitting sends before anything lands, so tell the maintainer
+the application order in each cover thread if asked: A0 first,
+then A, B, C, E, D. B's A/A0 need stays functional (FATE legs),
+everything else in the chain is textual (Makefile/allcodecs/docs/
+mak context).
 
 ## 2. Work dir (NOT the repo)
 
@@ -66,24 +69,7 @@ mkdir -p ~/ac4-send && cd ~/ac4-send
 R=<repo-root>   # the merged-master checkout from step 1
 ```
 
-## 3. Series A — decoder (2 patches + cover)
-
-Preflight: `COVER-A.txt` unchanged since re-cut 4 (subjects/prose
-exact); P3 decoder-first flip approved by posting.
-
-```sh
-mkdir -p sendA && git mailsplit -osendA $R/doc/post/series-A-decoder.mbox  # -> 0001 0002
-cp $R/doc/covers/COVER-A.txt sendA/0000
-git send-email --to=ffmpeg-devel@ffmpeg.org \
-  --from="Michael Rowlinson <mrowlinson@gmail.com>" \
-  sendA/0000 sendA/0001 sendA/0002
-```
-
-Thread: `[PATCH 0/2] native AC-4 decoder for raw .ac4 streams`,
-`[PATCH 1/2] avcodec: add native AC-4 decoder core`,
-`[PATCH 2/2] avcodec: wire ff_ac4_decoder`. Expect zero 8bit warnings.
-
-## 4. Series A0 — demux head (1 patch + cover)
+## 3. Series A0 — demux head (1 patch + cover, FIRST)
 
 Preflight: suite live +24h (step 0 clock); M3 FATE refs need
 `ac4/clip-stereo.ac4` + `ac4/clip-51-real.ac4` in the suite.
@@ -99,6 +85,23 @@ git send-email --to=ffmpeg-devel@ffmpeg.org \
 Thread: cover + `[PATCH] lavf/ac4: fill codecpar + timestamps from
 first frame` (single-patch form: cover subject == patch subject).
 Expect zero warnings.
+
+## 4. Series A — decoder (2 patches + cover)
+
+Preflight: stack order (applies after A0); P3 decoder-first flip
+approved by posting.
+
+```sh
+mkdir -p sendA && git mailsplit -osendA $R/doc/post/series-A-decoder.mbox  # -> 0001 0002
+cp $R/doc/covers/COVER-A.txt sendA/0000
+git send-email --to=ffmpeg-devel@ffmpeg.org \
+  --from="Michael Rowlinson <mrowlinson@gmail.com>" \
+  sendA/0000 sendA/0001 sendA/0002
+```
+
+Thread: `[PATCH 0/2] native AC-4 decoder for raw .ac4 streams`,
+`[PATCH 1/2] avcodec: add native AC-4 decoder core`,
+`[PATCH 2/2] avcodec: wire ff_ac4_decoder`. Expect zero 8bit warnings.
 
 ## 5. Series B — doc + decoder FATE (2 patches + cover)
 
@@ -139,7 +142,8 @@ core+adapter, 03/11 encoder, 04/11 docs, 05/11 fate, 06/11 no-SAMPLES,
 ## 7. Series E — TS mux (2 patches + cover)
 
 Preflight: none beyond global (asynth-only); posts-after-C is
-functional (2/2 appends C's `ac4.mak`) — landing order covers it.
+functional (2/2 appends the B-created, C-extended `ac4.mak`) —
+landing order covers it.
 
 ```sh
 mkdir -p sendE && git mailsplit -osendE $R/doc/post/series-E-ts.mbox  # -> 0001 0002
@@ -156,8 +160,8 @@ Thread: `[PATCH 0/2] MPEG-TS mux descriptors for AC-4`,
 ## 8. Series D — MP4 + parser (6 patches + cover, LAST)
 
 Preflight: none beyond global (self-contained); posts-after-C+E is
-functional (4/6-6/6 append C/E's `ac4.mak` + C's `tests/api/Makefile`)
-— landing order covers it.
+functional (4/6-6/6 append the B/C/E-extended `ac4.mak` + the
+`tests/api/Makefile` entries) — landing order covers it.
 
 ```sh
 mkdir -p sendD && git mailsplit -osendD $R/doc/post/series-D-mp4.mbox  # -> 0001..0006
@@ -183,17 +187,19 @@ STOP the sitting, do not continue to the next series (rollback notes).
 Mail cannot be unsent. Per-series recovery, worst first:
 
 - Wrong bytes sent: reply `v2` superseding thread for that series
-  only; other sent series stand (zero cross-series file overlap
-  except the C/E/D mak appends — a C v2 must re-carry E/D context).
+  only; other sent series stand, but a v2 must re-carry the stack
+  context (every series past A0 is cut against its parent — a C v2
+  re-carries B context, E re-carries C, D re-carries E).
 - Broken thread / missing patch: resend the missing message as a
   reply in the same thread, note it in Owner-at-post.
 - Mid-sitting halt (later series fails preflight): sent series stay
   sent; record which landed where; remaining series go in a second
-  sitting in the same A,A0,B,C,E,D order.
+  sitting in the same A0,A,B,C,E,D order.
 - Out-of-order upstream landing (maintainer lands E before C):
   follow-up rebase of the landed-later dependency onto the landed
-  tree, re-verify `git am`, repost as v2. E-after-C and D-after-C+E
-  are the only textual orderings; everything else is functional.
+  tree, re-verify `git am`, repost as v2. The chain A0->A->B->C->E->D
+  is the application order; B's A/A0 need is the only purely
+  functional link.
 - B landed before A/A0: B FATE legs fail upstream until A+A0 land;
   no repost needed once they do (same bytes).
 

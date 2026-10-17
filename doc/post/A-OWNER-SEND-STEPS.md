@@ -20,6 +20,9 @@ From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
   is approved; runbook step 10 still says A0 first — stale, fix later.)
 - NOTHING sent yet: no SENT marker in repo; Series A and mail-1 both
   unsent. No suite/sample wait for this series (zero sample deps).
+- Posts AFTER Series A0 merges (stack order A0 -> A: every later
+  series assumes the carriage fill; zero file overlap, but the
+  stack applies head-first).
 
 ## 1. Send Series A to ffmpeg-devel (this pack)
 

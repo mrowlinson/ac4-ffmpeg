@@ -1,4 +1,4 @@
-From 083c67621c61273c364009668c2c9e9ad76e3bfa Mon Sep 17 00:00:00 2001
+From 1a7c948ba4380028e0e7eed0d438f8f2802b7bfa Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 04:06:39 -0400
 Subject: [PATCH 1/6] avcodec: add ff_ac4_parser
@@ -51,10 +51,10 @@ index cb6b247..5e17825 100755
  adts_muxer_select="mpeg4audio"
  aiff_muxer_select="iso_media"
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index 247e829..a3c4c01 100644
+index d560aa6..4e40f7e 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
-@@ -1285,6 +1285,7 @@ OBJS-$(CONFIG_AAC_LATM_PARSER)         += latm_parser.o
+@@ -1292,6 +1292,7 @@ OBJS-$(CONFIG_AAC_LATM_PARSER)         += latm_parser.o
  OBJS-$(CONFIG_AAC_PARSER)              += aac_parser.o aac_ac3_parser.o
  OBJS-$(CONFIG_AC3_PARSER)              += aac_ac3_parser.o ac3tab.o \
                                            ac3_channel_layout_tab.o
@@ -909,7 +909,7 @@ index 263b606..d205bb6 100644
 -- 
 2.56.0
 
-From c01ad3ff9bfd6f372ff6e871901887ed17dfd6c4 Mon Sep 17 00:00:00 2001
+From c3842b7f1cd1ec666947ccebaa73d6d7414cb0d4 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 04:07:01 -0400
 Subject: [PATCH 2/6] avformat/mov: add AC-4 dac4 box support
@@ -1007,7 +1007,7 @@ index f7c1292..9f1accb 100644
 -- 
 2.56.0
 
-From 499892d8a49546aa60ac39d059f8aebd67bcf5a4 Mon Sep 17 00:00:00 2001
+From de6908a1327ecbd98206496a8700ec550265414b Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 04:07:16 -0400
 Subject: [PATCH 3/6] avformat/movenc: add AC-4 ac-4/dac4 muxing support
@@ -1196,7 +1196,7 @@ index 2c349ef..a8a5972 100644
 -- 
 2.56.0
 
-From dd69611fb625a73d1c32152b597bedc0c81099d4 Mon Sep 17 00:00:00 2001
+From 7a172764745638fc7cb759ba11fc7cb50531c6ac Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 04:07:26 -0400
 Subject: [PATCH 4/6] fate: add self-contained ac4 parser tests
@@ -2115,14 +2115,14 @@ index 0000000..9d636ea
 +    return failures != 0;
 +}
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
-index abdc031..440953c 100644
+index 04e6e5d..1cf9fb7 100644
 --- a/tests/fate/ac4.mak
 +++ b/tests/fate/ac4.mak
-@@ -93,4 +93,15 @@ fate-ac4-mpegts-probe: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -v 0 -bitexact \
+@@ -260,4 +260,15 @@ fate-ac4-mpegts-probe: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -v 0 -strict -2 -bi
+ 
  FATE_FFMPEG += $(FATE_AC4_MPEGTS_PMT-yes)
  FATE_FFPROBE += $(FATE_AC4_MPEGTS_PROBE-yes)
- 
--fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes)
+-fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes)
 +# AC-4 parser tests. The vectors are synthesized inside the test tool,
 +# so this needs no fate-suite samples.
 +FATE_AC4_PARSE-$(CONFIG_AC4_PARSER) += fate-ac4-parser
@@ -2130,15 +2130,15 @@ index abdc031..440953c 100644
 +fate-ac4-parser: CMD = run $(APITESTSDIR)/api-ac4-parser-test$(EXESUF)
 +fate-ac4-parser: CMP = null
 +
-+FATE-yes += $(FATE_AC4_PARSE-yes)
 +
 +fate-ac4-parse: $(FATE_AC4_PARSE-yes)
 +
-+fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes)
++FATE-yes += $(FATE_AC4_PARSE-yes)
++fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes)
 -- 
 2.56.0
 
-From 0747972024798f32a2ae2ca79fd83a970d3074fc Mon Sep 17 00:00:00 2001
+From 60f7b210289866cd12298442c274518e99fd5e3f Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 04:07:57 -0400
 Subject: [PATCH 5/6] fate: add self-contained ac4 mp4 mux/demux roundtrip test
@@ -2877,14 +2877,16 @@ index 0000000..c14dd10
 +    return failures != 0;
 +}
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
-index 440953c..2b8277f 100644
+index 1cf9fb7..162ac27 100644
 --- a/tests/fate/ac4.mak
 +++ b/tests/fate/ac4.mak
-@@ -100,8 +100,18 @@ fate-ac4-parser: $(APITESTSDIR)/api-ac4-parser-test$(EXESUF)
- fate-ac4-parser: CMD = run $(APITESTSDIR)/api-ac4-parser-test$(EXESUF)
- fate-ac4-parser: CMP = null
+@@ -270,5 +270,15 @@ fate-ac4-parser: CMP = null
+ 
+ fate-ac4-parse: $(FATE_AC4_PARSE-yes)
  
 -FATE-yes += $(FATE_AC4_PARSE-yes)
+-fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes)
++FATE-yes += $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes)
 +# AC-4 MP4 mux/demux roundtrip. Frames and DSI are synthesized inside
 +# the test tool, so this needs no fate-suite samples either: bare and
 +# Annex G framed inputs mux to MP4 and demux back with byte-exact dac4
@@ -2894,17 +2896,12 @@ index 440953c..2b8277f 100644
 +fate-ac4-mp4-roundtrip: CMD = run $(APITESTSDIR)/api-ac4-mp4-roundtrip-test$(EXESUF)
 +fate-ac4-mp4-roundtrip: CMP = null
 +
-+FATE-yes += $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes)
- 
- fate-ac4-parse: $(FATE_AC4_PARSE-yes)
 +fate-ac4-mp4: $(FATE_AC4_MP4-yes)
- 
--fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes)
-+fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes)
++fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes)
 -- 
 2.56.0
 
-From 08b4f00097e6ca3abbfbadc7daf9d534a5242614 Mon Sep 17 00:00:00 2001
+From 971f9c24afd296e780dbaa03929d96c22d0a7e9d Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 09:14:46 -0400
 Subject: [PATCH 6/6] fate: add self-contained ac4 ts demux test
@@ -3657,14 +3654,23 @@ index 0000000..7b6d2c2
 +    return failures != 0;
 +}
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
-index 2b8277f..959a669 100644
+index 162ac27..206ae00 100644
 --- a/tests/fate/ac4.mak
 +++ b/tests/fate/ac4.mak
-@@ -109,9 +109,18 @@ fate-ac4-mp4-roundtrip: $(APITESTSDIR)/api-ac4-mp4-roundtrip-test$(EXESUF)
- fate-ac4-mp4-roundtrip: CMD = run $(APITESTSDIR)/api-ac4-mp4-roundtrip-test$(EXESUF)
- fate-ac4-mp4-roundtrip: CMP = null
+@@ -270,7 +270,7 @@ fate-ac4-parser: CMP = null
+ 
+ fate-ac4-parse: $(FATE_AC4_PARSE-yes)
  
 -FATE-yes += $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes)
++FATE-yes += $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes) $(FATE_AC4_TSDEMUX-yes)
+ # AC-4 MP4 mux/demux roundtrip. Frames and DSI are synthesized inside
+ # the test tool, so this needs no fate-suite samples either: bare and
+ # Annex G framed inputs mux to MP4 and demux back with byte-exact dac4
+@@ -281,4 +281,13 @@ fate-ac4-mp4-roundtrip: CMD = run $(APITESTSDIR)/api-ac4-mp4-roundtrip-test$(EXE
+ fate-ac4-mp4-roundtrip: CMP = null
+ 
+ fate-ac4-mp4: $(FATE_AC4_MP4-yes)
+-fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes)
 +# AC-4 MPEG-TS demux tests. The vectors are synthesized inside the test
 +# tool, so this needs no fate-suite samples.
 +FATE_AC4_TSDEMUX-$(call ALLYES, MPEGTS_MUXER MPEGTS_DEMUXER \
@@ -3673,14 +3679,8 @@ index 2b8277f..959a669 100644
 +fate-ac4-ts-demux: CMD = run $(APITESTSDIR)/api-ac4-ts-demux-test$(EXESUF)
 +fate-ac4-ts-demux: CMP = null
 +
-+FATE-yes += $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes) $(FATE_AC4_TSDEMUX-yes)
- 
- fate-ac4-parse: $(FATE_AC4_PARSE-yes)
- fate-ac4-mp4: $(FATE_AC4_MP4-yes)
 +fate-ac4-ts: $(FATE_AC4_TSDEMUX-yes)
- 
--fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes)
-+fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes) $(FATE_AC4_TSDEMUX-yes)
++fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes) $(FATE_AC4_TSDEMUX-yes)
 -- 
 2.56.0
 

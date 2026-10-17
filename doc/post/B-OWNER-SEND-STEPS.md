@@ -9,25 +9,29 @@ background (deltas, stanza parity, suite gate history):
 `doc/post/B-POST-CHECKLIST.md`. Blocker record:
 `doc/post/COMBO-RERUN-7.md` (finding F1, closed by this re-cut).
 
-Pack: `doc/post/series-B-fate.mbox` (2 patches vs `3e6cd5e`,
-19150 B) + `doc/covers/COVER-B.txt` (`[PATCH 0/2]`).
+Pack: `doc/post/series-B-fate.mbox` (2 patches on Series A,
+40394 B) + `doc/covers/COVER-B.txt` (`[PATCH 0/2]`).
+Stack order: A0 -> A -> B -> C -> E -> D (see STACK-DAG.md).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
 ## 0. Preconditions (all true before step 1)
 
-- Series A LANDED upstream (B rides the A tail; all 10 decode
+- Series A LANDED upstream (B rides the A tail; all 11 decode
   legs fail without the Series-A decoder, proven by negative).
-- Series A0 LANDED upstream (the 3 copy/seek-eof legs need the
+- Series A0 LANDED upstream (the 4 copy/seek-eof legs need the
   A0 demuxer fill -- upstream demuxer leaves params unset -- and
   garbage needs the A0 failure shape; proven by negative).
 - Suite-landed gate P1 green: 12/12 `ac4/` files sha-ok per
   `ff-suite-watch/EXPECTED.sha256`, live +24h. Landed
   2026-10-16T22:23:09Z -> clock ends 2026-10-17T22:23:09Z.
-- P2-P5 done by the re-cut lane (preflight): 9 goldens recorded
-  from the real wrapper + suite bytes, B2EXEC-REAL F1/F1b/F2/F3
-  calls folded, combo-7 F1 (stale 714 golden) fixed + re-gated,
-  `make fate-ac4` 14/14 + gate-split 14/14 green, full `make fate`
-  3054 green (fate-source fixed via A-r5), negatives green
+- P2-P5 done by the re-cut lane (preflight + stack re-cut): 11
+  goldens recorded from the real wrapper + suite bytes (frac pair
+  over the pre-existing 29.97 fps clip; skip-bad rename;
+  seek-eof -copyts re-pin), encoder-layout negatives folded from
+  C08 (AC4_ENCODER-guarded, empty until C lands), B2EXEC-REAL
+  F1/F1b/F2/F3 calls folded, combo-7 F1 (stale 714 golden) fixed
+  + re-gated, `make fate-ac4` 16/16 pre-C (18/18 post-C) green,
+  full `make fate` green (fate-source fixed via A-r5), negatives green
   (carried -- comment-only mak delta), mbox re-cut with zero
   PENDING stubs.
 - Cover `COVER-B.txt` Testing block re-verified for literal

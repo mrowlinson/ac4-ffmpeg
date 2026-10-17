@@ -7,8 +7,9 @@ Pre-flight record: `doc/post/C-PREFLIGHT-CHECKLIST.md`. Stack gates:
 (carried, cited in the checklist) + `ff-combo-6-verify`
 `COMBO-RERUN-6.md` (L1 source + goldens).
 
-Pack: `doc/post/series-C-encoder.mbox` (11 patches vs `3e6cd5e`,
-653799 B) + `doc/covers/COVER-C.txt` (`[PATCH 0/11]`).
+Pack: `doc/post/series-C-encoder.mbox` (11 patches on Series B,
+653750 B) + `doc/covers/COVER-C.txt` (`[PATCH 0/11]`).
+Stack order: A0 -> A -> B -> C -> E -> D (see STACK-DAG.md).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
 ## 0. Preconditions (all true at gate time)
@@ -19,10 +20,10 @@ From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
   01/11 carries only the L1 AC4_ completion (table bytes identical).
 - NOTHING sent yet: no SENT marker in repo; all series unsent. No
   suite/sample wait for this series (asynth-only, zero new samples).
-- Sequencing only: this series applies standalone onto pristine
-  `3e6cd5e` (proven `git am` rc=0; in-history it stacks on A0 but
-  shares zero files with it). Post order below is convention, not a
-  dependency.
+- Posts AFTER Series B merges (functional, not convention):
+  04/11 extends B's docs row, 05/11 appends B's `ac4.mak`, and the
+  Makefile/allcodecs hunks are cut against the A-applied tree. Do
+  not post before A0 + A + B land (stack order A0 -> A -> B -> C).
 
 ## 1. Send Series C to ffmpeg-devel (this pack)
 

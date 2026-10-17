@@ -1,12 +1,14 @@
 Subject: [PATCH 0/11] native AC-4 encoder
 
-This series adds a native AC-4 audio encoder (48 kHz, stereo + 5.1).
-No B dependency; B deferred. Bottom-up split: tables -> core ->
-lavc wrapper -> docs -> tests -> SAMPLES-unset -> silent-fold docs
--> negatives gate -> fold8 pin -> DSI wire x2; every patch builds
-standalone (OBJS added under the not-yet-defined CONFIG_AC4_ENCODER
-guard until 03/11 flips the codec live). Revert order is reverse;
-reverting 03/11 deactivates the codec.
+This series adds a native AC-4 audio encoder (48 kHz, stereo + 5.1),
+fourth link of the stack (A0 -> A -> B -> C -> E -> D, plain `git am`
+on 3e6cd5e). Stack parent: B (extends the docs row, appends the FATE
+mak). Bottom-up split: tables -> core -> lavc wrapper -> docs ->
+tests -> SAMPLES-unset -> silent-fold docs -> negatives gate ->
+fold8 pin -> DSI wire x2; every patch builds in sequence (OBJS added
+under the not-yet-defined CONFIG_AC4_ENCODER guard until 03/11 flips
+the codec live). Revert order is reverse; reverting 03/11 deactivates
+the codec.
 
 Patches:
   [PATCH 01/11] avcodec/ac4: add encoder static tables
@@ -19,12 +21,12 @@ Patches:
   [PATCH 02/11] avcodec/ac4: add encoder core + lib adapter
     Engine (enc_core_*), DSP (bits/asf/mdct/loudness), algo modules
     (mc3/jshort/tail59/aspx/acpl), pycompat shim, ac4enc_lib adapter
-    (measured-loudness pass, bake API). Thread-safe (mutex in the
-    lib layer). No lavc surface yet. Re-cut (r3): re-vendored from
-    parent master 9c7fb2e (R3 loud-refusal guards, policy (a);
-    EL-minors; S5FU stereo x2.0 staging; LLONG_MAX iframe guard;
-    same M3 rename, pipeline-validated 33/33) + LGPL headers on
-    all 27 files (X2). Stereo bytes change (x2.0); 5.1 untouched.
+    (measured-loudness pass, bake API). No lavc surface yet. Re-cut
+    (r3): re-vendored from parent master 9c7fb2e (R3 loud-refusal
+    guards, policy (a); EL-minors; S5FU stereo x2.0 staging;
+    LLONG_MAX iframe guard; same M3 rename, pipeline-validated
+    33/33) + LGPL headers on all 27 files (X2). Stereo bytes change
+    (x2.0); 5.1 untouched.
   [PATCH 03/11] avcodec: add native AC-4 encoder
     ff_ac4_encoder wrapper (ENCODE_CB), allcodecs registration,
     configure-probed float CFLAGS (MSVC-safe probe, not raw -march
@@ -38,7 +40,8 @@ Patches:
     audio-table row, v1-limits paragraph.
   [PATCH 05/11] fate: add ac4 encoder tests
     fate-ac4-encode/-51 (md5) + fate-ac4-framecrc/-tail
-    (framecrc) from synth asynth inputs (zero new samples).
+    (framecrc) from synth asynth inputs (zero new samples);
+    appends to the Series B ac4.mak (extends fate-ac4).
     Re-cut (r3): stereo goldens re-pinned for S5FU x2.0 (encode
     md5 0f0e9f60.. -> 86828e84.., same 98193 B; framecrc/tail
     checksums rows 2-7 change, sizes/durations identical). 5.1
@@ -56,10 +59,10 @@ Patches:
     scope for this series.
   [PATCH 08/11] tests/ac4enc: add negatives gate for explicit
   unsupported layouts
-    Committed tests/ac4-neg-check.sh (FATE has no negative slot;
-    run pre-submit): explicit 7.1 + 5.1.4 each fail loud with
-    `not supported by the ac4 encoder', exit 234. Pins S2.2/S3.3.
-    2/2 PASS.
+    Committed tests/ac4-neg-check.sh (run pre-submit until the
+    Series B FATE fold of the same pins supersedes it): explicit
+    7.1 + 5.1.4 each fail loud with `not supported by the ac4
+    encoder', exit 234. Pins S2.2/S3.3. 2/2 PASS.
   [PATCH 09/11] fate/ac4enc: pin 8ch silent fold to 5.1 (fold8)
     fate-ac4-fold8: 8ch asynth in, framecrc golden pins the
     5.1(side) output header, exit 0, deterministic (cmp clean).
@@ -122,21 +125,12 @@ TS 103 190-1 V1.4.1 and TS 103 190-2 V1.3.1 plus black-box behavioral
 observation. No Dolby SDK, reference code, or disassembly was used in
 the submitted code; numeric codebook/coefficient tables are
 value-only transcriptions from the ETSI deliverables (generators and
-source versions cited per table), and all comments are original prose
-referencing the standards by table/clause number only. The CLI-parity
-layer that reproduces the vendor tool's help/diagnostic text
-byte-exact is intentionally excluded from this submission. Note AC-4
-is covered by Dolby patents; this submission addresses copyright-clean
-code only and implementers/distributors should consider patent
-licensing.
-
-Branch state (draft, unposted): ac4/C-encoder-split-r5@fd578ca
-over baseline 3e6cd5e (11 commits, 0 merges, 11/11 owner authors:
-6c07969/065c5e5/2cd9378/bd7a122/1985788/c8c74e1/
-1f76f88/1ef16bd/6a4733d/383a1e9/fd578ca). Re-cut of r4
-(1ccd10a): 01/11 AC4_ completion only, 02/11..11/11 bytes
-identical to r4; ASCII-only, sign-offs on all 11, ordered dates.
-Stereo md5 86828e84.. (98193 B), 5.1 md5 53a44aca..;
-#extradata stereo 0xb7a30a0b, fold8 0xbafa0ae9.
+source versions cited per table), and comments are original prose (a
+scrub pass is folding stray internal pointers to table/clause
+citations). The CLI-parity layer that reproduces the vendor tool's
+help/diagnostic text byte-exact is intentionally excluded from this
+submission. Note AC-4 is covered by Dolby patents; this submission
+addresses copyright-clean code only and implementers/distributors
+should consider patent licensing.
 
 Signed-off-by on each patch: Michael Rowlinson <mrowlinson@gmail.com>

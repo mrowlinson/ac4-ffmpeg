@@ -6,7 +6,7 @@ Final pack, gated 2026-10-16 on master `f827e56` (r3 covers in-tree;
 `FIX-REPORT.md` + `ff-mbp-r4build` `MBP-R4BUILD.md` (carried, cited in
 the checklist).
 
-Pack: `doc/post/series-E-ts.mbox` (2 patches, 11605 B) +
+Pack: `doc/post/series-E-ts.mbox` (2 patches on Series C, 12693 B) +
 `doc/covers/COVER-E.txt` (`[PATCH 0/2]`).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
@@ -19,9 +19,9 @@ From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 - NOTHING sent yet: no SENT marker in repo; all series unsent. No
   suite/sample wait for this series (asynth-only, zero new samples).
 - Posts AFTER Series C merges (functional, not convention): patch 2/2
-  appends to the `tests/fate/ac4.mak` that C's 05/11 creates, and both
-  FATE tests run `-c:a ac4`. Do not post before C lands. Vs A0 the
-  series is fully standalone (zero file overlap, proven below).
+  appends to the `tests/fate/ac4.mak` that B creates and C extends,
+  and both FATE tests run `-c:a ac4`. Do not post before C lands
+  (stack order ... -> B -> C -> E).
 
 ## 1. Send Series E to ffmpeg-devel (this pack)
 

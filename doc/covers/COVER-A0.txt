@@ -1,10 +1,14 @@
 Subject: [PATCH] lavf/ac4: fill codecpar + timestamps from first frame
 
-This is the head patch of the native AC-4 submission stack. It teaches
-the raw .ac4 demuxer to fill codec parameters and packet timestamps
-from the first frame, so that stream copy exits 0 and output is
-seekable with sane pts. Every later series (decoder, docs/FATE,
-encoder, TS mux, MP4) assumes this behavior.
+This is the head patch of the native AC-4 submission stack: a
+six-series stack that applies in one order with plain `git am` on
+master 3e6cd5e: A0 (this patch) -> A (decoder) -> B (decoder
+docs/FATE) -> C (encoder) -> E (TS mux) -> D (parser + MP4). Stack
+parent: none. It teaches the raw .ac4 demuxer to fill codec
+parameters and packet timestamps from the first frame, so that
+stream copy exits 0 and output is seekable with sane pts. Every
+later series (decoder, docs/FATE, encoder, TS mux, MP4) assumes this
+behavior.
 
 What: peek the first frame's TOC, publish sample rate / channel
 layout / bit rate to codecpar, and derive packet duration from the
@@ -27,29 +31,22 @@ FATE: carried on this 1-patch submit (M3): fate-ac4-demux/-51
 (demux.mak, FATE_SAMPLES_DEMUX) + fate-seek-extra-ac4 (seek.mak,
 FATE_SEEK_EXTRA) with 3 refs. Needs ac4/clip-stereo.ac4 +
 ac4/clip-51-real.ac4 live in fate-suite before post; samples mail
-(ff-samples-pack/REQUEST.txt) still UNSENT (owner name filled,
-send pending). Series B (B2) still gated on this patch.
-M3 local pins (ff-A0-M3-local/, no suite samples): 8/10 review
-sub-items pinned by a 58/58-gate battery over synth vectors
-(bit-mutations of a local c-ac4enc sine clip): trunc/bad-sync/
-fri-14-15/bv-0-1-3/multi-pres negatives exit 234 (EINVAL),
-fri-5/6/10/11/12 positives exact pts/dur, B1-NOPTS unvisited
-seek via a byte-seek driver. SUITE-REQUIRED: fri-0-4/7-9
-positives (one first-frame TOC with real mult-info per row
-family: 2-bit rows 2-4, 1-bit rows 0/1/7/8/9) + trio samples.
-Mechanism: timestamp-seek NOPTS pin infeasible --
-seek_frame_generic forward-scans to target, so only byte seeks
-land unvisited; current seek.mak cannot express that.
+sent and suite live 2026-10-16T22:23:09Z (12/12) -- post at/after
+the +24 h clock end (2026-10-17T22:23:09Z). Series B (B2) still
+gated on this patch.
+
+Open: fri-row positives for rows without real mult-info vectors
+stay suite-gated; timestamp-seek NOPTS pins are infeasible in
+seek.mak (seek_frame_generic forward-scans to target, so only byte
+seeks land unvisited).
 
 Provenance: independent cleanroom implementation in C, written from
 the published ETSI specifications TS 103 190-1 V1.4.1 and TS 103 190-2
 V1.3.1 plus black-box behavioral observation. No Dolby SDK, reference
-code, or disassembly was used. Comments reference the standards by
-table/clause number only. Note AC-4 is covered by Dolby patents; this
-submission addresses copyright-clean code only and
-implementers/distributors should consider patent licensing.
-
-Branch state (draft, unposted): ac4/A0-submit-r2@fc4866b over
-baseline 3e6cd5e (1 commit; ASCII-only comments re-cut of c22b0fe).
+code, or disassembly was used. Comments are original prose (a scrub
+pass is folding stray internal pointers to table/clause citations).
+Note AC-4 is covered by Dolby patents; this submission addresses
+copyright-clean code only and implementers/distributors should
+consider patent licensing.
 
 Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
