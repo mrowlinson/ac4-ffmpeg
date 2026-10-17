@@ -1,4 +1,4 @@
-From 0261fe8b5a275bdca26d8368574e7758e12c005b Mon Sep 17 00:00:00 2001
+From 145af5dda04964215e509a7f418fdaa35ffcf847 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Sat, 17 Oct 2026 03:55:55 -0400
 Subject: [PATCH 1/6] avcodec: add ff_ac4_parser
@@ -22,9 +22,14 @@ N5-consistent, never the internal spf x fps grid; nominal unlocked
 phase on 1001-rate rows), channels (IMS presented counts for
 cm120/121 with pres_ver 2) and a running bit_rate average. Failures
 leave params untouched while the frame still emits. The walk lives in
-the new header-only libavcodec/ac4_toc.h (no Makefile change): one
-walker, one rate table. The raw demuxer converges onto it in a
-follow-up once its goldens can be re-pinned to parser keyflags.
+the shared header-only libavcodec/ac4_toc.h (landed with Series A0;
+no Makefile change): one walker, one rate table. Landing the parser
+refines demuxer keyflags in-stack (A0's need_parsing=HEADERS now
+resolves to this parser instead of PARSE_NONE), so this patch re-pins
+the 7 affected goldens: the B copy/seek refs (copy-stereo, copy-51,
+frac-copy, seek-eof) gain parser keyflags and true -copyts stamps,
+and the A0 demux/seek refs (demux, demux-51, extra-ac4) likewise.
+No suite bytes change.
 
 COMPLETE_FRAMES mode passes bare raw frames through untouched and
 only probes the TOC; it never scans for sync.
@@ -37,15 +42,20 @@ Series D applies stacked).
 
 Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
 ---
- Changelog               |   1 +
- configure               |   1 +
- libavcodec/Makefile     |   1 +
- libavcodec/ac4_parser.c | 420 +++++++++++++++++++++++++
- libavcodec/ac4_toc.h    | 678 ++++++++++++++++++++++++++++++++++++++++
- libavcodec/parsers.c    |   1 +
- 6 files changed, 1102 insertions(+)
+ Changelog                      |   1 +
+ configure                      |   1 +
+ libavcodec/Makefile            |   1 +
+ libavcodec/ac4_parser.c        | 420 +++++++++++++++++++++++++++++++++
+ libavcodec/parsers.c           |   1 +
+ tests/ref/fate/ac4-copy-51     |   2 +-
+ tests/ref/fate/ac4-copy-stereo |   2 +-
+ tests/ref/fate/ac4-demux       |   2 +-
+ tests/ref/fate/ac4-demux-51    |   2 +-
+ tests/ref/fate/ac4-frac-copy   | 232 +++++++++---------
+ tests/ref/fate/ac4-seek-eof    |   3 +-
+ tests/ref/seek/extra-ac4       |  18 +-
+ 12 files changed, 555 insertions(+), 130 deletions(-)
  create mode 100644 libavcodec/ac4_parser.c
- create mode 100644 libavcodec/ac4_toc.h
 
 diff --git a/Changelog b/Changelog
 index be78109..26cf065 100644
@@ -60,10 +70,10 @@ index be78109..26cf065 100644
  - extensively improved AAC encoder
  - APV Vulkan encoder
 diff --git a/configure b/configure
-index cb6b247..5e17825 100755
+index 9c3f59e..572430a 100755
 --- a/configure
 +++ b/configure
-@@ -3888,6 +3888,7 @@ videotoolbox_encoder_deps="videotoolbox VTCompressionSessionPrepareToEncodeFrame
+@@ -3889,6 +3889,7 @@ videotoolbox_encoder_deps="videotoolbox VTCompressionSessionPrepareToEncodeFrame
  
  # demuxers / muxers
  ac3_demuxer_select="ac3_parser"
@@ -72,7 +82,7 @@ index cb6b247..5e17825 100755
  adts_muxer_select="mpeg4audio"
  aiff_muxer_select="iso_media"
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index d560aa6..4e40f7e 100644
+index 2863615..7594947 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
 @@ -1292,6 +1292,7 @@ OBJS-$(CONFIG_AAC_LATM_PARSER)         += latm_parser.o
@@ -509,690 +519,6 @@ index 0000000..320c742
 +    .parse          = ac4_parse,
 +    .close          = ff_parse_close,
 +};
-diff --git a/libavcodec/ac4_toc.h b/libavcodec/ac4_toc.h
-new file mode 100644
-index 0000000..565bdbd
---- /dev/null
-+++ b/libavcodec/ac4_toc.h
-@@ -0,0 +1,678 @@
-+/*
-+ * AC-4 TOC walk for the frame parser (raw demuxer converges later)
-+ * Copyright (c) 2026 Michael Rowlinson
-+ *
-+ * This file is part of FFmpeg.
-+ *
-+ * FFmpeg is free software; you can redistribute it and/or
-+ * modify it under the terms of the GNU Lesser General Public
-+ * License as published by the Free Software Foundation; either
-+ * version 2.1 of the License, or (at your option) any later version.
-+ *
-+ * FFmpeg is distributed in the hope that it will be useful,
-+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
-+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-+ * Lesser General Public License for more details.
-+ *
-+ * You should have received a copy of the GNU Lesser General Public
-+ * License along with FFmpeg; if not, write to the Free Software
-+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
-+ */
-+
-+/**
-+ * @file
-+ * The single AC-4 table-of-contents reader for libavformat/libavcodec.
-+ *
-+ * The frame parser (libavcodec/ac4_parser.c, per-frame keyflags plus
-+ * params) walks the TOC through this header; the raw demuxer
-+ * (libavformat/ac4dec.c) converges onto it in a follow-up, so the two
-+ * can never drift apart. Rates are exact output-domain rationals
-+ * (base sample frequency x sf_mult over the Table E.1 row rate, i.e.
-+ * the N5 decoder output, never the internal spf x fps block grid).
-+ *
-+ * Return-code contract: 0 once the head is fully read (bed_ok reports
-+ * whether the bed walk completed); AVERROR_INVALIDDATA on bit
-+ * exhaustion, which may mean a truncated window; AVERROR_PATCHWELCOME
-+ * for definitively-read unsupported shapes; AVERROR(EINVAL) for
-+ * definitively-read malformed fields. Only INVALIDDATA may retry
-+ * with a wider window.
-+ */
-+
-+#ifndef AVCODEC_AC4_TOC_H
-+#define AVCODEC_AC4_TOC_H
-+
-+#include <stdint.h>
-+
-+#include "libavutil/error.h"
-+#include "libavutil/mathematics.h"
-+
-+#include "get_bits.h"
-+
-+/* Frame-rate rows 0-12 as exact frame rates, num/den fps (Table E.1
-+ * frame_rate). Row 13 is free-running (no fixed rate). */
-+static const int ff_ac4_toc_fps_num[13] = {
-+    24000, 24, 25, 30000, 30, 48000, 48,
-+    50, 60000, 60, 100, 120000, 120,
-+};
-+static const int ff_ac4_toc_fps_den[13] = {
-+    1001, 1, 1, 1001, 1, 1001, 1,
-+    1, 1001, 1, 1, 1001, 1,
-+};
-+
-+/* Exact output samples per frame as num/den (Table E.1 sample_delta;
-+ * row 13 free-runs 2048 x sf_mult). fri is 0-13, fs 0/1, sf 1/2/4. */
-+static inline void ff_ac4_toc_frame_len(int fri, int fs, int sf_mult,
-+                                        int *num, int *den)
-+{
-+    if (fri == 13) {
-+        *num = 2048 * sf_mult;
-+        *den = 1;
-+    } else {
-+        int base = fs ? 48000 : 44100;
-+
-+        *num = base * sf_mult * ff_ac4_toc_fps_den[fri];
-+        *den = ff_ac4_toc_fps_num[fri];
-+    }
-+}
-+
-+/* Nominal output pts (in output samples) of frame number f: absolute
-+ * per-frame rounding, so period sums stay exact and no drift
-+ * accumulates. This is the nominal (unlocked) phase, not the
-+ * sequence_counter-locked Table 70 pattern, so single 1001-row frame
-+ * counts may differ by one sample from a locked decoder on some
-+ * frames of each period. */
-+static inline int64_t ff_ac4_toc_frame_pts(int num, int den, int64_t f)
-+{
-+    return av_rescale(f, num, den);
-+}
-+
-+static inline int ff_ac4_toc_frame_dur(int num, int den, int64_t f)
-+{
-+    return (int) (ff_ac4_toc_frame_pts(num, den, f + 1) -
-+                  ff_ac4_toc_frame_pts(num, den, f));
-+}
-+
-+typedef struct FFAC4TOC {
-+    int head_ok;    /* head parsed and gated */
-+    int bed_ok;     /* bed walk completed */
-+    int ig;         /* b_iframe_global */
-+    int rate;       /* frame_rate_index 0-13 */
-+    int fs;         /* fs_index: 0 = 44.1 kHz base, 1 = 48 kHz base */
-+    int sf_mult;    /* substream sample-rate multiplier 1/2/4 */
-+    int channels;   /* bed channel count (IMS presented, see below) */
-+    int tentative;  /* cm >= 511 tentative 24-channel layout */
-+} FFAC4TOC;
-+
-+typedef struct FFAC4TocReader {
-+    GetBitContext gb;
-+    int err;
-+} FFAC4TocReader;
-+
-+static inline int ff_ac4_toc_get(FFAC4TocReader *r, int n, unsigned *val)
-+{
-+    if (r->err)
-+        return r->err;
-+    if (n < 1 || n > 25 || get_bits_left(&r->gb) < n) {
-+        r->err = AVERROR_INVALIDDATA;
-+        return r->err;
-+    }
-+    *val = get_bits(&r->gb, n);
-+    return 0;
-+}
-+
-+static inline int ff_ac4_toc_skip(FFAC4TocReader *r, int n)
-+{
-+    unsigned val;
-+
-+    if (r->err)
-+        return r->err;
-+    if (n < 0) {
-+        r->err = AVERROR(EINVAL);
-+        return r->err;
-+    }
-+    while (n > 0) {
-+        int k = n > 25 ? 25 : n;
-+
-+        if (ff_ac4_toc_get(r, k, &val) < 0)
-+            return r->err;
-+        n -= k;
-+    }
-+    return 0;
-+}
-+
-+/* variable_bits(n): n-bit groups plus a more bit; each continuation
-+ * maps value to (value + 1) << n before adding the next group. */
-+static inline int ff_ac4_toc_varbits(FFAC4TocReader *r, int n, unsigned *val)
-+{
-+    unsigned v = 0;
-+
-+    for (int i = 0; i < 8 && !r->err; i++) {
-+        unsigned more;
-+
-+        if (ff_ac4_toc_get(r, n, &more) < 0)
-+            return r->err;
-+        v += more;
-+        if (v > 0xFFFFFF) {
-+            r->err = AVERROR(EINVAL);
-+            return r->err;
-+        }
-+        if (ff_ac4_toc_get(r, 1, &more) < 0)
-+            return r->err;
-+        if (!more) {
-+            *val = v;
-+            return 0;
-+        }
-+        v = (v + 1) << n;
-+    }
-+    if (!r->err)
-+        r->err = AVERROR(EINVAL);
-+    return r->err;
-+}
-+
-+/* presentation_version: count of leading one bits. Versions past 8
-+ * are definitively malformed (9 one-bits already read). */
-+static inline int ff_ac4_toc_unary(FFAC4TocReader *r, unsigned *val)
-+{
-+    unsigned v = 0;
-+
-+    for (;;) {
-+        unsigned b;
-+
-+        if (ff_ac4_toc_get(r, 1, &b) < 0)
-+            return r->err;
-+        if (!b) {
-+            *val = v;
-+            return 0;
-+        }
-+        if (++v > 8) {
-+            r->err = AVERROR(EINVAL);
-+            return r->err;
-+        }
-+    }
-+}
-+
-+static inline int ff_ac4_toc_substream_index(FFAC4TocReader *r)
-+{
-+    unsigned si, t;
-+
-+    if (ff_ac4_toc_get(r, 2, &si) < 0)
-+        return r->err;
-+    if (si == 3 && ff_ac4_toc_varbits(r, 2, &t) < 0)
-+        return r->err;
-+    return 0;
-+}
-+
-+static inline int ff_ac4_toc_emdf(FFAC4TocReader *r)
-+{
-+    unsigned v, k, b_si, lp, ls, t, skip = 0;
-+
-+    if (ff_ac4_toc_get(r, 2, &v) < 0)
-+        return r->err;
-+    if (v == 3 && ff_ac4_toc_varbits(r, 2, &t) < 0)
-+        return r->err;
-+    if (ff_ac4_toc_get(r, 3, &k) < 0)
-+        return r->err;
-+    if (k == 7 && ff_ac4_toc_varbits(r, 3, &t) < 0)
-+        return r->err;
-+    if (ff_ac4_toc_get(r, 1, &b_si) < 0)
-+        return r->err;
-+    if (b_si && ff_ac4_toc_substream_index(r) < 0)
-+        return r->err;
-+    if (ff_ac4_toc_get(r, 2, &lp) < 0 ||
-+        ff_ac4_toc_get(r, 2, &ls) < 0)
-+        return r->err;
-+    if (lp > 0)
-+        skip += 1u << (2 * (lp - 1));
-+    if (ls > 0)
-+        skip += 1u << (2 * (ls - 1));
-+    return ff_ac4_toc_skip(r, skip * 8);
-+}
-+
-+/* frame_rate_multiply_info: bit shape depends on the rate row. The
-+ * factor value only keeps the walk aligned (frame_rate_fractions
-+ * below reads it); nothing params need follows from it. */
-+static inline int ff_ac4_toc_factor(FFAC4TocReader *r, int rate,
-+                                   unsigned *factor)
-+{
-+    unsigned bm, mb;
-+
-+    *factor = 1;
-+    if (rate == 2 || rate == 3 || rate == 4) {
-+        if (ff_ac4_toc_get(r, 1, &bm) < 0)
-+            return r->err;
-+        if (bm) {
-+            if (ff_ac4_toc_get(r, 1, &mb) < 0)
-+                return r->err;
-+            *factor = mb ? 4 : 2;
-+        }
-+    } else if (rate <= 1 || (rate >= 7 && rate <= 9)) {
-+        if (ff_ac4_toc_get(r, 1, &bm) < 0)
-+            return r->err;
-+        if (bm)
-+            *factor = 2;
-+    }
-+    return 0;
-+}
-+
-+static inline int ff_ac4_toc_fractions(FFAC4TocReader *r, int rate,
-+                                      unsigned factor)
-+{
-+    unsigned t;
-+
-+    if (rate >= 5 && rate <= 9 && factor == 1) {
-+        return ff_ac4_toc_get(r, 1, &t);
-+    } else if (rate >= 10 && rate <= 12) {
-+        if (ff_ac4_toc_get(r, 1, &t) < 0)
-+            return r->err;
-+        if (t && ff_ac4_toc_get(r, 1, &t) < 0)
-+            return r->err;
-+    }
-+    return 0;
-+}
-+
-+/* channel_mode prefix walk 1/2/4/7/8/9 bits with the all-ones escape.
-+ * The 7-bit values 126/127 continue into 8 bits, 254/255 into 9; only
-+ * 511 escapes into varbits. Value 510 is terminal but unmapped. */
-+static inline int ff_ac4_toc_channel_mode(FFAC4TocReader *r, unsigned *cm)
-+{
-+    unsigned v, t;
-+
-+    if (ff_ac4_toc_get(r, 1, &v) < 0)
-+        return r->err;
-+    if (!v) {
-+        *cm = 0;
-+        return 0;
-+    }
-+    if (ff_ac4_toc_get(r, 1, &t) < 0)
-+        return r->err;
-+    v = (v << 1) | t;
-+    if (v == 2) {
-+        *cm = 2;
-+        return 0;
-+    }
-+    if (ff_ac4_toc_get(r, 2, &t) < 0)
-+        return r->err;
-+    v = (v << 2) | t;
-+    if (v >= 12 && v <= 14) {
-+        *cm = v;
-+        return 0;
-+    }
-+    if (ff_ac4_toc_get(r, 3, &t) < 0)
-+        return r->err;
-+    v = (v << 3) | t;
-+    if (v < 126 || v > 127) {
-+        *cm = v;
-+        return 0;
-+    }
-+    if (ff_ac4_toc_get(r, 1, &t) < 0)
-+        return r->err;
-+    v = (v << 1) | t;
-+    if (v < 254 || v > 255) {
-+        *cm = v;
-+        return 0;
-+    }
-+    if (ff_ac4_toc_get(r, 1, &t) < 0)
-+        return r->err;
-+    v = (v << 1) | t;
-+    if (v != 511) {
-+        *cm = v;
-+        return 0;
-+    }
-+    if (ff_ac4_toc_varbits(r, 2, &t) < 0)
-+        return r->err;
-+    *cm = v + t;
-+    return 0;
-+}
-+
-+typedef struct FFAC4TocHead {
-+    int bv;      /* bitstream_version */
-+    int fs;      /* fs_index */
-+    int rate;    /* frame_rate_index */
-+    int ig;      /* b_iframe_global */
-+    int n_pres;  /* presentation count */
-+} FFAC4TocHead;
-+
-+/* TOC head through the program-id block. */
-+static inline int ff_ac4_toc_head(FFAC4TocReader *r, FFAC4TocHead *h)
-+{
-+    unsigned bv, t, br;
-+
-+    if (ff_ac4_toc_get(r, 2, &bv) < 0)
-+        return r->err;
-+    if (bv == 3) {
-+        if (ff_ac4_toc_varbits(r, 2, &t) < 0)
-+            return r->err;
-+        bv += t;
-+    }
-+    if (bv > 2) {
-+        r->err = AVERROR_PATCHWELCOME;
-+        return r->err;
-+    }
-+    if (ff_ac4_toc_skip(r, 10) < 0)        /* sequence_counter: ignored */
-+        return r->err;
-+    if (ff_ac4_toc_get(r, 1, &t) < 0)
-+        return r->err;
-+    if (t) {
-+        if (ff_ac4_toc_get(r, 3, &br) < 0)
-+            return r->err;
-+        if (br > 0 && ff_ac4_toc_skip(r, 2) < 0)  /* br_code/reserved */
-+            return r->err;
-+    }
-+    if (ff_ac4_toc_get(r, 1, &t) < 0)
-+        return r->err;
-+    h->fs = t;
-+    if (ff_ac4_toc_get(r, 4, &t) < 0)
-+        return r->err;
-+    if (t >= 14) {
-+        r->err = AVERROR(EINVAL);
-+        return r->err;
-+    }
-+    h->rate = t;
-+    if (ff_ac4_toc_get(r, 1, &t) < 0)
-+        return r->err;
-+    h->ig = t;
-+    if (ff_ac4_toc_get(r, 1, &t) < 0)
-+        return r->err;
-+    if (t) {
-+        h->n_pres = 1;
-+    } else if (ff_ac4_toc_get(r, 1, &t) < 0) {
-+        return r->err;
-+    } else if (t) {
-+        if (ff_ac4_toc_varbits(r, 2, &t) < 0)
-+            return r->err;
-+        if (t + 2 > 64) {
-+            r->err = AVERROR(EINVAL);
-+            return r->err;
-+        }
-+        h->n_pres = t + 2;
-+    } else {
-+        h->n_pres = 0;
-+    }
-+    if (ff_ac4_toc_get(r, 1, &t) < 0)
-+        return r->err;
-+    if (t) {
-+        if (ff_ac4_toc_get(r, 5, &t) < 0)
-+            return r->err;
-+        if (t == 31 && ff_ac4_toc_varbits(r, 3, &t) < 0)
-+            return r->err;
-+    }
-+    h->bv = bv;
-+    if (bv == 2) {
-+        if (ff_ac4_toc_get(r, 1, &t) < 0)
-+            return r->err;
-+        if (t) {
-+            if (ff_ac4_toc_skip(r, 16) < 0)
-+                return r->err;
-+            if (ff_ac4_toc_get(r, 1, &t) < 0)
-+                return r->err;
-+            if (t && ff_ac4_toc_skip(r, 128) < 0)
-+                return r->err;
-+        }
-+    }
-+    return 0;
-+}
-+
-+/* One v1 presentation record. Records version/group for presentation 0
-+ * and skips the rest. Multi-group records bail: resolving them needs
-+ * skip walks with no wire validation. */
-+static inline int ff_ac4_toc_pres_v1(FFAC4TocReader *r,
-+                                    const FFAC4TocHead *h,
-+                                    unsigned *pver_out, unsigned *gi_out)
-+{
-+    unsigned single, pver, t, factor, gi, b_filter, add_emdf, n;
-+
-+    if (ff_ac4_toc_get(r, 1, &single) < 0)
-+        return r->err;
-+    if (!single) {
-+        r->err = AVERROR_PATCHWELCOME;
-+        return r->err;
-+    }
-+    if (ff_ac4_toc_unary(r, &pver) < 0)
-+        return r->err;
-+    if (ff_ac4_toc_skip(r, 3) < 0)         /* md_compat */
-+        return r->err;
-+    if (ff_ac4_toc_get(r, 1, &t) < 0)
-+        return r->err;
-+    if (t && ff_ac4_toc_varbits(r, 2, &t) < 0)
-+        return r->err;
-+    if (ff_ac4_toc_factor(r, h->rate, &factor) < 0)
-+        return r->err;
-+    if (ff_ac4_toc_fractions(r, h->rate, factor) < 0)
-+        return r->err;
-+    if (ff_ac4_toc_emdf(r) < 0)
-+        return r->err;
-+    if (ff_ac4_toc_get(r, 1, &b_filter) < 0)
-+        return r->err;
-+    if (b_filter && ff_ac4_toc_skip(r, 1) < 0)
-+        return r->err;
-+    if (ff_ac4_toc_get(r, 3, &gi) < 0)
-+        return r->err;
-+    if (gi == 7) {
-+        if (ff_ac4_toc_varbits(r, 2, &t) < 0)
-+            return r->err;
-+        gi += t;
-+    }
-+    if (ff_ac4_toc_skip(r, 1) < 0)         /* b_pre_virtualized */
-+        return r->err;
-+    if (ff_ac4_toc_get(r, 1, &add_emdf) < 0)
-+        return r->err;
-+    if (ff_ac4_toc_skip(r, 2) < 0)         /* b_alternative + b_pres_ndot */
-+        return r->err;
-+    if (ff_ac4_toc_substream_index(r) < 0)
-+        return r->err;
-+    if (add_emdf) {
-+        if (ff_ac4_toc_get(r, 2, &n) < 0)
-+            return r->err;
-+        if (!n) {
-+            if (ff_ac4_toc_varbits(r, 2, &t) < 0)
-+                return r->err;
-+            n = t + 4;
-+        }
-+        for (unsigned k = 0; k < n; k++)
-+            if (ff_ac4_toc_emdf(r) < 0)
-+                return r->err;
-+    }
-+    *pver_out = pver;
-+    *gi_out   = gi;
-+    return 0;
-+}
-+
-+/* Bitstream version 2: presentation 0 selects group 0, whose first
-+ * channel-coded element carries the bed mode. A group without a bed
-+ * (AJOC/object only) stops the walk with params untouched. */
-+static inline int ff_ac4_toc_bed_v2(FFAC4TocReader *r,
-+                                   const FFAC4TocHead *h,
-+                                   unsigned *cm_out, unsigned *sf_out,
-+                                   unsigned *pver_out)
-+{
-+    unsigned pver = 0, gi = 0, dummy_p, dummy_g, t;
-+
-+    if (h->n_pres < 1) {
-+        r->err = AVERROR(EINVAL);
-+        return r->err;
-+    }
-+    for (int i = 0; i < h->n_pres; i++) {
-+        if (!i) {
-+            if (ff_ac4_toc_pres_v1(r, h, &pver, &gi) < 0)
-+                return r->err;
-+        } else if (ff_ac4_toc_pres_v1(r, h, &dummy_p, &dummy_g) < 0) {
-+            return r->err;
-+        }
-+    }
-+    if (gi) {
-+        r->err = AVERROR_PATCHWELCOME;
-+        return r->err;
-+    }
-+    /* b_substreams_present + b_hsf_ext */
-+    if (ff_ac4_toc_skip(r, 2) < 0)
-+        return r->err;
-+    if (ff_ac4_toc_get(r, 1, &t) < 0)
-+        return r->err;
-+    if (!t) {
-+        if (ff_ac4_toc_get(r, 2, &t) < 0)
-+            return r->err;
-+        if (t == 3 && ff_ac4_toc_varbits(r, 2, &t) < 0)
-+            return r->err;
-+    }
-+    if (ff_ac4_toc_get(r, 1, &t) < 0)
-+        return r->err;
-+    if (!t) {
-+        r->err = AVERROR_PATCHWELCOME;     /* no bed in this group */
-+        return r->err;
-+    }
-+    if (ff_ac4_toc_channel_mode(r, cm_out) < 0)
-+        return r->err;
-+    if (*cm_out == 252 || *cm_out == 253 ||
-+        *cm_out == 508 || *cm_out == 509)
-+        if (ff_ac4_toc_skip(r, 4) < 0)     /* immersive presence bits */
-+            return r->err;
-+    *sf_out = 1;
-+    if (h->fs) {
-+        if (ff_ac4_toc_get(r, 1, &t) < 0)
-+            return r->err;
-+        if (t) {
-+            if (ff_ac4_toc_get(r, 1, &t) < 0)
-+                return r->err;
-+            *sf_out = t ? 4 : 2;
-+        }
-+    }
-+    *pver_out = pver;
-+    return 0;
-+}
-+
-+/* Bitstream versions 0/1: presentation 0 carries an inline channel
-+ * element, and nothing params need follows it, so later presentations
-+ * need no walk. Zero wire vectors: spec positions, bail-safe. */
-+static inline int ff_ac4_toc_bed_p1(FFAC4TocReader *r,
-+                                   const FFAC4TocHead *h,
-+                                   unsigned *cm_out, unsigned *sf_out,
-+                                   unsigned *pver_out)
-+{
-+    unsigned single, config = 0, pver, t, factor;
-+
-+    if (h->n_pres < 1) {
-+        r->err = AVERROR(EINVAL);
-+        return r->err;
-+    }
-+    if (ff_ac4_toc_get(r, 1, &single) < 0)
-+        return r->err;
-+    if (!single) {
-+        if (ff_ac4_toc_get(r, 3, &config) < 0)
-+            return r->err;
-+        if (config == 7) {
-+            if (ff_ac4_toc_varbits(r, 2, &t) < 0)
-+                return r->err;
-+            config += t;
-+        }
-+        if (config >= 6) {
-+            r->err = AVERROR_PATCHWELCOME;
-+            return r->err;
-+        }
-+    }
-+    if (ff_ac4_toc_unary(r, &pver) < 0)
-+        return r->err;
-+    if (ff_ac4_toc_skip(r, 3) < 0)         /* md_compat */
-+        return r->err;
-+    if (ff_ac4_toc_get(r, 1, &t) < 0)
-+        return r->err;
-+    if (t && ff_ac4_toc_varbits(r, 2, &t) < 0)
-+        return r->err;
-+    if (ff_ac4_toc_factor(r, h->rate, &factor) < 0)
-+        return r->err;
-+    if (ff_ac4_toc_emdf(r) < 0)
-+        return r->err;
-+    if (!single && ff_ac4_toc_skip(r, 1) < 0)  /* b_hsf_ext */
-+        return r->err;
-+    if (ff_ac4_toc_channel_mode(r, cm_out) < 0)
-+        return r->err;
-+    *sf_out = 1;
-+    if (h->fs) {
-+        if (ff_ac4_toc_get(r, 1, &t) < 0)
-+            return r->err;
-+        if (t) {
-+            if (ff_ac4_toc_get(r, 1, &t) < 0)
-+                return r->err;
-+            *sf_out = t ? 4 : 2;
-+        }
-+    }
-+    *pver_out = pver;
-+    return 0;
-+}
-+
-+/* channel_mode value to bed channel count; IMS pres_ver 2 reports the
-+ * presented counts for cm 120/121 (5.1 IMS render / stereo core).
-+ * Returns -1 for the unmapped 510 class. */
-+static inline int ff_ac4_toc_channels(unsigned cm, unsigned pres_ver,
-+                                     int *tentative)
-+{
-+    *tentative = 0;
-+    if (pres_ver == 2 && (cm == 120 || cm == 121))
-+        return cm == 120 ? 6 : 2;
-+    switch (cm) {
-+    case   0: return 1;
-+    case   2: return 2;
-+    case  12: return 3;
-+    case  13: return 5;
-+    case  14: return 6;
-+    case 120:
-+    case 122:
-+    case 124: return 7;
-+    case 121:
-+    case 123:
-+    case 125: return 8;
-+    case 252: return 11;
-+    case 253: return 12;
-+    case 508: return 13;
-+    case 509: return 14;
-+    }
-+    if (cm >= 511) {
-+        *tentative = 1;
-+        return 24;
-+    }
-+    return -1;
-+}
-+
-+static inline int ff_ac4_toc_parse(const uint8_t *raw, int raw_len,
-+                                  FFAC4TOC *toc)
-+{
-+    FFAC4TocReader r;
-+    FFAC4TocHead h;
-+    unsigned cm, sf, pver;
-+    int nch, tentative = 0;
-+
-+    toc->head_ok   = 0;
-+    toc->bed_ok    = 0;
-+    toc->ig        = 0;
-+    toc->rate      = 0;
-+    toc->fs        = 0;
-+    toc->channels  = 0;
-+    toc->sf_mult   = 1;
-+    toc->tentative = 0;
-+    if (raw_len <= 0)
-+        return AVERROR_INVALIDDATA;
-+    if (init_get_bits8(&r.gb, raw, raw_len) < 0)
-+        return AVERROR_INVALIDDATA;
-+    r.err = 0;
-+    if (ff_ac4_toc_head(&r, &h) < 0)
-+        return r.err;
-+    toc->head_ok = 1;
-+    toc->ig      = h.ig;
-+    toc->rate    = h.rate;
-+    toc->fs      = h.fs;
-+    if (h.bv <= 1) {
-+        if (ff_ac4_toc_bed_p1(&r, &h, &cm, &sf, &pver) < 0)
-+            return r.err;
-+    } else if (ff_ac4_toc_bed_v2(&r, &h, &cm, &sf, &pver) < 0) {
-+        return r.err;
-+    }
-+    nch = ff_ac4_toc_channels(cm, pver, &tentative);
-+    if (nch <= 0)
-+        return AVERROR_PATCHWELCOME;
-+    toc->bed_ok    = 1;
-+    toc->channels  = nch;
-+    toc->sf_mult   = sf;
-+    toc->tentative = tentative;
-+    return 0;
-+}
-+
-+#endif /* AVCODEC_AC4_TOC_H */
 diff --git a/libavcodec/parsers.c b/libavcodec/parsers.c
 index 263b606..d205bb6 100644
 --- a/libavcodec/parsers.c
@@ -1205,11 +531,357 @@ index 263b606..d205bb6 100644
  extern const FFCodecParser ff_adx_parser;
  extern const FFCodecParser ff_ahx_parser;
  extern const FFCodecParser ff_amr_parser;
+diff --git a/tests/ref/fate/ac4-copy-51 b/tests/ref/fate/ac4-copy-51
+index c744cba..ef1e58d 100644
+--- a/tests/ref/fate/ac4-copy-51
++++ b/tests/ref/fate/ac4-copy-51
+@@ -5,4 +5,4 @@
+ #channel_layout_name 0: 5.1(side)
+ 0,          0,          0,     2048,      683, 0x9c591a26
+ 0,       2048,       2048,     2048,      682, 0x469a1126
+-0,       4096,       4096,     2048,      683, 0xada5fdc8
++0,       4096,       4096,     2048,      683, 0xada5fdc8, F=0x0
+diff --git a/tests/ref/fate/ac4-copy-stereo b/tests/ref/fate/ac4-copy-stereo
+index 530102b..688e8fe 100644
+--- a/tests/ref/fate/ac4-copy-stereo
++++ b/tests/ref/fate/ac4-copy-stereo
+@@ -5,4 +5,4 @@
+ #channel_layout_name 0: stereo
+ 0,          0,          0,     2048,      342, 0x23081287
+ 0,       2048,       2048,     2048,      341, 0xbad70aae
+-0,       4096,       4096,     2048,      341, 0x27346f7e
++0,       4096,       4096,     2048,      341, 0x27346f7e, F=0x0
+diff --git a/tests/ref/fate/ac4-demux b/tests/ref/fate/ac4-demux
+index 530102b..688e8fe 100644
+--- a/tests/ref/fate/ac4-demux
++++ b/tests/ref/fate/ac4-demux
+@@ -5,4 +5,4 @@
+ #channel_layout_name 0: stereo
+ 0,          0,          0,     2048,      342, 0x23081287
+ 0,       2048,       2048,     2048,      341, 0xbad70aae
+-0,       4096,       4096,     2048,      341, 0x27346f7e
++0,       4096,       4096,     2048,      341, 0x27346f7e, F=0x0
+diff --git a/tests/ref/fate/ac4-demux-51 b/tests/ref/fate/ac4-demux-51
+index c744cba..ef1e58d 100644
+--- a/tests/ref/fate/ac4-demux-51
++++ b/tests/ref/fate/ac4-demux-51
+@@ -5,4 +5,4 @@
+ #channel_layout_name 0: 5.1(side)
+ 0,          0,          0,     2048,      683, 0x9c591a26
+ 0,       2048,       2048,     2048,      682, 0x469a1126
+-0,       4096,       4096,     2048,      683, 0xada5fdc8
++0,       4096,       4096,     2048,      683, 0xada5fdc8, F=0x0
+diff --git a/tests/ref/fate/ac4-frac-copy b/tests/ref/fate/ac4-frac-copy
+index 43a6ee6..5338987 100644
+--- a/tests/ref/fate/ac4-frac-copy
++++ b/tests/ref/fate/ac4-frac-copy
+@@ -4,122 +4,122 @@
+ #sample_rate 0: 48000
+ #channel_layout_name 0: stereo
+ 0,          0,          0,     1602,      348, 0x9b45a720
+-0,       1602,       1602,     1601,      310, 0x9e8e8f67
+-0,       3203,       3203,     1602,      308, 0xea438d4a
+-0,       4805,       4805,     1601,      288, 0x0547886b
+-0,       6406,       6406,     1602,      291, 0x0b2e84fb
+-0,       8008,       8008,     1602,      280, 0x847885c3
+-0,       9610,       9610,     1601,      373, 0x6650b509
+-0,      11211,      11211,     1602,      403, 0xf3e2c9a3
+-0,      12813,      12813,     1601,      259, 0x5d8d76db
+-0,      14414,      14414,     1602,      280, 0x3a178151
+-0,      16016,      16016,     1602,      313, 0x096c90b9
+-0,      17618,      17618,     1601,      258, 0xc0997e8c
+-0,      19219,      19219,     1602,      274, 0xcf57820a
+-0,      20821,      20821,     1601,      239, 0xc3526ac3
+-0,      22422,      22422,     1602,      243, 0x743671b9
+-0,      24024,      24024,     1602,      361, 0xe2fbb174
+-0,      25626,      25626,     1601,      268, 0xf94b7aeb
+-0,      27227,      27227,     1602,      238, 0x574d73cc
+-0,      28829,      28829,     1601,      248, 0x8fc773dd
+-0,      30430,      30430,     1602,      229, 0xc08c6c29
+-0,      32032,      32032,     1602,      232, 0x97e66592
+-0,      33634,      33634,     1601,      244, 0x175772fa
+-0,      35235,      35235,     1602,      271, 0x2b8980c9
+-0,      36837,      36837,     1601,      308, 0xc6a18c89
+-0,      38438,      38438,     1602,      244, 0x50327379
+-0,      40040,      40040,     1602,      218, 0x19b76622
+-0,      41642,      41642,     1601,      231, 0x20166bc9
+-0,      43243,      43243,     1602,      236, 0x2b626ce0
+-0,      44845,      44845,     1601,      244, 0x2a3e772b
+-0,      46446,      46446,     1602,      242, 0xb82474b3
++0,       1602,       1602,     1601,      310, 0x9e8e8f67, F=0x0
++0,       3203,       3203,     1602,      308, 0xea438d4a, F=0x0
++0,       4805,       4805,     1601,      288, 0x0547886b, F=0x0
++0,       6406,       6406,     1602,      291, 0x0b2e84fb, F=0x0
++0,       8008,       8008,     1602,      280, 0x847885c3, F=0x0
++0,       9610,       9610,     1601,      373, 0x6650b509, F=0x0
++0,      11211,      11211,     1602,      403, 0xf3e2c9a3, F=0x0
++0,      12813,      12813,     1601,      259, 0x5d8d76db, F=0x0
++0,      14414,      14414,     1602,      280, 0x3a178151, F=0x0
++0,      16016,      16016,     1602,      313, 0x096c90b9, F=0x0
++0,      17618,      17618,     1601,      258, 0xc0997e8c, F=0x0
++0,      19219,      19219,     1602,      274, 0xcf57820a, F=0x0
++0,      20821,      20821,     1601,      239, 0xc3526ac3, F=0x0
++0,      22422,      22422,     1602,      243, 0x743671b9, F=0x0
++0,      24024,      24024,     1602,      361, 0xe2fbb174, F=0x0
++0,      25626,      25626,     1601,      268, 0xf94b7aeb, F=0x0
++0,      27227,      27227,     1602,      238, 0x574d73cc, F=0x0
++0,      28829,      28829,     1601,      248, 0x8fc773dd, F=0x0
++0,      30430,      30430,     1602,      229, 0xc08c6c29, F=0x0
++0,      32032,      32032,     1602,      232, 0x97e66592, F=0x0
++0,      33634,      33634,     1601,      244, 0x175772fa, F=0x0
++0,      35235,      35235,     1602,      271, 0x2b8980c9, F=0x0
++0,      36837,      36837,     1601,      308, 0xc6a18c89, F=0x0
++0,      38438,      38438,     1602,      244, 0x50327379, F=0x0
++0,      40040,      40040,     1602,      218, 0x19b76622, F=0x0
++0,      41642,      41642,     1601,      231, 0x20166bc9, F=0x0
++0,      43243,      43243,     1602,      236, 0x2b626ce0, F=0x0
++0,      44845,      44845,     1601,      244, 0x2a3e772b, F=0x0
++0,      46446,      46446,     1602,      242, 0xb82474b3, F=0x0
+ 0,      48048,      48048,     1602,      297, 0x1cff8ece
+-0,      49650,      49650,     1601,      245, 0x389572a3
+-0,      51251,      51251,     1602,      248, 0xf0717a27
+-0,      52853,      52853,     1601,      242, 0x4f32751a
+-0,      54454,      54454,     1602,      245, 0x7033771b
+-0,      56056,      56056,     1602,      248, 0x2aad7885
+-0,      57658,      57658,     1601,      254, 0xa4597356
+-0,      59259,      59259,     1602,      264, 0x83187508
+-0,      60861,      60861,     1601,      274, 0xe1477a21
+-0,      62462,      62462,     1602,      268, 0x65487645
+-0,      64064,      64064,     1602,      270, 0x55c77f67
+-0,      65666,      65666,     1601,      236, 0xe1396f40
+-0,      67267,      67267,     1602,      281, 0xcb89814a
+-0,      68869,      68869,     1601,      298, 0xaa9985ba
+-0,      70470,      70470,     1602,      283, 0xadb182cb
+-0,      72072,      72072,     1602,      367, 0xea73aea0
+-0,      73674,      73674,     1601,      349, 0x5ccc9a41
+-0,      75275,      75275,     1602,      321, 0x4a7f9691
+-0,      76877,      76877,     1601,      285, 0x7b288cb1
+-0,      78478,      78478,     1602,      288, 0x878f8c54
+-0,      80080,      80080,     1602,      292, 0x9dd88c28
+-0,      81682,      81682,     1601,      302, 0xa3729042
+-0,      83283,      83283,     1602,      293, 0xc5ce8888
+-0,      84885,      84885,     1601,      287, 0x4d4f833a
+-0,      86486,      86486,     1602,      276, 0x80577c26
+-0,      88088,      88088,     1602,      260, 0xfa197d3a
+-0,      89690,      89690,     1601,      286, 0x04448a9a
+-0,      91291,      91291,     1602,      281, 0x65228827
+-0,      92893,      92893,     1601,      280, 0xf9f98500
+-0,      94494,      94494,     1602,      271, 0xe3677fb3
++0,      49650,      49650,     1601,      245, 0x389572a3, F=0x0
++0,      51251,      51251,     1602,      248, 0xf0717a27, F=0x0
++0,      52853,      52853,     1601,      242, 0x4f32751a, F=0x0
++0,      54454,      54454,     1602,      245, 0x7033771b, F=0x0
++0,      56056,      56056,     1602,      248, 0x2aad7885, F=0x0
++0,      57658,      57658,     1601,      254, 0xa4597356, F=0x0
++0,      59259,      59259,     1602,      264, 0x83187508, F=0x0
++0,      60861,      60861,     1601,      274, 0xe1477a21, F=0x0
++0,      62462,      62462,     1602,      268, 0x65487645, F=0x0
++0,      64064,      64064,     1602,      270, 0x55c77f67, F=0x0
++0,      65666,      65666,     1601,      236, 0xe1396f40, F=0x0
++0,      67267,      67267,     1602,      281, 0xcb89814a, F=0x0
++0,      68869,      68869,     1601,      298, 0xaa9985ba, F=0x0
++0,      70470,      70470,     1602,      283, 0xadb182cb, F=0x0
++0,      72072,      72072,     1602,      367, 0xea73aea0, F=0x0
++0,      73674,      73674,     1601,      349, 0x5ccc9a41, F=0x0
++0,      75275,      75275,     1602,      321, 0x4a7f9691, F=0x0
++0,      76877,      76877,     1601,      285, 0x7b288cb1, F=0x0
++0,      78478,      78478,     1602,      288, 0x878f8c54, F=0x0
++0,      80080,      80080,     1602,      292, 0x9dd88c28, F=0x0
++0,      81682,      81682,     1601,      302, 0xa3729042, F=0x0
++0,      83283,      83283,     1602,      293, 0xc5ce8888, F=0x0
++0,      84885,      84885,     1601,      287, 0x4d4f833a, F=0x0
++0,      86486,      86486,     1602,      276, 0x80577c26, F=0x0
++0,      88088,      88088,     1602,      260, 0xfa197d3a, F=0x0
++0,      89690,      89690,     1601,      286, 0x04448a9a, F=0x0
++0,      91291,      91291,     1602,      281, 0x65228827, F=0x0
++0,      92893,      92893,     1601,      280, 0xf9f98500, F=0x0
++0,      94494,      94494,     1602,      271, 0xe3677fb3, F=0x0
+ 0,      96096,      96096,     1602,      349, 0x1a87a8da
+-0,      97698,      97698,     1601,      256, 0xa31184c6
+-0,      99299,      99299,     1602,      298, 0xf3e98c9a
+-0,     100901,     100901,     1601,      267, 0xad8781e9
+-0,     102502,     102502,     1602,      267, 0x1c2080b2
+-0,     104104,     104104,     1602,      265, 0xd4cb7e29
+-0,     105706,     105706,     1601,      256, 0x68237fde
+-0,     107307,     107307,     1602,      266, 0x22c381ee
+-0,     108909,     108909,     1601,      258, 0x6fb47a64
+-0,     110510,     110510,     1602,      253, 0x81027ffb
+-0,     112112,     112112,     1602,      257, 0x45e77d7b
+-0,     113714,     113714,     1601,      249, 0xddd77325
+-0,     115315,     115315,     1602,      235, 0x3fe07087
+-0,     116917,     116917,     1601,      274, 0x28cf7ba4
+-0,     118518,     118518,     1602,      231, 0xb942757e
+-0,     120120,     120120,     1602,      282, 0xe5f989d5
+-0,     121722,     121722,     1601,      226, 0xc6ca71a4
+-0,     123323,     123323,     1602,      267, 0xea9b81f6
+-0,     124925,     124925,     1601,      249, 0x10e17743
+-0,     126526,     126526,     1602,      261, 0xac927b2c
+-0,     128128,     128128,     1602,      234, 0x7903723f
+-0,     129730,     129730,     1601,      262, 0x91087efb
+-0,     131331,     131331,     1602,      261, 0x93867cab
+-0,     132933,     132933,     1601,      250, 0x9c2e75b6
+-0,     134534,     134534,     1602,      261, 0xcbdd794d
+-0,     136136,     136136,     1602,      233, 0xa0f2765e
+-0,     137738,     137738,     1601,      257, 0xc0fb7b5c
+-0,     139339,     139339,     1602,      246, 0x18667711
+-0,     140941,     140941,     1601,      255, 0x0bf2754e
+-0,     142542,     142542,     1602,      267, 0xaf7e7f85
++0,      97698,      97698,     1601,      256, 0xa31184c6, F=0x0
++0,      99299,      99299,     1602,      298, 0xf3e98c9a, F=0x0
++0,     100901,     100901,     1601,      267, 0xad8781e9, F=0x0
++0,     102502,     102502,     1602,      267, 0x1c2080b2, F=0x0
++0,     104104,     104104,     1602,      265, 0xd4cb7e29, F=0x0
++0,     105706,     105706,     1601,      256, 0x68237fde, F=0x0
++0,     107307,     107307,     1602,      266, 0x22c381ee, F=0x0
++0,     108909,     108909,     1601,      258, 0x6fb47a64, F=0x0
++0,     110510,     110510,     1602,      253, 0x81027ffb, F=0x0
++0,     112112,     112112,     1602,      257, 0x45e77d7b, F=0x0
++0,     113714,     113714,     1601,      249, 0xddd77325, F=0x0
++0,     115315,     115315,     1602,      235, 0x3fe07087, F=0x0
++0,     116917,     116917,     1601,      274, 0x28cf7ba4, F=0x0
++0,     118518,     118518,     1602,      231, 0xb942757e, F=0x0
++0,     120120,     120120,     1602,      282, 0xe5f989d5, F=0x0
++0,     121722,     121722,     1601,      226, 0xc6ca71a4, F=0x0
++0,     123323,     123323,     1602,      267, 0xea9b81f6, F=0x0
++0,     124925,     124925,     1601,      249, 0x10e17743, F=0x0
++0,     126526,     126526,     1602,      261, 0xac927b2c, F=0x0
++0,     128128,     128128,     1602,      234, 0x7903723f, F=0x0
++0,     129730,     129730,     1601,      262, 0x91087efb, F=0x0
++0,     131331,     131331,     1602,      261, 0x93867cab, F=0x0
++0,     132933,     132933,     1601,      250, 0x9c2e75b6, F=0x0
++0,     134534,     134534,     1602,      261, 0xcbdd794d, F=0x0
++0,     136136,     136136,     1602,      233, 0xa0f2765e, F=0x0
++0,     137738,     137738,     1601,      257, 0xc0fb7b5c, F=0x0
++0,     139339,     139339,     1602,      246, 0x18667711, F=0x0
++0,     140941,     140941,     1601,      255, 0x0bf2754e, F=0x0
++0,     142542,     142542,     1602,      267, 0xaf7e7f85, F=0x0
+ 0,     144144,     144144,     1602,      280, 0xb1f68a3a
+-0,     145746,     145746,     1601,      293, 0xf28580e8
+-0,     147347,     147347,     1602,      240, 0x70b176db
+-0,     148949,     148949,     1601,      222, 0xb5c86fed
+-0,     150550,     150550,     1602,      256, 0x59277f14
+-0,     152152,     152152,     1602,      240, 0xd9b97907
+-0,     153754,     153754,     1601,      242, 0x1e937040
+-0,     155355,     155355,     1602,      240, 0xbfcf6ffb
+-0,     156957,     156957,     1601,      243, 0xfcad77a8
+-0,     158558,     158558,     1602,      254, 0xaeb18185
+-0,     160160,     160160,     1602,      241, 0x186c769a
+-0,     161762,     161762,     1601,      243, 0x052d7caf
+-0,     163363,     163363,     1602,      263, 0x882d7ea8
+-0,     164965,     164965,     1601,      274, 0xfa98819b
+-0,     166566,     166566,     1602,      260, 0x1fd17fd7
+-0,     168168,     168168,     1602,      280, 0xcb818c18
+-0,     169770,     169770,     1601,      266, 0xf3bf8065
+-0,     171371,     171371,     1602,      243, 0x85f87080
+-0,     172973,     172973,     1601,      255, 0xff1d75fb
+-0,     174574,     174574,     1602,      258, 0x97067f94
+-0,     176176,     176176,     1602,      265, 0x71057e2d
+-0,     177778,     177778,     1601,      265, 0x309c8544
+-0,     179379,     179379,     1602,      244, 0xaecb75a2
+-0,     180981,     180981,     1601,      283, 0x4cf18849
+-0,     182582,     182582,     1602,      238, 0xac4b6da9
+-0,     184184,     184184,     1602,      239, 0x04a17bc8
+-0,     185786,     185786,     1601,      284, 0x5bfb878e
+-0,     187387,     187387,     1602,      243, 0xe572757a
+-0,     188989,     188989,     1601,      246, 0xa8db75b9
+-0,     190590,     190590,     1602,      251, 0x89997c08
++0,     145746,     145746,     1601,      293, 0xf28580e8, F=0x0
++0,     147347,     147347,     1602,      240, 0x70b176db, F=0x0
++0,     148949,     148949,     1601,      222, 0xb5c86fed, F=0x0
++0,     150550,     150550,     1602,      256, 0x59277f14, F=0x0
++0,     152152,     152152,     1602,      240, 0xd9b97907, F=0x0
++0,     153754,     153754,     1601,      242, 0x1e937040, F=0x0
++0,     155355,     155355,     1602,      240, 0xbfcf6ffb, F=0x0
++0,     156957,     156957,     1601,      243, 0xfcad77a8, F=0x0
++0,     158558,     158558,     1602,      254, 0xaeb18185, F=0x0
++0,     160160,     160160,     1602,      241, 0x186c769a, F=0x0
++0,     161762,     161762,     1601,      243, 0x052d7caf, F=0x0
++0,     163363,     163363,     1602,      263, 0x882d7ea8, F=0x0
++0,     164965,     164965,     1601,      274, 0xfa98819b, F=0x0
++0,     166566,     166566,     1602,      260, 0x1fd17fd7, F=0x0
++0,     168168,     168168,     1602,      280, 0xcb818c18, F=0x0
++0,     169770,     169770,     1601,      266, 0xf3bf8065, F=0x0
++0,     171371,     171371,     1602,      243, 0x85f87080, F=0x0
++0,     172973,     172973,     1601,      255, 0xff1d75fb, F=0x0
++0,     174574,     174574,     1602,      258, 0x97067f94, F=0x0
++0,     176176,     176176,     1602,      265, 0x71057e2d, F=0x0
++0,     177778,     177778,     1601,      265, 0x309c8544, F=0x0
++0,     179379,     179379,     1602,      244, 0xaecb75a2, F=0x0
++0,     180981,     180981,     1601,      283, 0x4cf18849, F=0x0
++0,     182582,     182582,     1602,      238, 0xac4b6da9, F=0x0
++0,     184184,     184184,     1602,      239, 0x04a17bc8, F=0x0
++0,     185786,     185786,     1601,      284, 0x5bfb878e, F=0x0
++0,     187387,     187387,     1602,      243, 0xe572757a, F=0x0
++0,     188989,     188989,     1601,      246, 0xa8db75b9, F=0x0
++0,     190590,     190590,     1602,      251, 0x89997c08, F=0x0
+diff --git a/tests/ref/fate/ac4-seek-eof b/tests/ref/fate/ac4-seek-eof
+index 8fb34e0..d022b37 100644
+--- a/tests/ref/fate/ac4-seek-eof
++++ b/tests/ref/fate/ac4-seek-eof
+@@ -3,4 +3,5 @@
+ #codec_id 0: ac4
+ #sample_rate 0: 48000
+ #channel_layout_name 0: stereo
+-0,       4096,       4096,     2048,      341, 0x27346f7e
++0,       2048,       2048,     2048,      341, 0xbad70aae
++0,       4096,       4096,     2048,      341, 0x27346f7e, F=0x0
+diff --git a/tests/ref/seek/extra-ac4 b/tests/ref/seek/extra-ac4
+index 08c9d1e..d17c68a 100644
+--- a/tests/ref/seek/extra-ac4
++++ b/tests/ref/seek/extra-ac4
+@@ -2,39 +2,39 @@ ret: 0         st: 0 flags:1 dts: 0.000000 pts: 0.000000 pos:      0 size:   342
+ ret: 0         st:-1 flags:0  ts:-1.000000
+ ret: 0         st: 0 flags:1 dts: 0.000000 pts: 0.000000 pos:      0 size:   342
+ ret: 0         st:-1 flags:1  ts: 1.894167
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret:-1         st: 0 flags:0  ts: 0.788333
+ ret:-1         st: 0 flags:1  ts:-0.317500
+ ret:-1         st:-1 flags:0  ts: 2.576668
+ ret: 0         st:-1 flags:1  ts: 1.470835
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret:-1         st: 0 flags:0  ts: 0.365000
+ ret:-1         st: 0 flags:1  ts:-0.740833
+ ret:-1         st:-1 flags:0  ts: 2.153336
+ ret: 0         st:-1 flags:1  ts: 1.047503
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret: 0         st: 0 flags:0  ts:-0.058333
+ ret: 0         st: 0 flags:1 dts: 0.000000 pts: 0.000000 pos:      0 size:   342
+ ret: 0         st: 0 flags:1  ts: 2.835833
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret:-1         st:-1 flags:0  ts: 1.730004
+ ret: 0         st:-1 flags:1  ts: 0.624171
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret: 0         st: 0 flags:0  ts:-0.481667
+ ret: 0         st: 0 flags:1 dts: 0.000000 pts: 0.000000 pos:      0 size:   342
+ ret: 0         st: 0 flags:1  ts: 2.412500
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret:-1         st:-1 flags:0  ts: 1.306672
+ ret: 0         st:-1 flags:1  ts: 0.200839
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret: 0         st: 0 flags:0  ts:-0.905000
+ ret: 0         st: 0 flags:1 dts: 0.000000 pts: 0.000000 pos:      0 size:   342
+ ret: 0         st: 0 flags:1  ts: 1.989167
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret:-1         st:-1 flags:0  ts: 0.883340
+ ret:-1         st:-1 flags:1  ts:-0.222493
+ ret:-1         st: 0 flags:0  ts: 2.671667
+ ret: 0         st: 0 flags:1  ts: 1.565833
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret:-1         st:-1 flags:0  ts: 0.460008
+ ret:-1         st:-1 flags:1  ts:-0.645825
 -- 
 2.56.0
 
-
-From 43e6a906d1a4ed4ea56216677aa64bb8aaec44e4 Mon Sep 17 00:00:00 2001
+From f5fb90ca461b8e6681066fa0e04191e74ac25da3 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 04:07:01 -0400
 Subject: [PATCH 2/6] avformat/mov: add AC-4 dac4 box support
@@ -1307,8 +979,7 @@ index f7c1292..9f1accb 100644
 -- 
 2.56.0
 
-
-From 162591466fd7dac684a9152e49876bd6c6439eeb Mon Sep 17 00:00:00 2001
+From 1649f86e85a311e151aee52866119102c75f4efa Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Sat, 17 Oct 2026 03:56:24 -0400
 Subject: [PATCH 3/6] avformat/movenc: add AC-4 ac-4/dac4 muxing support
@@ -1555,8 +1226,7 @@ index 2c349ef..3b2021c 100644
 -- 
 2.56.0
 
-
-From 1e9e6fc09f3b167f6318f2c7ab4558224c2347f6 Mon Sep 17 00:00:00 2001
+From 1bbee1568c30a2931ff1a8bdae28789b3e158e90 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Sat, 17 Oct 2026 03:56:31 -0400
 Subject: [PATCH 4/6] fate: add self-contained ac4 parser tests
@@ -2614,10 +2284,10 @@ index 0000000..74d4494
 +    return failures != 0;
 +}
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
-index 04e6e5d..1cf9fb7 100644
+index 81db40d..41330bc 100644
 --- a/tests/fate/ac4.mak
 +++ b/tests/fate/ac4.mak
-@@ -260,4 +260,15 @@ fate-ac4-mpegts-probe: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -v 0 -strict -2 -bi
+@@ -264,4 +264,15 @@ fate-ac4-mpegts-probe: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -v 0 -strict -2 -bi
  
  FATE_FFMPEG += $(FATE_AC4_MPEGTS_PMT-yes)
  FATE_FFPROBE += $(FATE_AC4_MPEGTS_PROBE-yes)
@@ -2637,8 +2307,7 @@ index 04e6e5d..1cf9fb7 100644
 -- 
 2.56.0
 
-
-From 3df7024a0fb31faae08c372f52b182de75c98819 Mon Sep 17 00:00:00 2001
+From 848d0872d8b9f4665b98052059c32e7a4d0fc0ae Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Sat, 17 Oct 2026 03:56:31 -0400
 Subject: [PATCH 5/6] fate: add self-contained ac4 mp4 mux/demux roundtrip test
@@ -3402,10 +3071,10 @@ index 0000000..3bfc0d7
 +    return failures != 0;
 +}
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
-index 1cf9fb7..0b9503a 100644
+index 41330bc..cc882e0 100644
 --- a/tests/fate/ac4.mak
 +++ b/tests/fate/ac4.mak
-@@ -270,5 +270,38 @@ fate-ac4-parser: CMP = null
+@@ -274,5 +274,38 @@ fate-ac4-parser: CMP = null
  
  fate-ac4-parse: $(FATE_AC4_PARSE-yes)
  
@@ -3434,7 +3103,7 @@ index 1cf9fb7..0b9503a 100644
 +	$(M)$(TARGET_EXEC) $(TARGET_PATH)/$< \
 +	-hide_banner -loglevel error -nostdin \
 +	-i $(TARGET_PATH)/tests/data/asynth-48000-2.wav \
-+	-c:a ac4 -ab 128k -loudness_target 0 \
++	-c:a ac4 -strict -2 -ab 128k -loudness_target 0 \
 +	-flags +bitexact -fflags +bitexact -af aresample \
 +	-f ac4 -y $(TARGET_PATH)/$@
 +FATE_AC4_RT-$(call ALLYES, FFMPEG AC4_ENCODER AC4_DECODER AC4_MUXER AC4_DEMUXER \
@@ -3605,8 +3274,7 @@ index 0000000..6ff3e5d
 -- 
 2.56.0
 
-
-From da985fdacdf034d3d4032134c5fe783cd6598beb Mon Sep 17 00:00:00 2001
+From d6ae01a43df76b3c35f57c9693adf44f00b695da Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 09:14:46 -0400
 Subject: [PATCH 6/6] fate: add self-contained ac4 ts demux test
@@ -4359,10 +4027,10 @@ index 0000000..7b6d2c2
 +    return failures != 0;
 +}
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
-index 0b9503a..80e85e6 100644
+index cc882e0..9da45e9 100644
 --- a/tests/fate/ac4.mak
 +++ b/tests/fate/ac4.mak
-@@ -270,7 +270,7 @@ fate-ac4-parser: CMP = null
+@@ -274,7 +274,7 @@ fate-ac4-parser: CMP = null
  
  fate-ac4-parse: $(FATE_AC4_PARSE-yes)
  
@@ -4371,7 +4039,7 @@ index 0b9503a..80e85e6 100644
  # AC-4 MP4 mux/demux roundtrip. Frames and DSI are synthesized inside
  # the test tool, so this needs no fate-suite samples either: bare and
  # Annex G framed inputs mux to MP4 and demux back with byte-exact dac4
-@@ -282,6 +282,16 @@ fate-ac4-mp4-roundtrip: CMP = null
+@@ -286,6 +286,16 @@ fate-ac4-mp4-roundtrip: CMP = null
  
  fate-ac4-mp4: $(FATE_AC4_MP4-yes)
  
@@ -4388,7 +4056,7 @@ index 0b9503a..80e85e6 100644
  # --- T3: encoder->decoder audio roundtrip (priming/skip + DSI end-to-end) ---
  # Synth stereo encodes to raw AC-4 (GEN, no suite samples) and decodes
  # back; the framemd5 golden pins the 4096 first-frame offset, catching
-@@ -304,4 +314,4 @@ fate-ac4-roundtrip: CMD = framemd5 -strict -2 -i "$(SRC)"
+@@ -308,4 +318,4 @@ fate-ac4-roundtrip: CMD = framemd5 -strict -2 -i "$(SRC)"
  
  fate-ac4-rt: $(FATE_AC4_RT-yes)
  

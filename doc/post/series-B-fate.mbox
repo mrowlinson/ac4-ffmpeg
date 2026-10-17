@@ -1,4 +1,4 @@
-From fea159e4461847024148de4bcc09c60610d373cd Mon Sep 17 00:00:00 2001
+From dc4afe233184911e64f42087758a7a632f99ac6b Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Sat, 17 Oct 2026 03:10:00 -0400
 Subject: [PATCH 1/2] doc: AC-4 decoder docs
@@ -72,8 +72,7 @@ index 7032f14..7cf7400 100644
 -- 
 2.56.0
 
-
-From 4e222bdee510c643c8679743358a26c6ad5a51f3 Mon Sep 17 00:00:00 2001
+From 987bbc46a6f005425838297b9629cdf66570e453 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Sat, 17 Oct 2026 03:11:00 -0400
 Subject: [PATCH 2/2] fate: add ac4 decoder tests
@@ -138,7 +137,7 @@ index 97e9d39..46d175a 100644
  include $(SRC_PATH)/tests/fate/als.mak
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
 new file mode 100644
-index 0000000..b31339a
+index 0000000..c2aa001
 --- /dev/null
 +++ b/tests/fate/ac4.mak
 @@ -0,0 +1,173 @@
@@ -285,12 +284,12 @@ index 0000000..b31339a
 +FATE_AC4_ENCNEG-$(call ALLYES, FFMPEG AC4_ENCODER LAVFI_INDEV AEVALSRC_FILTER WAV_DEMUXER PCM_S16LE_DECODER WAV_MUXER PCM_S16LE_ENCODER NULL_MUXER FILE_PROTOCOL) += fate-ac4-enc-neg71 fate-ac4-enc-neg514
 +fate-ac4-enc-neg71: tests/data/fate/ac4-neg71.wav
 +fate-ac4-enc-neg71: SRC = $(TARGET_PATH)/tests/data/fate/ac4-neg71.wav
-+fate-ac4-enc-neg71: CMD = ffmpeg -auto_conversion_filters -i "$(SRC)" -c:a ac4 -channel_layout 7.1 -f null - ; test $$? -eq 234
++fate-ac4-enc-neg71: CMD = ffmpeg -auto_conversion_filters -i "$(SRC)" -c:a ac4 -strict -2 -channel_layout 7.1 -f null - ; test $$? -eq 234
 +fate-ac4-enc-neg71: CMP = grep
 +fate-ac4-enc-neg71: REF = not supported by the ac4 encoder
 +fate-ac4-enc-neg514: tests/data/fate/ac4-neg514.wav
 +fate-ac4-enc-neg514: SRC = $(TARGET_PATH)/tests/data/fate/ac4-neg514.wav
-+fate-ac4-enc-neg514: CMD = ffmpeg -auto_conversion_filters -i "$(SRC)" -c:a ac4 -channel_layout 5.1.4 -f null - ; test $$? -eq 234
++fate-ac4-enc-neg514: CMD = ffmpeg -auto_conversion_filters -i "$(SRC)" -c:a ac4 -strict -2 -channel_layout 5.1.4 -f null - ; test $$? -eq 234
 +fate-ac4-enc-neg514: CMP = grep
 +fate-ac4-enc-neg514: REF = not supported by the ac4 encoder
 +endif
