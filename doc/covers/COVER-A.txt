@@ -2,7 +2,7 @@ Subject: [PATCH 0/2] native AC-4 decoder for raw .ac4 streams
 
 This series adds a native AC-4 audio decoder, wired to the raw .ac4
 demuxer already upstream. Base is master 3e6cd5e; the series applies
-and decodes standalone — no earlier series required for decode. The
+and decodes standalone -- no earlier series required for decode. The
 A0 carriage patch (codecpar + timestamps, posted separately) pairs
 with it for stream copy and seekable pts, but decode-to-PCM is proven
 on pristine master without it.
@@ -44,17 +44,15 @@ which posts only after the samples-request mail is confirmed and
 `make fate-rsync` shows ac4/clip-* (+24 h clock). No suite files
 needed for this series.
 
-N5 note (rate labels, pending re-pin): the wrapper passes lib rate
-labels straight through, INCLUDING the known fri 0-12 grid-rate
-mislabel — the lib reports/stamps the internal-grid rate (e.g. the
-gpac vector: 46034 Hz / spf 1536, 298 frames x 1536 x 6ch x 2 B =
-5492736 bytes) where ETSI TS 103 190 Table E.1/s5.11 wants base_fs x
-sf_mult plus resampled output counts. The fix is lib-owned and still
-pending (ff/dec-n5fix unlanded); current bytes stay pinned as the
-regression tripwire, and ALL fri 0-12 FATE goldens must be
-re-recorded when it lands. Expected wrapper impact then is zero code
-change (passthrough). This series pins no goldens, so nothing here
-goes stale.
+N5 note (rate labels, fix LANDED): the wrapper passes lib rate
+labels straight through, now the FIXED output values -- output rate
+= base_fs x sf_mult on all fri rows, each internal frame mapped to
+Table-70 output counts (e.g. the gpac vector: 48000 Hz with
+1601/1602-sample frames, 298 frames = 5727312 bytes; container and
+lib timing agree at 48 kHz). The wrapper latches spf from the
+get_info max and sizes each frame from its actual count. This series
+pins no goldens; Series B FATE goldens are recorded against these
+fixed labels.
 
 Provenance: this AC-4 decoder is an independent cleanroom
 implementation in C, written from the published ETSI specifications
