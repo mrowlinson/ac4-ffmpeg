@@ -1,4 +1,4 @@
-From 6c07969929528ec0a7d8298d21b86c5fd41bb091 Mon Sep 17 00:00:00 2001
+From e9c5a68038ca0535ce877880d6c3f2eac5a77f9c Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:10:53 -0400
 Subject: [PATCH 01/11] avcodec/ac4: add encoder static tables
@@ -36,7 +36,7 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  create mode 100644 libavcodec/ac4_sfb_offsets.h
 
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index 249b0fe..03baa70 100644
+index 1e8a0c8..1d833f3 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
 @@ -219,6 +219,8 @@ OBJS-$(CONFIG_AC3_FIXED_DECODER)       += ac3dec_fixed.o ac3dec_data.o ac3.o \
@@ -46,8 +46,8 @@ index 249b0fe..03baa70 100644
 +OBJS-$(CONFIG_AC4_ENCODER)             += ac4_huffman_tables.o \
 +                                          ac4_aspx_tables.o ac4_sfb_offsets.o
  OBJS-$(CONFIG_AC3_MF_ENCODER)          += mfenc.o mf_utils.o
- OBJS-$(CONFIG_ACELP_KELVIN_DECODER)    += g729dec.o lsp.o celp_filters.o acelp_filters.o acelp_pitch_delay.o acelp_vectors.o g729postfilter.o
- OBJS-$(CONFIG_AGM_DECODER)             += agm.o jpegquanttables.o
+ # AC-4 decoder: wrapper + vendored dec-lib streaming core (in-tree port,
+ # Q1 closed; re-vendor rule in lavc-dec/README.md). No extra libs/flags.
 diff --git a/libavcodec/ac4_aspx_tables.c b/libavcodec/ac4_aspx_tables.c
 new file mode 100644
 index 0000000..a873c52
@@ -2082,7 +2082,7 @@ index 0000000..4eb179d
 -- 
 2.56.0
 
-From 065c5e5794eb1f84e6ded066851bda3b2f74d4f7 Mon Sep 17 00:00:00 2001
+From 4ae103393ae6fbc0d804ed55290a58c5d7ef9099 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:11:00 -0400
 Subject: [PATCH 02/11] avcodec/ac4: add encoder core + lib adapter
@@ -2161,7 +2161,7 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  create mode 100644 libavcodec/ac4enc_lib.h
 
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index 03baa70..93ea6bf 100644
+index 1d833f3..266056f 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
 @@ -221,6 +221,15 @@ OBJS-$(CONFIG_AC3_ENCODER)             += ac3enc_float.o ac3enc.o ac3tab.o \
@@ -2178,8 +2178,8 @@ index 03baa70..93ea6bf 100644
 +                                          ac4_enc_tail59.o ac4_enc_aspx.o \
 +                                          ac4_enc_acpl.o ac4_pycompat.o
  OBJS-$(CONFIG_AC3_MF_ENCODER)          += mfenc.o mf_utils.o
- OBJS-$(CONFIG_ACELP_KELVIN_DECODER)    += g729dec.o lsp.o celp_filters.o acelp_filters.o acelp_pitch_delay.o acelp_vectors.o g729postfilter.o
- OBJS-$(CONFIG_AGM_DECODER)             += agm.o jpegquanttables.o
+ # AC-4 decoder: wrapper + vendored dec-lib streaming core (in-tree port,
+ # Q1 closed; re-vendor rule in lavc-dec/README.md). No extra libs/flags.
 diff --git a/libavcodec/ac4_asf.c b/libavcodec/ac4_asf.c
 new file mode 100644
 index 0000000..69d0080
@@ -16209,7 +16209,7 @@ index 0000000..4d986a4
 -- 
 2.56.0
 
-From 2cd937865a91cb47000d59e38ad08183a8ad35e5 Mon Sep 17 00:00:00 2001
+From f9f8f4467d22a16a8864ca191a49a1be01fca627 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:11:24 -0400
 Subject: [PATCH 03/11] avcodec: add native AC-4 encoder
@@ -16239,7 +16239,7 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  create mode 100644 libavcodec/ac4enc.h
 
 diff --git a/Changelog b/Changelog
-index 32e7c8b..9df3138 100644
+index 8bff2da..df0e93f 100644
 --- a/Changelog
 +++ b/Changelog
 @@ -2,6 +2,7 @@ Entries are sorted chronologically from oldest to youngest within each release,
@@ -16284,7 +16284,7 @@ index c97ddb1..cb6b247 100755
  LIB_INSTALL_EXTRA_CMD=$LIB_INSTALL_EXTRA_CMD
  EXTRALIBS=$extralibs
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index 93ea6bf..68262db 100644
+index 266056f..ddfb9ed 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
 @@ -230,6 +230,23 @@ OBJS-$(CONFIG_AC4_ENCODER)             += ac4enc_lib.o \
@@ -16309,8 +16309,8 @@ index 93ea6bf..68262db 100644
 +libavcodec/ac4_sfb_offsets.o libavcodec/ac4_pycompat.o libavcodec/ac4enc.o: \
 +    CFLAGS += $(CFLAGS-ac4enc_float)
  OBJS-$(CONFIG_AC3_MF_ENCODER)          += mfenc.o mf_utils.o
- OBJS-$(CONFIG_ACELP_KELVIN_DECODER)    += g729dec.o lsp.o celp_filters.o acelp_filters.o acelp_pitch_delay.o acelp_vectors.o g729postfilter.o
- OBJS-$(CONFIG_AGM_DECODER)             += agm.o jpegquanttables.o
+ # AC-4 decoder: wrapper + vendored dec-lib streaming core (in-tree port,
+ # Q1 closed; re-vendor rule in lavc-dec/README.md). No extra libs/flags.
 diff --git a/libavcodec/ac4enc.c b/libavcodec/ac4enc.c
 new file mode 100644
 index 0000000..995be95
@@ -17040,13 +17040,13 @@ index 0000000..1595199
 +
 +#endif /* AVCODEC_AC4ENC_H */
 diff --git a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
-index c344cb5..48b9777 100644
+index 5921bfb..f23acf7 100644
 --- a/libavcodec/allcodecs.c
 +++ b/libavcodec/allcodecs.c
-@@ -430,6 +430,7 @@ extern const FFCodec ff_ac3_encoder;
- extern const FFCodec ff_ac3_decoder;
+@@ -431,6 +431,7 @@ extern const FFCodec ff_ac3_decoder;
  extern const FFCodec ff_ac3_fixed_encoder;
  extern const FFCodec ff_ac3_fixed_decoder;
+ extern const FFCodec ff_ac4_decoder;
 +extern const FFCodec ff_ac4_encoder;
  extern const FFCodec ff_acelp_kelvin_decoder;
  extern const FFCodec ff_ahx_decoder;
@@ -17067,7 +17067,7 @@ index d0980e2..da6f3a8 100644
 -- 
 2.56.0
 
-From bd7a122e0557e4252175e35878b7474d83dfd072 Mon Sep 17 00:00:00 2001
+From 94134db31ac3848592d85110b632344083e8fd49 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:11:28 -0400
 Subject: [PATCH 04/11] doc: AC-4 encoder docs
@@ -17136,13 +17136,13 @@ index 2c173ac..e8bff86 100644
  @section flac
  
 diff --git a/doc/general_contents.texi b/doc/general_contents.texi
-index 7032f14..8b2d3a2 100644
+index 7cf7400..800b0a7 100644
 --- a/doc/general_contents.texi
 +++ b/doc/general_contents.texi
-@@ -1307,6 +1307,8 @@ following image formats are supported:
- @item AAC+                   @tab  E  @tab  IX
+@@ -1308,6 +1308,8 @@ following image formats are supported:
      @tab encoding supported through external library libfdk-aac
  @item AC-3                   @tab IX  @tab  IX
+ @item AC-4                   @tab     @tab  X
 +@item AC-4                   @tab IX  @tab
 +    @tab native encoder (this patch series); decoding is a separate series
  @item ACELP.KELVIN           @tab     @tab  X
@@ -17151,9 +17151,9 @@ index 7032f14..8b2d3a2 100644
 -- 
 2.56.0
 
-From 19857882d719350700db307aaf6b64ee0b20b94f Mon Sep 17 00:00:00 2001
+From fd0086a6fec4d4a86138a5c8eb4af1e30314587d Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
-Date: Fri, 16 Oct 2026 08:15:39 -0400
+Date: Sat, 17 Oct 2026 03:12:00 -0400
 Subject: [PATCH 05/11] fate: add ac4 encoder tests
 
 4 asynth-only encode tests (no new samples), goldens recorded from
@@ -17162,8 +17162,10 @@ stereo md5 (with the -loudness_target 0 correction -- full-span
 defaults trip the by-design loud refusal on fate's own input),
 5.1 md5, stereo framecrc, and the odd-length tail framecrc (pins
 the m2 last-packet duration 1857). Gates follow the ac3.mak
-precedent (ENCMUX/FRAMECRC deps, FATE_SAMPLES_AVCONV tail);
-tests/Makefile include sits between ac3.mak and adpcm.mak.
+precedent (ENCMUX/FRAMECRC deps, FATE_SAMPLES_AVCONV tail).
+Appends to the Series B tests/fate/ac4.mak (and extends the
+fate-ac4 aggregate) instead of creating it; the tests/Makefile
+include line already landed in Series B.
 
 Re-cut (r3): re-pin the stereo goldens for the S5FU x2.0
 staging (encode md5 0f0e9f60.. -> 86828e84.., same 98193 B;
@@ -17173,33 +17175,22 @@ to r2 (MC untouched, cmp-verified).
 
 Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
 ---
- tests/Makefile              |  1 +
- tests/fate/ac4.mak          | 43 +++++++++++++++++++++++++++++++++++++
+ tests/fate/ac4.mak          | 43 ++++++++++++++++++++++++++++++++++++-
  tests/ref/fate/ac4-framecrc | 13 +++++++++++
  tests/ref/fate/ac4-tail     | 13 +++++++++++
- 4 files changed, 70 insertions(+)
- create mode 100644 tests/fate/ac4.mak
+ 3 files changed, 68 insertions(+), 1 deletion(-)
  create mode 100644 tests/ref/fate/ac4-framecrc
  create mode 100644 tests/ref/fate/ac4-tail
 
-diff --git a/tests/Makefile b/tests/Makefile
-index 97e9d39..46d175a 100644
---- a/tests/Makefile
-+++ b/tests/Makefile
-@@ -154,6 +154,7 @@ include $(SRC_PATH)/tests/fate/seek.mak
- 
- include $(SRC_PATH)/tests/fate/aac.mak
- include $(SRC_PATH)/tests/fate/ac3.mak
-+include $(SRC_PATH)/tests/fate/ac4.mak
- include $(SRC_PATH)/tests/fate/adpcm.mak
- include $(SRC_PATH)/tests/fate/alac.mak
- include $(SRC_PATH)/tests/fate/als.mak
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
-new file mode 100644
-index 0000000..9621056
---- /dev/null
+index 17e49c0..a87c542 100644
+--- a/tests/fate/ac4.mak
 +++ b/tests/fate/ac4.mak
-@@ -0,0 +1,43 @@
+@@ -167,4 +167,45 @@ FATE_AC4_REMUX-$(call REMUX, AC4) += $(FATE_AC4_REMUX)
+ FATE_SAMPLES_AVCONV += $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes)
+ FATE_FFMPEG += $(FATE_AC4_ENCNEG-yes)
+ 
+-fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes)
 +# AC-4 encoder tests. No new samples: inputs are generated asynth only.
 +# Goldens recorded from the real Series C wrapper (r3 re-vendor:
 +# R3 guards + S5FU x2.0 stereo); T4 last-packet duration pins the m2
@@ -17239,10 +17230,9 @@ index 0000000..9621056
 +fate-ac4-tail: tests/data/asynth-48000-2.wav
 +fate-ac4-tail: SRC = $(TARGET_PATH)/tests/data/asynth-48000-2.wav
 +fate-ac4-tail: CMD = framecrc -i $(SRC) -c:a ac4 -ab 128k -af aresample,atrim=end_sample=12097
-+
 +FATE_SAMPLES_AVCONV += $(FATE_AC4_ENC-yes)
 +
-+fate-ac4: $(FATE_AC4_ENC-yes)
++fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes)
 diff --git a/tests/ref/fate/ac4-framecrc b/tests/ref/fate/ac4-framecrc
 new file mode 100644
 index 0000000..ce774f2
@@ -17284,7 +17274,7 @@ index 0000000..f6ebafd
 -- 
 2.56.0
 
-From c8c74e111bc7950985c7267fc0007dfd66e978cb Mon Sep 17 00:00:00 2001
+From 2d03c72399a4e69a41c1aa95528dff9b6ed675e2 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:15:44 -0400
 Subject: [PATCH 06/11] fate: run ac4 encoder tests without SAMPLES
@@ -17300,21 +17290,21 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
-index 9621056..e549c15 100644
+index a87c542..7b1fae5 100644
 --- a/tests/fate/ac4.mak
 +++ b/tests/fate/ac4.mak
-@@ -38,6 +38,6 @@ fate-ac4-tail: tests/data/asynth-48000-2.wav
+@@ -206,6 +206,6 @@ FATE_AC4_ENC-$(call FRAMECRC, WAV, PCM_S16LE, ARESAMPLE_FILTER ATRIM_FILTER AC4_
+ fate-ac4-tail: tests/data/asynth-48000-2.wav
  fate-ac4-tail: SRC = $(TARGET_PATH)/tests/data/asynth-48000-2.wav
  fate-ac4-tail: CMD = framecrc -i $(SRC) -c:a ac4 -ab 128k -af aresample,atrim=end_sample=12097
- 
 -FATE_SAMPLES_AVCONV += $(FATE_AC4_ENC-yes)
 +FATE_FFMPEG += $(FATE_AC4_ENC-yes)
  
- fate-ac4: $(FATE_AC4_ENC-yes)
+ fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes)
 -- 
 2.56.0
 
-From 1f76f88f4611ff4672ffd2bf1ca70631e48a1344 Mon Sep 17 00:00:00 2001
+From 5581cc1cfe2602d4fabe7748011eb0cef50235f6 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:15:44 -0400
 Subject: [PATCH 07/11] doc/ac4enc: note CLI silent auto-fold, explicit-layout
@@ -17350,7 +17340,7 @@ index e8bff86..d5afdd4 100644
 -- 
 2.56.0
 
-From 1ef16bdf3079b7a0f231357a1035220df79015cd Mon Sep 17 00:00:00 2001
+From e561acb933aa78ebb476ace9daa845e9d91d05a5 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:15:44 -0400
 Subject: [PATCH 08/11] tests/ac4enc: add negatives gate for explicit
@@ -17431,7 +17421,7 @@ index 0000000..9fee89f
 -- 
 2.56.0
 
-From 6a4733d7a8b147b4a220b4fccc4cfd9ce0b13caa Mon Sep 17 00:00:00 2001
+From 24eed8f9c7799b429bad1610c4ce9af466acecb5 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:15:44 -0400
 Subject: [PATCH 09/11] fate/ac4enc: pin 8ch silent fold to 5.1 (fold8)
@@ -17448,10 +17438,10 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  create mode 100644 tests/ref/fate/ac4-fold8
 
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
-index e549c15..a77e917 100644
+index 7b1fae5..58c8af2 100644
 --- a/tests/fate/ac4.mak
 +++ b/tests/fate/ac4.mak
-@@ -32,6 +32,16 @@ fate-ac4-framecrc: tests/data/asynth-48000-2.wav
+@@ -201,6 +201,16 @@ fate-ac4-framecrc: tests/data/asynth-48000-2.wav
  fate-ac4-framecrc: SRC = $(TARGET_PATH)/tests/data/asynth-48000-2.wav
  fate-ac4-framecrc: CMD = framecrc -i $(SRC) -c:a ac4 -ab 128k -frames:a 6 -af aresample
  
@@ -17490,7 +17480,7 @@ index 0000000..da08b13
 -- 
 2.56.0
 
-From 383a1e91563efe0408706a7ccd16c13a6fbe2c35 Mon Sep 17 00:00:00 2001
+From 62d391dcebd9b53f9fd07a025e2aadbed50e7ce9 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:16:02 -0400
 Subject: [PATCH 10/11] avcodec/ac4: emit DSI extradata via putbits serializer
@@ -17541,7 +17531,7 @@ Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
  create mode 100644 libavcodec/ac4dsi_putbits.h
 
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index 68262db..247e829 100644
+index ddfb9ed..d560aa6 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
 @@ -231,6 +231,7 @@ OBJS-$(CONFIG_AC4_ENCODER)             += ac4enc_lib.o \
@@ -18449,7 +18439,7 @@ index f6ebafd..24b0eae 100644
 -- 
 2.56.0
 
-From fd578caae2f2608475ee410345b0f44912e6559b Mon Sep 17 00:00:00 2001
+From 70815d2fb184d87e893d41cb3316ea56fb5ce173 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Fri, 16 Oct 2026 08:16:02 -0400
 Subject: [PATCH 11/11] avcodec/ac4enc: drive DSI layout from the lavc-mask

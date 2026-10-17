@@ -6,7 +6,7 @@ Final pack, gated 2026-10-16 on master `2436f47` (r4 covers in-tree;
 `FIX-REPORT.md` + `ff-mbp-r4build` `MBP-R4BUILD.md` (carried, cited in
 the checklist).
 
-Pack: `doc/post/series-D-mp4.mbox` (6 patches, 128977 B) +
+Pack: `doc/post/series-D-mp4.mbox` (6 patches on Series E, 129514 B) +
 `doc/covers/COVER-D.txt` (`[PATCH 0/6]`).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
@@ -21,11 +21,9 @@ From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
   samples).
 - Posts AFTER Series C AND Series E merge (functional, not
   convention): patches 4/6-6/6 append to the `tests/fate/ac4.mak`
-  that C's 05/11 creates and E's 2/2 extends (4/6 after C-alone
-  fails at `ac4.mak:93`), and 5/6-6/6 need C's `tests/api/Makefile`
-  entries. Do not post before C and E land. Vs A0 the series is
-  fully standalone (zero file overlap, proven below); D 1/6-3/6
-  apply clean on pristine `3e6cd5e` with nothing else.
+  that B creates and C/E extend, and 5/6-6/6 need the
+  `tests/api/Makefile` entries. Do not post before C and E land
+  (stack order ... -> C -> E -> D).
 
 ## 1. Send Series D to ffmpeg-devel (this pack)
 

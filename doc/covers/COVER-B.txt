@@ -1,20 +1,28 @@
 Subject: [PATCH 0/2] doc + FATE for the native AC-4 decoder
 
-Docs and tests for the Series A decoder. Posts after A lands (decoder
-option list frozen) and the suite clips are live +24h; rides the A tail.
+Docs and tests for the Series A decoder, third link of the stack
+(A0 -> A -> B -> C -> E -> D, plain `git am` on 3e6cd5e). Stack
+parent: A0 + A (copy/seek goldens need A0 timestamps; docs need the
+frozen A option list). Posts after A0 + A land and the suite clips
+are live +24h; rides the A tail.
 
 Patches:
   [PATCH 1/2] doc: AC-4 decoder docs
     Audio-codecs table row, @section ac4 with the private options
-    (pres_sel, drc, drc_out_ref, drc_boost, drc_cut, de_level) + Changelog
-    entry. No APIchanges entry (no public API change).
+    (pres_sel only; DRC/DE options deleted in Series A as
+    never-working) + Changelog entry. No APIchanges entry (no
+    public API change).
   [PATCH 2/2] fate: add ac4 decoder tests
     framemd5/framecrc decode tests over the uploaded suite clips
-    (stereo, 5.1, ims120, 7.1, stereo51, impulse, crc-bad), input-seek
+    (stereo, 5.1, ims120, 7.1, stereo51, impulse, skip-bad),
+    fractional-spf pair over the pre-existing 29.97 fps suite clip
+    (decode + copy, pinning 1601/1602 counts), encoder-layout
+    negatives (AC4_ENCODER-guarded, empty until Series C), input-seek
     and byte-exact pcm tests vs suite refs, plus probe/copy/seek-eof
     demux tests. Goldens recorded from the real decoder, never
-    overwritten. Mono + codec-4 gap tests stay deferred (no public
-    bytes exist for either).
+    overwritten; they pin current behavior (no independent anchor
+    yet). Mono + codec-4 gap tests stay deferred (no public bytes
+    exist for either).
 
 Why split: docs need only the frozen option list; FATE needs the
 uploaded samples +24h clock plus green decoder runs. Different

@@ -1,10 +1,12 @@
 Subject: [PATCH 0/2] MPEG-TS mux descriptors for AC-4
 
-This series teaches the MPEG-TS muxer to signal AC-4 streams. Posts
-after Series C merges: every test command runs `-c:a ac4` (the
-encoder is the only sample_rate-carrying source; .ts stream-copy
-sources are barred until the Series D parser lands). lavf-only code,
-no C symbols needed.
+This series teaches the MPEG-TS muxer to signal AC-4 streams, fifth
+link of the stack (A0 -> A -> B -> C -> E -> D, plain `git am` on
+3e6cd5e). Stack parent: C (every test command runs `-c:a ac4`;
+appends the C-extended FATE mak). The encoder is the only
+sample_rate-carrying source; .ts stream-copy sources are barred
+until the Series D parser lands. lavf-only code, no C symbols
+needed.
 
 Patches:
   [PATCH 1/2] lavf/mpegtsenc: write AC-4 descriptors
@@ -14,12 +16,14 @@ Patches:
     channel_mode from channel count) in the SYSTEM_B block with
     Opus-pattern overflow guard. Demux untouched (already works:
     REGD/PES auto). v1 omits toc/additional_info (flags say so).
+    Changelog entry.
   [PATCH 2/2] fate: ac4 ts mux tests
     Encoder->ts PMT-section pin (fate-ac4-mpegts-pmt) + probe test
-    (fate-ac4-mpegts-probe) from synth asynth inputs (zero new
-    samples); PMT bytes assert 0x06 + regdesc + 0x7F/0x15, no
-    framecrc stage yet (needs Series D parser).
-    Encoder-sourced only, never .ts stream-copy.
+    (fate-ac4-mpegts-probe, with -strict -2: Series D's parser makes
+    find_stream_info open the experimental decoder) from synth
+    asynth inputs (zero new samples); PMT bytes assert 0x06 +
+    regdesc + 0x7F/0x15, no framecrc stage yet (needs Series D
+    parser). Encoder-sourced only, never .ts stream-copy.
 
 Testing:
   ffmpeg -i tone.wav -c:a ac4 -f mpegts out.ts   (add
@@ -28,8 +32,7 @@ Testing:
   PMT byte-checks; descriptor shape cross-checked vs TSDuck sources
   (tsp/MP4Box binaries unavailable);
   negative: pre-patch binary MUST print "may not be recognized".
-  Round-trip decode framecrc once Series A is in (else deferred,
-  noted at post).
+  Round-trip decode framecrc against the Series A decoder.
 
 FATE: 2/2 only; deterministic re-run (cmp clean).
 
@@ -37,10 +40,5 @@ Provenance: mux wiring only; exercised encoder is the Series C
 independent cleanroom implementation (ETSI TS 103 190-1 V1.4.1 /
 -2 V1.3.1, value-only tables, no Dolby SDK/reference/disassembly,
 CLI-parity layer excluded). AC-4 patent note from Series A applies.
-
-Branch state (draft, unposted): ac4/E-ts-r3@a2485a9
-(2 commits: 5e2d5d5 + a2485a9) over baseline 3e6cd5e; re-cut of
-r2 (98486f6/09a1bd2): sign-offs, 2/2 ASCII, 2/2 appends to the
-Series C tests/fate/ac4.mak instead of creating it.
 
 Signed-off-by on each patch: Michael Rowlinson <mrowlinson@gmail.com>

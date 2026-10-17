@@ -1,17 +1,21 @@
-From f33da8d3cd5a036f9411e29379f996b96787024f Mon Sep 17 00:00:00 2001
+From 460523e62eb543154c02160be44d0d9c6fb023fe Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
-Date: Fri, 16 Oct 2026 14:44:01 -0400
+Date: Sat, 17 Oct 2026 03:10:00 -0400
 Subject: [PATCH 1/2] doc: AC-4 decoder docs
 
 Decoder table row, @section ac4 with the Series A private options,
 Changelog entry. No APIchanges entry (no public API change).
 
+Documents pres_sel only: the DRC/DE options never worked (enabling
+them fails decoder init) and are deleted in Series A, so they have
+no documented surface to reserve.
+
 Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
 ---
  Changelog                 |  1 +
- doc/decoders.texi         | 38 ++++++++++++++++++++++++++++++++++++++
+ doc/decoders.texi         | 17 +++++++++++++++++
  doc/general_contents.texi |  1 +
- 3 files changed, 40 insertions(+)
+ 3 files changed, 19 insertions(+)
 
 diff --git a/Changelog b/Changelog
 index 32e7c8b..8bff2da 100644
@@ -26,10 +30,10 @@ index 32e7c8b..8bff2da 100644
  
  version 9.0:
 diff --git a/doc/decoders.texi b/doc/decoders.texi
-index 5652252..9fef5a3 100644
+index 5652252..5b5a77c 100644
 --- a/doc/decoders.texi
 +++ b/doc/decoders.texi
-@@ -317,6 +317,44 @@ Loud sounds are fully compressed.  Soft sounds are enhanced.
+@@ -317,6 +317,23 @@ Loud sounds are fully compressed.  Soft sounds are enhanced.
  
  @end table
  
@@ -47,27 +51,6 @@ index 5652252..9fef5a3 100644
 +@item -pres_sel @var{value}
 +Presentation select. Default @option{-1} decodes the default
 +presentation; @option{0} to @option{63} select a specific one.
-+
-+@item -drc @var{boolean}
-+Apply dynamic range control. Reserved for future use: enabling it is
-+currently rejected at decoder init. Default off.
-+
-+@item -drc_out_ref @var{value}
-+DRC output reference level, @option{-31} to @option{0}. Takes effect
-+only when DRC is supported. Default @option{-31}.
-+
-+@item -drc_boost @var{value}
-+DRC boost factor in percent, @option{0} to @option{200}. Takes effect
-+only when DRC is supported. Default @option{100}.
-+
-+@item -drc_cut @var{value}
-+DRC cut factor in percent, @option{0} to @option{200}. Takes effect
-+only when DRC is supported. Default @option{100}.
-+
-+@item -de_level @var{value}
-+Dialog enhancement level in dB, @option{-12} to @option{12}.
-+Reserved for future use: nonzero values are currently rejected at
-+decoder init. Default @option{0} (off).
 +
 +@end table
 +
@@ -89,37 +72,54 @@ index 7032f14..7cf7400 100644
 -- 
 2.56.0
 
-
-From b26048f13f9a96ace2acc954a4969aaced26e565 Mon Sep 17 00:00:00 2001
+From 78d4bb92dd077ea22dcfe6447e2e167e4f49445f Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
-Date: Fri, 16 Oct 2026 19:44:10 -0400
+Date: Sat, 17 Oct 2026 03:11:00 -0400
 Subject: [PATCH 2/2] fate: add ac4 decoder tests
 
-framemd5/framecrc decode tests over the uploaded suite clips, plus probe/copy/seek demux tests. Goldens recorded from the real decoder. ims120 pins presentation 1 (default pres hits a v1-fatal mid-stream config change in that clip).
+framemd5/framecrc decode tests over the uploaded suite clips, plus
+probe/copy/seek demux tests. Goldens recorded from the real decoder
+(pinning current behavior; no independent-decoder anchor yet).
+ims120 pins presentation 1 (default pres hits a v1-fatal mid-stream
+config change in that clip; decoder is EXPERIMENTAL).
+
+Fractional-spf pair over the pre-existing suite 29.97 fps clip
+(fate-ac4-frac decode + fate-ac4-frac-copy demux) pins the exact
+1601/1602 output counts and pts alternation. Encoder-layout
+negatives (7.1, 5.1.4: exit 234 + message, AC4_ENCODER-guarded so
+they stay empty until Series C lands) fold in the C08 gate script's
+pins. fate-ac4-crc-bad is fate-ac4-skip-bad: the wrap performs no
+CRC check, so the honest name pins skip-with-warning, not a reject.
+seek-eof carries -copyts so the golden pins the demuxer's true +4096
+clamp stamp instead of the CLI seek-offset -235904.
 
 Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
 ---
  tests/Makefile                 |   1 +
- tests/fate/ac4.mak             | 116 +++++++++++++++++++++++++++++++++
- tests/ref/fate/ac4-51          |  11 ++++
- tests/ref/fate/ac4-714         |  12 ++++
- tests/ref/fate/ac4-copy-51     |   8 +++
- tests/ref/fate/ac4-copy-stereo |   8 +++
- tests/ref/fate/ac4-crc-bad     |  11 ++++
- tests/ref/fate/ac4-delay       |  14 ++++
- tests/ref/fate/ac4-ims120      |  50 ++++++++++++++
+ tests/fate/ac4.mak             | 170 +++++++++++++++++++++++++++++++++
+ tests/ref/fate/ac4-51          |  11 +++
+ tests/ref/fate/ac4-714         |  12 +++
+ tests/ref/fate/ac4-copy-51     |   8 ++
+ tests/ref/fate/ac4-copy-stereo |   8 ++
+ tests/ref/fate/ac4-delay       |  14 +++
+ tests/ref/fate/ac4-frac        | 129 +++++++++++++++++++++++++
+ tests/ref/fate/ac4-frac-copy   | 125 ++++++++++++++++++++++++
+ tests/ref/fate/ac4-ims120      |  50 ++++++++++
  tests/ref/fate/ac4-seek-eof    |   6 ++
- tests/ref/fate/ac4-stereo51    |  11 ++++
- 11 files changed, 248 insertions(+)
+ tests/ref/fate/ac4-skip-bad    |  11 +++
+ tests/ref/fate/ac4-stereo51    |  11 +++
+ 13 files changed, 556 insertions(+)
  create mode 100644 tests/fate/ac4.mak
  create mode 100644 tests/ref/fate/ac4-51
  create mode 100644 tests/ref/fate/ac4-714
  create mode 100644 tests/ref/fate/ac4-copy-51
  create mode 100644 tests/ref/fate/ac4-copy-stereo
- create mode 100644 tests/ref/fate/ac4-crc-bad
  create mode 100644 tests/ref/fate/ac4-delay
+ create mode 100644 tests/ref/fate/ac4-frac
+ create mode 100644 tests/ref/fate/ac4-frac-copy
  create mode 100644 tests/ref/fate/ac4-ims120
  create mode 100644 tests/ref/fate/ac4-seek-eof
+ create mode 100644 tests/ref/fate/ac4-skip-bad
  create mode 100644 tests/ref/fate/ac4-stereo51
 
 diff --git a/tests/Makefile b/tests/Makefile
@@ -136,17 +136,19 @@ index 97e9d39..46d175a 100644
  include $(SRC_PATH)/tests/fate/als.mak
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
 new file mode 100644
-index 0000000..f2e0b2b
+index 0000000..17e49c0
 --- /dev/null
 +++ b/tests/fate/ac4.mak
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,170 @@
 +# AC-4 decoder and demux FATE tests.
 +#
 +# Inputs live in the fate-suite under ac4/ (see the [samples-request]
 +# AC-4 decoder mail for the 12-file set); pcm REF files are suite
 +# files too, while framemd5/framecrc goldens live in tests/ref/fate/.
 +# The Series A decoder is experimental, so every decode CMD carries
-+# -strict -2 (fate/acodec.mak DCA precedent).
++# -strict -2 (fate/acodec.mak DCA precedent). Goldens pin current
++# behavior; no suite test diffs against an independent decoder yet
++# (see COVER-A).
 +
 +# --- decode (pcm): stereo, byte-exact pcm vs suite ref ---
 +FATE_AC4 += fate-ac4-stereo
@@ -176,6 +178,8 @@ index 0000000..f2e0b2b
 +# pres hits a v1-fatal mid-stream config change at packet 17 (clip
 +# carries a distinct 16-packet region); pres 1 skips that region with
 +# warnings and decodes 41 stereo frames (exit 0). Golden pins pres 1.
++# Default-pres fatality is a known v1 gap (decoder is EXPERIMENTAL;
++# drain+reopen rides Series A); this pin covers pres 1 only.
 +
 +# --- decode (framemd5): 7.1 clip, 8ch presented ---
 +FATE_AC4_MD5 += fate-ac4-714
@@ -195,16 +199,25 @@ index 0000000..f2e0b2b
 +# Golden is post-trim bytes; any delay change shifts bytes and fails
 +# (middle packet skipped w/ warning, 5 survivors).
 +
-+# --- decode (framemd5): corrupt packet skipped, survivors decode ---
-+FATE_AC4_MD5 += fate-ac4-crc-bad
-+fate-ac4-crc-bad: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-crc-bad.ac4
++# --- decode (framemd5): fractional-spf clip pins 1601/1602 output ---
++FATE_AC4_MD5 += fate-ac4-frac
++fate-ac4-frac: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/audio_id_2ch_2997fps.ac4
++# audio_id_2ch_2997fps.ac4: pre-existing suite file, 29.97 fps (fri row
++# 3), 120 frames; golden pins the decoder's exact 1601/1602 output
++# counts (N5 rate fix).
++
++# --- decode (framemd5): corrupt packet skipped with warning, survivors decode ---
++FATE_AC4_MD5 += fate-ac4-skip-bad
++fate-ac4-skip-bad: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-crc-bad.ac4
 +# Bad packet skipped with warning, 2 survivors decode (exit 0); bytes
-+# equal the stereo decode (wrap performs no CRC check: AC40 re-frame).
-+# Decode-phase only: the demuxer passes corrupt payloads through.
-+FATE_AC4_MD5 += fate-ac4-crc-bad-note
-+fate-ac4-crc-bad-note: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-crc-bad.ac4
-+fate-ac4-crc-bad-note: CMP = grep
-+fate-ac4-crc-bad-note: REF = skipping bad packet
++# equal the stereo decode. Pins skip-with-warning behavior, NOT a CRC
++# reject: the wrap performs no CRC check (AC40 re-frame) and the demuxer
++# passes corrupt payloads through (Series A verifies CRC or keeps this
++# honest name; see M8).
++FATE_AC4_MD5 += fate-ac4-skip-bad-note
++fate-ac4-skip-bad-note: CMD = framemd5 -strict -2 -i $(TARGET_SAMPLES)/ac4/clip-crc-bad.ac4
++fate-ac4-skip-bad-note: CMP = grep
++fate-ac4-skip-bad-note: REF = skipping bad packet
 +# Stderr companion: asserts the skip warning (astc.mak grep idiom). The
 +# same warning fires on the clean stereo clip (no CRC check); the test
 +# pins the skip, not a reject count.
@@ -225,10 +238,18 @@ index 0000000..f2e0b2b
 +fate-ac4-copy-51: CMD = framecrc -i $(TARGET_SAMPLES)/ac4/clip-51-real.ac4 -c copy
 +# Same framecrc-not-file-bytes rule as copy-stereo.
 +
++# --- demux: fractional copy pins exact 1601/1602 pts alternation ---
++FATE_AC4_REMUX += fate-ac4-frac-copy
++fate-ac4-frac-copy: CMD = framecrc -i $(TARGET_SAMPLES)/ac4/audio_id_2ch_2997fps.ac4 -c copy
++# Same 29.97 fps clip as fate-ac4-frac; golden pins the demuxer's exact
++# rational timestamps (per-frame absolute, no drift).
++
 +# --- demux: past-EOF seek clamps to the last packet ---
 +FATE_AC4_REMUX += fate-ac4-seek-eof
-+fate-ac4-seek-eof: CMD = framecrc -ss 5 -i $(TARGET_SAMPLES)/ac4/clip-stereo.ac4 -c copy
-+# Emits the last packet, exit 0; golden is never empty.
++fate-ac4-seek-eof: CMD = framecrc -ss 5 -i $(TARGET_SAMPLES)/ac4/clip-stereo.ac4 -c copy -copyts
++# -copyts: without it the CLI subtracts the -ss target from every stamp
++# (ts_offset, ffmpeg_demux.c), hiding the demuxer's true +4096 behind a
++# -235904. With it the golden pins the clamp (last packet, true pts).
 +
 +# --- demux: garbage input yields no stream (negative slot) ---
 +FATE_AC4_REMUX += fate-ac4-probe-garbage
@@ -236,6 +257,38 @@ index 0000000..f2e0b2b
 +fate-ac4-probe-garbage: CMP = grep
 +fate-ac4-probe-garbage: REF = Output file does not contain any stream
 +# 1 KiB noise probes by extension; exit 234 (EINVAL) + pinned message.
++
++# --- encode negatives: explicit layouts outside stereo/5.1 fail loud ---
++# (M17: folded from tests/ac4-neg-check.sh, which Series C 08/11 deletes;
++# same lavfi synth inputs, same exit-234 + message pins, now in FATE.)
++# Series B lands before the encoder exists, so the stanzas live behind
++# an ifeq: the group is empty (no tests, no failure) until Series C
++# lands (a bare ALLYES would hard-error on the missing config).
++ifeq ($(CONFIG_AC4_ENCODER),yes)
++AC4_NEG_SRC8 = sin(2*PI*550*t)|sin(2*PI*660*t)|sin(2*PI*770*t)|sin(2*PI*880*t)|sin(2*PI*990*t)|sin(2*PI*1100*t)|sin(2*PI*1210*t)|sin(2*PI*1320*t)
++AC4_NEG_SRC10 = sin(2*PI*550*t)|sin(2*PI*660*t)|sin(2*PI*770*t)|sin(2*PI*880*t)|sin(2*PI*990*t)|sin(2*PI*1100*t)|sin(2*PI*1210*t)|sin(2*PI*1320*t)|sin(2*PI*1430*t)|sin(2*PI*1540*t)
++tests/data/fate/ac4-neg71.wav: TAG = GEN
++tests/data/fate/ac4-neg71.wav: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data/fate
++	$(M)$(TARGET_EXEC) $(TARGET_PATH)/$< -nostdin -f lavfi \
++	-i "aevalsrc=$(AC4_NEG_SRC8):s=48000:d=0.5" \
++	-c:a pcm_s16le -y $(TARGET_PATH)/$@ 2>/dev/null
++tests/data/fate/ac4-neg514.wav: TAG = GEN
++tests/data/fate/ac4-neg514.wav: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data/fate
++	$(M)$(TARGET_EXEC) $(TARGET_PATH)/$< -nostdin -f lavfi \
++	-i "aevalsrc=$(AC4_NEG_SRC10):s=48000:d=0.5" \
++	-c:a pcm_s16le -y $(TARGET_PATH)/$@ 2>/dev/null
++FATE_AC4_ENCNEG-$(call ALLYES, FFMPEG AC4_ENCODER LAVFI_INDEV AEVALSRC_FILTER WAV_DEMUXER PCM_S16LE_DECODER WAV_MUXER PCM_S16LE_ENCODER NULL_MUXER FILE_PROTOCOL) += fate-ac4-enc-neg71 fate-ac4-enc-neg514
++fate-ac4-enc-neg71: tests/data/fate/ac4-neg71.wav
++fate-ac4-enc-neg71: SRC = $(TARGET_PATH)/tests/data/fate/ac4-neg71.wav
++fate-ac4-enc-neg71: CMD = ffmpeg -auto_conversion_filters -i "$(SRC)" -c:a ac4 -channel_layout 7.1 -f null - ; test $$? -eq 234
++fate-ac4-enc-neg71: CMP = grep
++fate-ac4-enc-neg71: REF = not supported by the ac4 encoder
++fate-ac4-enc-neg514: tests/data/fate/ac4-neg514.wav
++fate-ac4-enc-neg514: SRC = $(TARGET_PATH)/tests/data/fate/ac4-neg514.wav
++fate-ac4-enc-neg514: CMD = ffmpeg -auto_conversion_filters -i "$(SRC)" -c:a ac4 -channel_layout 5.1.4 -f null - ; test $$? -eq 234
++fate-ac4-enc-neg514: CMP = grep
++fate-ac4-enc-neg514: REF = not supported by the ac4 encoder
++endif
 +
 +FATE_AC4-$(call PCM, AC4, AC4, ARESAMPLE_FILTER) += $(FATE_AC4)
 +FATE_AC4_MD5-$(call FRAMEMD5, AC4, AC4, ARESAMPLE_FILTER) += $(FATE_AC4_MD5)
@@ -254,8 +307,9 @@ index 0000000..f2e0b2b
 +#   golden is ever pinned before then.
 +
 +FATE_SAMPLES_AVCONV += $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes)
++FATE_FFMPEG += $(FATE_AC4_ENCNEG-yes)
 +
-+fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes)
++fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes)
 diff --git a/tests/ref/fate/ac4-51 b/tests/ref/fate/ac4-51
 new file mode 100644
 index 0000000..4dd59cf
@@ -319,23 +373,6 @@ index 0000000..530102b
 +0,          0,          0,     2048,      342, 0x23081287
 +0,       2048,       2048,     2048,      341, 0xbad70aae
 +0,       4096,       4096,     2048,      341, 0x27346f7e
-diff --git a/tests/ref/fate/ac4-crc-bad b/tests/ref/fate/ac4-crc-bad
-new file mode 100644
-index 0000000..9da7b25
---- /dev/null
-+++ b/tests/ref/fate/ac4-crc-bad
-@@ -0,0 +1,11 @@
-+#format: frame checksums
-+#version: 2
-+#hash: MD5
-+#tb 0: 1/48000
-+#media_type 0: audio
-+#codec_id 0: pcm_s16le
-+#sample_rate 0: 48000
-+#channel_layout_name 0: stereo
-+#stream#, dts,        pts, duration,     size, hash
-+0,          0,          0,     2048,     8192, 8aaebed40a883399539c9c3631e2c7ed
-+0,       4096,       4096,     2048,     8192, 023db1dd1a24286c1f836f66e61ac9ae
 diff --git a/tests/ref/fate/ac4-delay b/tests/ref/fate/ac4-delay
 new file mode 100644
 index 0000000..b45a019
@@ -356,6 +393,272 @@ index 0000000..b45a019
 +0,       6144,       6144,     2048,     8192, 75be8d1a741eff1152a48ee0e2d0bbae
 +0,       8192,       8192,     2048,     8192, 2ac4648fce88bb02528926c91b94ee70
 +0,      10240,      10240,     2048,     8192, 5f393eb9acc1421f86da8566a233e5c0
+diff --git a/tests/ref/fate/ac4-frac b/tests/ref/fate/ac4-frac
+new file mode 100644
+index 0000000..cc2b58b
+--- /dev/null
++++ b/tests/ref/fate/ac4-frac
+@@ -0,0 +1,129 @@
++#format: frame checksums
++#version: 2
++#hash: MD5
++#tb 0: 1/48000
++#media_type 0: audio
++#codec_id 0: pcm_s16le
++#sample_rate 0: 48000
++#channel_layout_name 0: stereo
++#stream#, dts,        pts, duration,     size, hash
++0,          0,          0,     1601,     6404, 99c30ecf209d4d5cb453cb7ab4b05355
++0,       1602,       1602,     1602,     6408, dcedc8bd7806caf9c8106a24bcc5059a
++0,       3203,       3203,     1601,     6404, f56d7c0c5b37db04249b62dc0927ff5c
++0,       4805,       4805,     1602,     6408, 44a3f65760c68012efa1e4d9821b0542
++0,       6406,       6406,     1602,     6408, 6afac2ab5023df3462f87007a0789f9a
++0,       8008,       8008,     1601,     6404, 15cbe70adff8d2f101c7e547ccc9de83
++0,       9610,       9610,     1602,     6408, 77b993f62a969cdff882de3b8dfe796d
++0,      11211,      11211,     1601,     6404, b2c0e408813596481b1d923b3cedad39
++0,      12813,      12813,     1602,     6408, 6b7314828b76deb94f0f921752ab3ed5
++0,      14414,      14414,     1602,     6408, 42fe40d7166d896976aa1d5972063d22
++0,      16016,      16016,     1601,     6404, b0d814d815f5db0cd9e342188bd6665b
++0,      17618,      17618,     1602,     6408, 8a4682cfe5b268f884a1571dee218615
++0,      19219,      19219,     1601,     6404, 71f76bac3a7ad45127f385360b5de5f9
++0,      20821,      20821,     1602,     6408, eaf8c80d5c1cb4ef1bb559c85be71779
++0,      22422,      22422,     1602,     6408, 0a6ed6612a317079111bbbd8edb329a3
++0,      24024,      24024,     1601,     6404, f557ddae39b67312276fde9a7f657ef3
++0,      25626,      25626,     1602,     6408, 106a79b24e1e76050e2019d214da6d6a
++0,      27227,      27227,     1601,     6404, 0b50bd79ea16f167fda2ddb62d455335
++0,      28829,      28829,     1602,     6408, 741c17028acdd10a3dc49b278d1dd673
++0,      30430,      30430,     1602,     6408, d0a9b09dff9fbb2e0cd1dd3bc96ae599
++0,      32032,      32032,     1601,     6404, 7ed745e821a432e7c98c82c263acedf8
++0,      33634,      33634,     1602,     6408, f673be8caaf62300b2481cfccfb42644
++0,      35235,      35235,     1601,     6404, 66b1c59a0624ac4a6b5ce1ab767101ae
++0,      36837,      36837,     1602,     6408, 3216b5909f6582101f0d90dcbdb6eaa9
++0,      38438,      38438,     1602,     6408, 2a50d285a88e6f986cb5f9600b482460
++0,      40040,      40040,     1601,     6404, 272ee9673dd04c069e1ca14db3f6b719
++0,      41642,      41642,     1602,     6408, 7df720cee5468ba1b1f87fd7d2512038
++0,      43243,      43243,     1601,     6404, 3a9b45ca89ab61e36689e08e342e4cb0
++0,      44845,      44845,     1602,     6408, 34ff5b2cbc447d014edbb0b9ee0f583a
++0,      46446,      46446,     1602,     6408, e2cc26b0a80367dd2c58f574f6c686d0
++0,      48048,      48048,     1601,     6404, 1daf9ccd84ba493f9c36f54e89a3c8f1
++0,      49650,      49650,     1602,     6408, b60d3d48d1f0a9e45c433469d6572d75
++0,      51251,      51251,     1601,     6404, dd8b7620b71fc20f3a7fa42b6009c5c4
++0,      52853,      52853,     1602,     6408, d7f7bd5f9106f8c164e54c5c15fbd31e
++0,      54454,      54454,     1602,     6408, 8860c66d57156369f1fc2053554243bf
++0,      56056,      56056,     1601,     6404, 42dd18ef852e885ae14b6e061cb667e0
++0,      57658,      57658,     1602,     6408, dcd2c19af8526f34e76d5f5924ad09b7
++0,      59259,      59259,     1601,     6404, 61c33e7ae5d68047d5a3299500594383
++0,      60861,      60861,     1602,     6408, ad14639118abebff0e388bdffdd74463
++0,      62462,      62462,     1602,     6408, 8a0f9e3321a6fa7bf881aecdaa6f3df4
++0,      64064,      64064,     1601,     6404, 942a02c420ab0e4af09e2d38f41dae13
++0,      65666,      65666,     1602,     6408, d7781c363e8753224f51fb47acee6c4b
++0,      67267,      67267,     1601,     6404, d2706b6d9df735de3722dfac2860438c
++0,      68869,      68869,     1602,     6408, 5e4af64a8d6ec065d7f9da01b13aabea
++0,      70470,      70470,     1602,     6408, 624d05a346eba7650dc24f64484da380
++0,      72072,      72072,     1601,     6404, d9ec9bf86e38450302e23ea839e499f6
++0,      73674,      73674,     1602,     6408, 160a791d211fc5813d5db8b938ea8497
++0,      75275,      75275,     1601,     6404, 325e517ee00aa3e2bbd350da0317800c
++0,      76877,      76877,     1602,     6408, 4dd92bb0a0cb6e3a664a08ab6d69fb95
++0,      78478,      78478,     1602,     6408, c30003aac43cdc529323331c952c78cc
++0,      80080,      80080,     1601,     6404, 1606ec49fdbb4c61113c93de8dcedd7a
++0,      81682,      81682,     1602,     6408, 079d4f3f81b77d4a12ed9500d4fa4f79
++0,      83283,      83283,     1601,     6404, 052ed7096614af64c4a85f624119a665
++0,      84885,      84885,     1602,     6408, 061e2c0be4b8739390cbb42435e60273
++0,      86486,      86486,     1602,     6408, e882577733252d3b0c217fef854fc735
++0,      88088,      88088,     1601,     6404, 9ec694f3748f6c7ef2f10cd88ee6b359
++0,      89690,      89690,     1602,     6408, 9c6dc2498811f81d37ce4c1ac4dabcbb
++0,      91291,      91291,     1601,     6404, 1e7bed12616c78443ffcc53c2c9c74eb
++0,      92893,      92893,     1602,     6408, 3751d2f7cf7ee4055046d0e69853990e
++0,      94494,      94494,     1602,     6408, 6cab7dcc94fcbe0bfd54da5c2475c15a
++0,      96096,      96096,     1601,     6404, 1658c775f120b83f290fdd62b7d57cd7
++0,      97698,      97698,     1602,     6408, 82c8f2ff0f96453e544db3764a57b067
++0,      99299,      99299,     1601,     6404, ad8cfe30eb9fdd951fdbde5fa97b583a
++0,     100901,     100901,     1602,     6408, 303d21e9f2ce127654b7a8cc565ef65b
++0,     102502,     102502,     1602,     6408, a231cedb7373f7f70fa09b22e59f22bb
++0,     104104,     104104,     1601,     6404, 720fc1ac8dd42418dfae39b570bea19f
++0,     105706,     105706,     1602,     6408, 1eb4f147ce11df1becce6229aa6b9ced
++0,     107307,     107307,     1601,     6404, 530f4a90600c580e78a82782093ce787
++0,     108909,     108909,     1602,     6408, 7c199c7e5f7bbd420fe832f3fc35dadb
++0,     110510,     110510,     1602,     6408, 99fd9c19e689313c62f187b9765f40e8
++0,     112112,     112112,     1601,     6404, d985a30a2bd4fea019e33b4dc61cb96b
++0,     113714,     113714,     1602,     6408, 12f7e2f38f4f9f5eb7e888f046dd7615
++0,     115315,     115315,     1601,     6404, 4f303e18a2f1abc8421638c7e597b29c
++0,     116917,     116917,     1602,     6408, 038c432f91c01ccabcfd521174058b8e
++0,     118518,     118518,     1602,     6408, f7d8f7a18fc2101ee9bfa86700fe4ae7
++0,     120120,     120120,     1601,     6404, 1e7001e0be84cf60a29b3b18235ed9b5
++0,     121722,     121722,     1602,     6408, 58a4b5a22e36dc052f55b02a16fe6249
++0,     123323,     123323,     1601,     6404, 27c8580fcb02ee5eabc1530f8879bcdc
++0,     124925,     124925,     1602,     6408, 15bb08943b2abf3b0746629054d2249f
++0,     126526,     126526,     1602,     6408, 2a93620aef8a0ed652141009783145e4
++0,     128128,     128128,     1601,     6404, 8ab9c1f43b1c859fe93976db5ed43313
++0,     129730,     129730,     1602,     6408, 9b02547b6af113e8364be6d8cf3a1448
++0,     131331,     131331,     1601,     6404, caf4f0bbd80e65d4252028b7dcb0c940
++0,     132933,     132933,     1602,     6408, 09fa8fc03968aa75ed72b1b320d24a56
++0,     134534,     134534,     1602,     6408, 980ce770b99a25d46db3d932153653b5
++0,     136136,     136136,     1601,     6404, 3344ca63c52bfe1949b4e7d51cdfaaa0
++0,     137738,     137738,     1602,     6408, de8bf0ba8f259e8a59cf3aee09931716
++0,     139339,     139339,     1601,     6404, 17b18dce511738d28f06333d6d19e428
++0,     140941,     140941,     1602,     6408, 63de840a6320bbd59bc8a6992785b403
++0,     142542,     142542,     1602,     6408, 89f138dd5f6a06d5500355622ed764ab
++0,     144144,     144144,     1601,     6404, e131389fa900ef6126b45c50b69ab0e7
++0,     145746,     145746,     1602,     6408, 6935c55f764a80ec9556ab97c45e388a
++0,     147347,     147347,     1601,     6404, dfeb49cac4b0e4d0eb283ad15b2f37e7
++0,     148949,     148949,     1602,     6408, c67de79fc6eaf68e538853905b258264
++0,     150550,     150550,     1602,     6408, 51f753636fb729af89a9a36dde6d24df
++0,     152152,     152152,     1601,     6404, 968d7ebf03b00920cd2e3a37ca1de674
++0,     153754,     153754,     1602,     6408, 119d6441e3b3ac73731bdd63629501c5
++0,     155355,     155355,     1601,     6404, b5ffcd7ecec16e4fb5e0176ddbaeeb80
++0,     156957,     156957,     1602,     6408, b304028a567fe4cc6b59f38442962a5e
++0,     158558,     158558,     1602,     6408, 9bf98aa4275e16e02bf44b1549c7e04c
++0,     160160,     160160,     1601,     6404, 129e5594b52f64a8cec241e6cb995ffe
++0,     161762,     161762,     1602,     6408, ef516a19c1463fcfcd707abf23f4cf8f
++0,     163363,     163363,     1601,     6404, b37ec58ffee4ac4f231c108a0479c708
++0,     164965,     164965,     1602,     6408, c4f1efb645cf4f9ef430ebe119e8b45b
++0,     166566,     166566,     1602,     6408, 86cb91d62705b7913472f969b4485aeb
++0,     168168,     168168,     1601,     6404, d5f022f2c903f94a45ac8bf2928cd3c2
++0,     169770,     169770,     1602,     6408, bb589c3223b3f955266feb897f425a1a
++0,     171371,     171371,     1601,     6404, 8309840e001a903b90cff7d7777baf7c
++0,     172973,     172973,     1602,     6408, f2d0f5149597d511995fd23b74d29be7
++0,     174574,     174574,     1602,     6408, 40eb8d0f88ebc6916e2c117626540066
++0,     176176,     176176,     1601,     6404, 81e55592d19e85bcd9895fc6b2a9d970
++0,     177778,     177778,     1602,     6408, e8e4020da70b56f8f069c57c5a3603d8
++0,     179379,     179379,     1601,     6404, 5ac9295fa175b4365e86a01972527b7b
++0,     180981,     180981,     1602,     6408, 582b6c4a12d70f49532a93e88472623b
++0,     182582,     182582,     1602,     6408, 68e217f2a6a5c1c2a4177dad0f670bda
++0,     184184,     184184,     1601,     6404, 1db09254575ef5b0ae23c74a5dd73e5e
++0,     185786,     185786,     1602,     6408, a5cac1f915c155d5f993ead810ccb21f
++0,     187387,     187387,     1601,     6404, abf2059abc77dbd6397de3e3bd5bd560
++0,     188989,     188989,     1602,     6408, b361b5af3534346341f46dd857f46522
++0,     190590,     190590,     1602,     6408, 10bb65ed9504d60b0a0114ee3a623d9a
+diff --git a/tests/ref/fate/ac4-frac-copy b/tests/ref/fate/ac4-frac-copy
+new file mode 100644
+index 0000000..43a6ee6
+--- /dev/null
++++ b/tests/ref/fate/ac4-frac-copy
+@@ -0,0 +1,125 @@
++#tb 0: 1/48000
++#media_type 0: audio
++#codec_id 0: ac4
++#sample_rate 0: 48000
++#channel_layout_name 0: stereo
++0,          0,          0,     1602,      348, 0x9b45a720
++0,       1602,       1602,     1601,      310, 0x9e8e8f67
++0,       3203,       3203,     1602,      308, 0xea438d4a
++0,       4805,       4805,     1601,      288, 0x0547886b
++0,       6406,       6406,     1602,      291, 0x0b2e84fb
++0,       8008,       8008,     1602,      280, 0x847885c3
++0,       9610,       9610,     1601,      373, 0x6650b509
++0,      11211,      11211,     1602,      403, 0xf3e2c9a3
++0,      12813,      12813,     1601,      259, 0x5d8d76db
++0,      14414,      14414,     1602,      280, 0x3a178151
++0,      16016,      16016,     1602,      313, 0x096c90b9
++0,      17618,      17618,     1601,      258, 0xc0997e8c
++0,      19219,      19219,     1602,      274, 0xcf57820a
++0,      20821,      20821,     1601,      239, 0xc3526ac3
++0,      22422,      22422,     1602,      243, 0x743671b9
++0,      24024,      24024,     1602,      361, 0xe2fbb174
++0,      25626,      25626,     1601,      268, 0xf94b7aeb
++0,      27227,      27227,     1602,      238, 0x574d73cc
++0,      28829,      28829,     1601,      248, 0x8fc773dd
++0,      30430,      30430,     1602,      229, 0xc08c6c29
++0,      32032,      32032,     1602,      232, 0x97e66592
++0,      33634,      33634,     1601,      244, 0x175772fa
++0,      35235,      35235,     1602,      271, 0x2b8980c9
++0,      36837,      36837,     1601,      308, 0xc6a18c89
++0,      38438,      38438,     1602,      244, 0x50327379
++0,      40040,      40040,     1602,      218, 0x19b76622
++0,      41642,      41642,     1601,      231, 0x20166bc9
++0,      43243,      43243,     1602,      236, 0x2b626ce0
++0,      44845,      44845,     1601,      244, 0x2a3e772b
++0,      46446,      46446,     1602,      242, 0xb82474b3
++0,      48048,      48048,     1602,      297, 0x1cff8ece
++0,      49650,      49650,     1601,      245, 0x389572a3
++0,      51251,      51251,     1602,      248, 0xf0717a27
++0,      52853,      52853,     1601,      242, 0x4f32751a
++0,      54454,      54454,     1602,      245, 0x7033771b
++0,      56056,      56056,     1602,      248, 0x2aad7885
++0,      57658,      57658,     1601,      254, 0xa4597356
++0,      59259,      59259,     1602,      264, 0x83187508
++0,      60861,      60861,     1601,      274, 0xe1477a21
++0,      62462,      62462,     1602,      268, 0x65487645
++0,      64064,      64064,     1602,      270, 0x55c77f67
++0,      65666,      65666,     1601,      236, 0xe1396f40
++0,      67267,      67267,     1602,      281, 0xcb89814a
++0,      68869,      68869,     1601,      298, 0xaa9985ba
++0,      70470,      70470,     1602,      283, 0xadb182cb
++0,      72072,      72072,     1602,      367, 0xea73aea0
++0,      73674,      73674,     1601,      349, 0x5ccc9a41
++0,      75275,      75275,     1602,      321, 0x4a7f9691
++0,      76877,      76877,     1601,      285, 0x7b288cb1
++0,      78478,      78478,     1602,      288, 0x878f8c54
++0,      80080,      80080,     1602,      292, 0x9dd88c28
++0,      81682,      81682,     1601,      302, 0xa3729042
++0,      83283,      83283,     1602,      293, 0xc5ce8888
++0,      84885,      84885,     1601,      287, 0x4d4f833a
++0,      86486,      86486,     1602,      276, 0x80577c26
++0,      88088,      88088,     1602,      260, 0xfa197d3a
++0,      89690,      89690,     1601,      286, 0x04448a9a
++0,      91291,      91291,     1602,      281, 0x65228827
++0,      92893,      92893,     1601,      280, 0xf9f98500
++0,      94494,      94494,     1602,      271, 0xe3677fb3
++0,      96096,      96096,     1602,      349, 0x1a87a8da
++0,      97698,      97698,     1601,      256, 0xa31184c6
++0,      99299,      99299,     1602,      298, 0xf3e98c9a
++0,     100901,     100901,     1601,      267, 0xad8781e9
++0,     102502,     102502,     1602,      267, 0x1c2080b2
++0,     104104,     104104,     1602,      265, 0xd4cb7e29
++0,     105706,     105706,     1601,      256, 0x68237fde
++0,     107307,     107307,     1602,      266, 0x22c381ee
++0,     108909,     108909,     1601,      258, 0x6fb47a64
++0,     110510,     110510,     1602,      253, 0x81027ffb
++0,     112112,     112112,     1602,      257, 0x45e77d7b
++0,     113714,     113714,     1601,      249, 0xddd77325
++0,     115315,     115315,     1602,      235, 0x3fe07087
++0,     116917,     116917,     1601,      274, 0x28cf7ba4
++0,     118518,     118518,     1602,      231, 0xb942757e
++0,     120120,     120120,     1602,      282, 0xe5f989d5
++0,     121722,     121722,     1601,      226, 0xc6ca71a4
++0,     123323,     123323,     1602,      267, 0xea9b81f6
++0,     124925,     124925,     1601,      249, 0x10e17743
++0,     126526,     126526,     1602,      261, 0xac927b2c
++0,     128128,     128128,     1602,      234, 0x7903723f
++0,     129730,     129730,     1601,      262, 0x91087efb
++0,     131331,     131331,     1602,      261, 0x93867cab
++0,     132933,     132933,     1601,      250, 0x9c2e75b6
++0,     134534,     134534,     1602,      261, 0xcbdd794d
++0,     136136,     136136,     1602,      233, 0xa0f2765e
++0,     137738,     137738,     1601,      257, 0xc0fb7b5c
++0,     139339,     139339,     1602,      246, 0x18667711
++0,     140941,     140941,     1601,      255, 0x0bf2754e
++0,     142542,     142542,     1602,      267, 0xaf7e7f85
++0,     144144,     144144,     1602,      280, 0xb1f68a3a
++0,     145746,     145746,     1601,      293, 0xf28580e8
++0,     147347,     147347,     1602,      240, 0x70b176db
++0,     148949,     148949,     1601,      222, 0xb5c86fed
++0,     150550,     150550,     1602,      256, 0x59277f14
++0,     152152,     152152,     1602,      240, 0xd9b97907
++0,     153754,     153754,     1601,      242, 0x1e937040
++0,     155355,     155355,     1602,      240, 0xbfcf6ffb
++0,     156957,     156957,     1601,      243, 0xfcad77a8
++0,     158558,     158558,     1602,      254, 0xaeb18185
++0,     160160,     160160,     1602,      241, 0x186c769a
++0,     161762,     161762,     1601,      243, 0x052d7caf
++0,     163363,     163363,     1602,      263, 0x882d7ea8
++0,     164965,     164965,     1601,      274, 0xfa98819b
++0,     166566,     166566,     1602,      260, 0x1fd17fd7
++0,     168168,     168168,     1602,      280, 0xcb818c18
++0,     169770,     169770,     1601,      266, 0xf3bf8065
++0,     171371,     171371,     1602,      243, 0x85f87080
++0,     172973,     172973,     1601,      255, 0xff1d75fb
++0,     174574,     174574,     1602,      258, 0x97067f94
++0,     176176,     176176,     1602,      265, 0x71057e2d
++0,     177778,     177778,     1601,      265, 0x309c8544
++0,     179379,     179379,     1602,      244, 0xaecb75a2
++0,     180981,     180981,     1601,      283, 0x4cf18849
++0,     182582,     182582,     1602,      238, 0xac4b6da9
++0,     184184,     184184,     1602,      239, 0x04a17bc8
++0,     185786,     185786,     1601,      284, 0x5bfb878e
++0,     187387,     187387,     1602,      243, 0xe572757a
++0,     188989,     188989,     1601,      246, 0xa8db75b9
++0,     190590,     190590,     1602,      251, 0x89997c08
 diff --git a/tests/ref/fate/ac4-ims120 b/tests/ref/fate/ac4-ims120
 new file mode 100644
 index 0000000..3d3d2dc
@@ -414,7 +717,7 @@ index 0000000..3d3d2dc
 +0,     114688,     114688,     2048,     8192, 3a6aea9294694955729a45ecfdaa1c69
 diff --git a/tests/ref/fate/ac4-seek-eof b/tests/ref/fate/ac4-seek-eof
 new file mode 100644
-index 0000000..3695d2d
+index 0000000..8fb34e0
 --- /dev/null
 +++ b/tests/ref/fate/ac4-seek-eof
 @@ -0,0 +1,6 @@
@@ -423,7 +726,24 @@ index 0000000..3695d2d
 +#codec_id 0: ac4
 +#sample_rate 0: 48000
 +#channel_layout_name 0: stereo
-+0,    -235904,    -235904,     2048,      341, 0x27346f7e
++0,       4096,       4096,     2048,      341, 0x27346f7e
+diff --git a/tests/ref/fate/ac4-skip-bad b/tests/ref/fate/ac4-skip-bad
+new file mode 100644
+index 0000000..9da7b25
+--- /dev/null
++++ b/tests/ref/fate/ac4-skip-bad
+@@ -0,0 +1,11 @@
++#format: frame checksums
++#version: 2
++#hash: MD5
++#tb 0: 1/48000
++#media_type 0: audio
++#codec_id 0: pcm_s16le
++#sample_rate 0: 48000
++#channel_layout_name 0: stereo
++#stream#, dts,        pts, duration,     size, hash
++0,          0,          0,     2048,     8192, 8aaebed40a883399539c9c3631e2c7ed
++0,       4096,       4096,     2048,     8192, 023db1dd1a24286c1f836f66e61ac9ae
 diff --git a/tests/ref/fate/ac4-stereo51 b/tests/ref/fate/ac4-stereo51
 new file mode 100644
 index 0000000..c2def7c

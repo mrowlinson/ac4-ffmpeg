@@ -18,11 +18,11 @@ From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
   `format-patch -1 fc4866b`, byte-identical to the gated
   `submit-fix/A0/0001` (`cmp` clean).
 - NOTHING sent yet: no SENT marker in repo; all series unsent.
-- Posts AFTER Series A merges (runbook order A -> A0; sequencing,
-  not a technical dependency — zero file overlap with A, proven)
-  AND after mail-1 +24 h (M3 FATE refs need
+- Head of the stack (stack order A0 -> A -> B -> C -> E -> D):
+  applies on pristine `3e6cd5e`; every later series assumes this
+  behavior. Posts after mail-1 +24 h only (M3 FATE refs need
   `ac4/clip-stereo.ac4` + `ac4/clip-51-real.ac4` live in
-  fate-suite). Do not post before both hold.
+  fate-suite). Do not post before the clock holds.
 
 ## 1. Send Series A0 to ffmpeg-devel (this pack)
 

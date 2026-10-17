@@ -1,6 +1,6 @@
-From 5e2d5d53d09d6944a889f7ab322e722e8a68b2f7 Mon Sep 17 00:00:00 2001
+From bae9b34c91b9ae926b460ae71e20858c688f0b07 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
-Date: Fri, 16 Oct 2026 03:54:32 -0400
+Date: Sat, 17 Oct 2026 03:13:00 -0400
 Subject: [PATCH 1/2] lavf/mpegtsenc: write AC-4 descriptors
 
 AC-4 over MPEG-TS rides as PES private data (ETSI TS 103 190-2 Annex D).
@@ -14,11 +14,26 @@ mode from the channel count: 0 mono / 1 stereo / 2 multi); TOC is
 omitted (optional per EN 300 468 D.6). Unknown channel layouts
 (nb_channels 0) map to stereo, the most common case.
 
+Changelog entry (one policy across the stack: B/C/E/D all carry lines).
+
 Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
 ---
+ Changelog               |  1 +
  libavformat/mpegtsenc.c | 26 ++++++++++++++++++++++++++
- 1 file changed, 26 insertions(+)
+ 2 files changed, 27 insertions(+)
 
+diff --git a/Changelog b/Changelog
+index df0e93f..be78109 100644
+--- a/Changelog
++++ b/Changelog
+@@ -3,6 +3,7 @@ releases are sorted from youngest to oldest.
+ 
+ version <next>:
+ - native AC-4 audio encoder
++- MPEG-TS muxer: AC-4 descriptors
+ - ASTC image encoding and decoding via libastcenc, with .astc and KTX 1.0 muxers and demuxers
+ - extensively improved AAC encoder
+ - APV Vulkan encoder
 diff --git a/libavformat/mpegtsenc.c b/libavformat/mpegtsenc.c
 index 7d04ad0..f48b8f0 100644
 --- a/libavformat/mpegtsenc.c
@@ -73,9 +88,9 @@ index 7d04ad0..f48b8f0 100644
 -- 
 2.56.0
 
-From a2485a9f613699583b82948185953f2fb2707ff9 Mon Sep 17 00:00:00 2001
+From c36401f64f8fbf7116f92961d49fd920c108f811 Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
-Date: Fri, 16 Oct 2026 03:54:39 -0400
+Date: Sat, 17 Oct 2026 03:14:00 -0400
 Subject: [PATCH 2/2] fate: ac4 ts mux tests
 
 Add fate-ac4-mpegts-pmt: encode asynth stereo to MPEG-TS with
@@ -86,22 +101,28 @@ stream_type 0x06, the 'AC-4' registration and the 0x7F/0x15 AC-4
 descriptor without coupling to float-encoder bytes.
 
 Also fate-ac4-mpegts-probe (generated .ts probes back as codec_name=ac4,
-codec_tag_string=AC-4). No new samples; -loudness_target 0 dodges the
-by-design full-span loudness refusal. No framecrc stage yet: demux-side
-sample rate/channels stay unknown until the Series D parser lands.
+codec_tag_string=AC-4; carries -strict -2 because Series D's parser
+makes find_stream_info open the experimental decoder). No new samples;
+-loudness_target 0 dodges the by-design full-span loudness refusal. No
+framecrc stage yet: demux-side sample rate/channels stay unknown until
+the Series D parser lands.
 
-The '[mpegts] frame size not set' noise is Series C's (the encoder never
-sets frame_size); fate runs at loglevel error.
+The GEN step runs at loglevel error: mpegtsenc's default-PCR helper
+calls av_get_audio_frame_duration2(par, 0), and with frame_bytes 0 the
+frame_size fallback cannot fire while AC-4 has no switch case, so it
+warns once and uses 512 (PCR cadence only; the encoder does set
+frame_size 2048). The warning is upstream-generic for caseless codecs,
+not an AC-4 defect.
 
-Rebased onto Series C: appends to the C-created tests/fate/ac4.mak
-(and extends the fate-ac4 aggregate) instead of creating it.
+Appends to the C-extended tests/fate/ac4.mak (after Series B+C) and
+extends the fate-ac4 aggregate instead of creating it.
 
 Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
 ---
  tests/fate/ac4-pmt-section.sh   | 105 ++++++++++++++++++++++++++++++++
- tests/fate/ac4.mak              |  45 +++++++++++++-
+ tests/fate/ac4.mak              |  44 ++++++++++++-
  tests/ref/fate/ac4-mpegts-probe |   4 ++
- 3 files changed, 153 insertions(+), 1 deletion(-)
+ 3 files changed, 152 insertions(+), 1 deletion(-)
  create mode 100755 tests/fate/ac4-pmt-section.sh
  create mode 100644 tests/ref/fate/ac4-mpegts-probe
 
@@ -217,14 +238,14 @@ index 0000000..640cbe2
 +    exit 1
 +}'
 diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
-index a77e917..abdc031 100644
+index 58c8af2..04e6e5d 100644
 --- a/tests/fate/ac4.mak
 +++ b/tests/fate/ac4.mak
-@@ -50,4 +50,47 @@ fate-ac4-tail: CMD = framecrc -i $(SRC) -c:a ac4 -ab 128k -af aresample,atrim=en
- 
+@@ -218,4 +218,46 @@ fate-ac4-tail: SRC = $(TARGET_PATH)/tests/data/asynth-48000-2.wav
+ fate-ac4-tail: CMD = framecrc -i $(SRC) -c:a ac4 -ab 128k -af aresample,atrim=end_sample=12097
  FATE_FFMPEG += $(FATE_AC4_ENC-yes)
  
--fate-ac4: $(FATE_AC4_ENC-yes)
+-fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes)
 +# AC-4 mux tests. No new samples: inputs are generated asynth only.
 +#
 +# fate-ac4-mpegts-pmt: encode asynth stereo to MPEG-TS (-mpegts_flags
@@ -262,13 +283,12 @@ index a77e917..abdc031 100644
 +    WAV_DEMUXER PCM_S16LE_DECODER ARESAMPLE_FILTER FILE_PROTOCOL) += fate-ac4-mpegts-probe
 +fate-ac4-mpegts-probe: tests/data/fate/ac4-mpegts.ts
 +fate-ac4-mpegts-probe: SRC = $(TARGET_PATH)/tests/data/fate/ac4-mpegts.ts
-+fate-ac4-mpegts-probe: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -v 0 -bitexact \
++fate-ac4-mpegts-probe: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -v 0 -strict -2 -bitexact \
 +    -show_entries stream=codec_name,codec_tag_string -of default -i "$(SRC)"
 +
 +FATE_FFMPEG += $(FATE_AC4_MPEGTS_PMT-yes)
 +FATE_FFPROBE += $(FATE_AC4_MPEGTS_PROBE-yes)
-+
-+fate-ac4: $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes)
++fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes)
 diff --git a/tests/ref/fate/ac4-mpegts-probe b/tests/ref/fate/ac4-mpegts-probe
 new file mode 100644
 index 0000000..d350be5

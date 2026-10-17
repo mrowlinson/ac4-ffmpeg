@@ -1,11 +1,14 @@
 Subject: [PATCH 0/6] MP4 ac-4+dac4 support + AC-4 parser
 
-Last series: MP4 carriage for AC-4 plus the frame parser both
-carriages need. Posts after Series C (needs the encoder DSI-extradata
-contract: raw DSI bytes as extradata, packed per ETSI 103 190-2 E.5,
-empty = hard error). Order inside the series is parser-first: MP4
-demux sets need_parsing = HEADERS, which is dead without a registered
-parser, and the TS demux tags already in-tree need only the splitter.
+Last series of the stack (A0 -> A -> B -> C -> E -> D, plain `git am`
+on 3e6cd5e): MP4 carriage for AC-4 plus the frame parser both
+carriages need. Stack parent: C + E (needs the encoder
+DSI-extradata contract: raw DSI bytes as extradata, packed per ETSI
+103 190-2 E.5, empty = hard error; and 6/6 asserts Series E's
+0x7F/0x15 descriptor bytes). Order inside the series is
+parser-first: MP4 demux sets need_parsing = HEADERS, which is dead
+without a registered parser, and the TS demux tags already in-tree
+need only the splitter.
 
 Patches:
   [PATCH 1/6] avcodec: add ff_ac4_parser
@@ -35,20 +38,20 @@ Patches:
     byte-exact at box + extradata level, stsz == 4, byte-identical
     payloads, post-parse 48k stereo. 3 loud negatives (mux-noext
     EINVAL, trunc-dac4 + shrink-size INVALIDDATA). Wired as
-    fate-ac4-mp4-roundtrip. Closes REVIEW-DMUX M1 + REVIEW-DDEMUX M1.
+    fate-ac4-mp4-roundtrip.
   [PATCH 6/6] fate: add self-contained ac4 ts demux test
     api-ac4-ts-demux-test synthesizes Annex G AC41 vectors in code
-    (no samples, no encoder): mux to MPEG-TS, assert file-level
-    framing/descriptors + demux-level params/payloads, 2 loud
-    negatives (bad-PMT, mid-PES trunc). Wired as fate-ac4-ts-demux.
+    (no samples, no encoder): mux to MPEG-TS via the Series E
+    descriptor path, assert file-level framing/descriptors +
+    demux-level params/payloads, 2 loud negatives (bad-PMT,
+    mid-PES trunc). Wired as fate-ac4-ts-demux.
 
-Deferred by design (P4 DEFER-OK): no shared ac4_header.h in this
-series -- the mux strip stays a local ~23-line framing parse
-(aacdec.c precedent) and the A0-peek/parser dual TOC walk unifies
-after Series A lands (third reader); MP4 demux keeps dac4 opaque
-(AAC-esds model); ac4_decoder_select + the ac4d_feed 2-byte sniff
-ride Series A; TS param-fill FATE rides a Series-E follow-up.
-Feed-shape contract decided: demuxers/muxers emit bare or
+Deferred by design: no shared ac4_header.h in this series -- the mux
+strip stays a local ~23-line framing parse (aacdec.c precedent) and
+the A0-peek/parser dual TOC walk plus the private rate tables
+converge in a follow-up once this stack lands; MP4 demux keeps dac4
+opaque (AAC-esds model); TS param-fill FATE rides a Series-E
+follow-up. Feed-shape contract decided: demuxers/muxers emit bare or
 shape-preserved frames, the decoder sniffs the first 2 bytes.
 
 Testing:
@@ -67,14 +70,7 @@ no fix here).
 
 Provenance: carriage + parser code written for this submission under
 the same cleanroom terms as Series A (ETSI TS 103 190-1 V1.4.1 /
--2 V1.3.1, table/clause-number references only, no Dolby
-SDK/reference/disassembly). AC-4 patent note from Series A applies.
-
-Branch state (draft, unposted): ac4/D-split-r3@08b4f00 over
-baseline 3e6cd5e (083c676 parser + c01ad3f demux + 499892d mux +
-dd69611 parser FATE + 0747972 roundtrip FATE + 08b4f00 ts-demux
-FATE); re-cut of r2 (fcc9dbe): sign-offs, 80-col, ASCII, 4/6-6/6
-append to the Series C tests/fate/ac4.mak. 6/6 build standalone,
-all three fates PASS.
+-2 V1.3.1, original-prose comments, no Dolby SDK/reference/
+disassembly). AC-4 patent note from Series A applies.
 
 Signed-off-by on each patch: Michael Rowlinson <mrowlinson@gmail.com>
