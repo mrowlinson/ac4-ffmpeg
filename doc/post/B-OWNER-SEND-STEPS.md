@@ -13,7 +13,7 @@ background (deltas, stanza parity, suite gate history):
 `doc/post/COMBO-RERUN-7.md` (finding F1, closed by this re-cut).
 
 Pack: `doc/post/series-B-fate.mbox` (2 patches on Series A,
-40708 B) + `doc/covers/COVER-B.txt` (`[PATCH 0/2]`).
+40729 B) + `doc/covers/COVER-B.txt` (`[PATCH 0/2]`).
 Stack order: A0 -> A -> B -> C -> E -> D (see STACK-DAG.md).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 

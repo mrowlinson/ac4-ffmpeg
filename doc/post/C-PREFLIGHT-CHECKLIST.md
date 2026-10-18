@@ -29,7 +29,7 @@ texi row onto B (04/10).
   `ff-union-C/ff`).
 - [x] Base is stack A0+A+B (`69d2b70` + `d532e32/3ace213` +
   `c6984bf/b1dab00`; pristine root `3e6cd5e`). Mbox is a fresh
-  `format-patch` of the C range (10/10, 650974 B).
+  `format-patch` of the C range (10/10, 650794 B).
 - [x] Full DAG line in scratch `ff-union-C/ff-am` (A0+A+B+
   C-union+E+D): 23 commits on pristine `3e6cd5e`.
 

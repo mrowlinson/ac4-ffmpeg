@@ -10,7 +10,7 @@ A0 -> A -> B -> C -> E -> D (see STACK-DAG.md). Stack gates:
 `COMBO-RERUN-6.md` (L1 source + goldens).
 
 Pack: `doc/post/series-C-encoder.mbox` (10 patches on Series B,
-650974 B) + `doc/covers/COVER-C.txt` (`[PATCH 0/10]`).
+650794 B) + `doc/covers/COVER-C.txt` (`[PATCH 0/10]`).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
 ## 0. Preconditions (all true at gate time)

@@ -1,10 +1,12 @@
 # B-PREFLIGHT-CHECKLIST -- Series B doc + decoder-FATE FINAL re-cut 2 (owner posts)
 
-> SCOPE NOTE (size sweep `COVER-SIZE-SWEEP.md`): this file records
-> re-cut-2 bytes (19150 B, 14 diffs). The merged mbox is the later
-> MUST-fix union re-cut: `series-B-fate.mbox` 40708 B, 16 diffs
-> (3 + 13), 11 goldens, subjects/signoffs unchanged. Size/count
-> claims below describe re-cut 2, not current bytes.
+> SCOPE NOTE (size sweeps `COVER-SIZE-SWEEP.md` R1 +
+> `COVER-SIZE-SWEEP-R2.md` R2): this file records re-cut-2 bytes
+> (19150 B, 14 diffs). The merged mbox is the MUST-final fixed
+> mbox: `series-B-fate.mbox` 40729 B, 16 diffs (3 + 13), 11
+> goldens (MUST-final: enc-neg `-strict -2`, ASSEMBLY-DEBTS-R2
+> debt 5), subjects/signoffs unchanged. Size/count claims below
+> describe re-cut 2, not current bytes.
 
 Branch: `ff/doc-B-post-final-2` from master `e72a4b9`.
 Gated 2026-10-16 in scratch `ff-B-714-recut` (TMPDIR `tmp/`);

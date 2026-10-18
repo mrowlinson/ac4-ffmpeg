@@ -6,18 +6,21 @@ Final pack, gated 2026-10-16 on master `2436f47` (r4 covers in-tree;
 `FIX-REPORT.md` + `ff-mbp-r4build` `MBP-R4BUILD.md` (carried, cited in
 the checklist).
 
-Pack: `doc/post/series-D-mp4.mbox` (6 patches on Series E, 162643 B, union: D-seat content + stack mechanics + T3) +
+Pack: `doc/post/series-D-mp4.mbox` (6 patches on Series E, 163076 B, union: D-seat content + stack mechanics + T3) +
 `doc/covers/COVER-D.txt` (`[PATCH 0/6]`).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
 ## 0. Preconditions (all true at gate time)
 
 - Source line: `ac4/D-split-r3@08b4f00` (6 commits, linear, no merges).
-  Mbox is the union re-cut (162643 B, 6 patches; see Pack line):
+  Mbox is the union re-cut (163076 B, 6 patches; see Pack line):
   it supersedes the r3 cut that was byte-identical to the gated
   `submit-fix/D/0001..0006` (128977 B) — union adds the M19
-  Changelog lines, M21 `ac4_toc.h` use, and T3, so the staging
-  bytes no longer match.
+  Changelog lines, M21 `ac4_toc.h` use, and T3, plus the
+  MUST-final fixes (D 1/6 toc.h-create drop for A0's shared
+  header, 7 re-pins, T3 GEN `-strict -2`;
+  `ASSEMBLY-DEBTS-R2.md` debts 3/4/6), so the staging bytes no
+  longer match.
 - NOTHING sent yet: no SENT marker in repo; all series unsent. No
   suite/sample wait for this series (fully self-contained, zero new
   samples).
@@ -45,13 +48,15 @@ git send-email --to=ffmpeg-devel@ffmpeg.org \
 Expected send order / threading:
 
 1. `[PATCH 0/6] MP4 ac-4+dac4 support + AC-4 parser` (cover)
-2. `[PATCH 1/6] avcodec: add ff_ac4_parser` (6 files:
-   libavcodec/ac4_parser.c new +420, libavcodec/ac4_toc.h new
-   +678 shared TOC walk, parsers.c +1, Makefile +1,
-   configure +1, Changelog +1: ParseContext + combine_frame
-   split loop, AC40/41 sync scan, chain-anchor + TOC-head gate,
-   COMPLETE_FRAMES passthrough; configure selects for the ac4
-   demuxer)
+2. `[PATCH 1/6] avcodec: add ff_ac4_parser` (12 files:
+   libavcodec/ac4_parser.c new +420, parsers.c +1, Makefile +1,
+   configure +1, Changelog +1 (toc.h create dropped — parser
+   uses A0's shared `libavcodec/ac4_toc.h`), + 7 re-pins
+   (copy-stereo 1/1, copy-51 1/1, frac-copy 116/116, seek-eof
+   2/1, demux 1/1, demux-51 1/1, extra-ac4 9/9):
+   ParseContext + combine_frame split loop, AC40/41 sync scan,
+   chain-anchor + TOC-head gate, COMPLETE_FRAMES passthrough;
+   configure selects for the ac4 demuxer)
 3. `[PATCH 2/6] avformat/mov: add AC-4 dac4 box support` (1 file:
    mov.c +47: mov_read_dac4, opaque DSI extradata, parse-table
    entry, HEADERS need_parsing; truncated dac4 -> INVALIDDATA)

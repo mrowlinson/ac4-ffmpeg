@@ -164,8 +164,9 @@ undefined without 2/2.
   placeholder; behavioral gates pass with it.
 - This series pins no goldens; Series B FATE goldens are recorded
   against the fixed N5 labels (cover says so).
-- C 01/10's Makefile context quotes the pre-r6 2-line decoder
-  comment (union kept the old context lines: C08 dropped, renumbered
+- C 01/10's Makefile context quotes the r6 2-line decoder
+  comment (MUST-final refresh per `ASSEMBLY-DEBTS-R2.md` debt 1;
+  the union had kept the pre-r6 lines: C08 dropped, renumbered
   01/11→01/10, A-context still C-seat-owned per STACK-DAG; hunk
   positions preserved here). E/D stack behind C, unaffected otherwise.
 - T4 drain+reopen stays future work (code + cover disclose the

@@ -6,18 +6,20 @@ Final pack, gated 2026-10-16 on master `f827e56` (r3 covers in-tree;
 `FIX-REPORT.md` + `ff-mbp-r4build` `MBP-R4BUILD.md` (carried, cited in
 the checklist).
 
-Pack: `doc/post/series-E-ts.mbox` (2 patches on Series C, 12693 B) +
+Pack: `doc/post/series-E-ts.mbox` (2 patches on Series C, 12774 B) +
 `doc/covers/COVER-E.txt` (`[PATCH 0/2]`).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
 ## 0. Preconditions (all true at gate time)
 
 - Source line: `ac4/E-ts-r3@a2485a9` (2 commits, linear, no merges).
-  Mbox is the stack re-cut (12693 B, 2 patches; see Pack line):
+  Mbox is the stack re-cut (12774 B, 2 patches; see Pack line):
   it supersedes the r3 cut that was byte-identical to the gated
   `submit-fix/E/0001..0002` (11605 B) — the re-cut adds the M22
   message rewrite, M19 Changelog line, and probe `-strict -2`,
-  so the staging bytes no longer match.
+  plus the MUST-final GEN `-strict -2` + message clause
+  (`ASSEMBLY-DEBTS-R2.md` debt 2), so the staging bytes no
+  longer match.
 - NOTHING sent yet: no SENT marker in repo; all series unsent. No
   suite/sample wait for this series (asynth-only, zero new samples).
 - Posts AFTER Series C merges (functional, not convention): patch 2/2
