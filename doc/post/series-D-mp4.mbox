@@ -2310,7 +2310,7 @@ index 81db40d..41330bc 100644
 From 848d0872d8b9f4665b98052059c32e7a4d0fc0ae Mon Sep 17 00:00:00 2001
 From: Michael Rowlinson <mrowlinson@gmail.com>
 Date: Sat, 17 Oct 2026 03:56:31 -0400
-Subject: [PATCH 5/6] fate: add self-contained ac4 mp4 mux/demux roundtrip test
+Subject: [PATCH 5/6] fate: add self-contained ac4 mp4 mux/demux roundtrip
 
 Upstream will not take a testless mux/demux pair. New
 api-ac4-mp4-roundtrip-test synthesizes its vectors in code, so the

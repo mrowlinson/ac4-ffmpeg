@@ -6,21 +6,22 @@ Final pack, gated 2026-10-16 on master `2436f47` (r4 covers in-tree;
 `FIX-REPORT.md` + `ff-mbp-r4build` `MBP-R4BUILD.md` (carried, cited in
 the checklist).
 
-Pack: `doc/post/series-D-mp4.mbox` (6 patches on Series E, 163076 B, union: D-seat content + stack mechanics + T3) +
+Pack: `doc/post/series-D-mp4.mbox` (6 patches on Series E, 163071 B, union: D-seat content + stack mechanics + T3 + N1 5/6 subject word-drop) +
 `doc/covers/COVER-D.txt` (`[PATCH 0/6]`).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
 ## 0. Preconditions (all true at gate time)
 
 - Source line: `ac4/D-split-r3@08b4f00` (6 commits, linear, no merges).
-  Mbox is the union re-cut (163076 B, 6 patches; see Pack line):
+  Mbox is the union re-cut (163071 B, 6 patches; see Pack line):
   it supersedes the r3 cut that was byte-identical to the gated
   `submit-fix/D/0001..0006` (128977 B) — union adds the M19
   Changelog lines, M21 `ac4_toc.h` use, and T3, plus the
   MUST-final fixes (D 1/6 toc.h-create drop for A0's shared
   header, 7 re-pins, T3 GEN `-strict -2`;
-  `ASSEMBLY-DEBTS-R2.md` debts 3/4/6), so the staging bytes no
-  longer match.
+  `ASSEMBLY-DEBTS-R2.md` debts 3/4/6; N1 5/6 subject drops
+  ` test` to match the cover, zero gate impact — see §1 fold
+  note), so the staging bytes no longer match.
 - NOTHING sent yet: no SENT marker in repo; all series unsent. No
   suite/sample wait for this series (fully self-contained, zero new
   samples).
@@ -40,6 +41,7 @@ In a scratch dir (NOT the project repo):
 ```sh
 mkdir -p send && git mailsplit -osend doc/post/series-D-mp4.mbox   # -> 0001..0006
 cp doc/covers/COVER-D.txt send/0000                  # whole file: Subject line + blank + body
+sed -i '' '43{/^  test$/d;}' send/0000               # N1 fold: drop wrapped cover word so 5/6 matches the patch subject exactly
 git send-email --to=ffmpeg-devel@ffmpeg.org \
   --from="Michael Rowlinson <mrowlinson@gmail.com>" \
   send/0000 send/0001 send/0002 send/0003 send/0004 send/0005 send/0006
@@ -68,8 +70,8 @@ Expected send order / threading:
    tests/api/api-ac4-parser-test.c new +1007, tests/api/Makefile +1,
    tests/fate/ac4.mak +12/-1 append; fate-ac4-parser, vectors built
    in code, no samples)
-6. `[PATCH 5/6] fate: add self-contained ac4 mp4 mux/demux roundtrip
-   test` (4 files: tests/api/api-ac4-mp4-roundtrip-test.c new +708,
+6. `[PATCH 5/6] fate: add self-contained ac4 mp4 mux/demux roundtrip`
+   (4 files: tests/api/api-ac4-mp4-roundtrip-test.c new +708,
    tests/api/Makefile +1, tests/fate/ac4.mak +35/-2 append,
    tests/ref/fate/ac4-roundtrip new +150 (T3 encoder->decoder
    roundtrip); fate-ac4-mp4-roundtrip + fate-ac4-roundtrip,

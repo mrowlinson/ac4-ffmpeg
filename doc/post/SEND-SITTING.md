@@ -6,8 +6,8 @@ stack order (see STACK-DAG.md). No drip-sends. Source: the six
 MUST-fix union re-cuts incl. M21 one-walker + T2/T5, A = r6 with
 M4-M9 + guard fix, C = union 10 mails with M10-M18 and C08
 dropped, E = stack re-cut with M22/M19, D = union with
-M19/M21/T3). Mail-1 already done (suite live
-2026-10-16T22:23:09Z) — no mail step here.
+M19/M21/T3 + N1 5/6 subject word-drop). Mail-1 already done
+(suite live 2026-10-16T22:23:09Z) — no mail step here.
 
 To: `ffmpeg-devel@ffmpeg.org` every series. Patches only — NO
 attachments (no samples, no .md, no mbox files).
@@ -20,20 +20,28 @@ date -u +%Y-%m-%dT%H:%M:%SZ   # must print >= 2026-10-17T22:23:09Z (B2 +24h); el
 ifconfig | grep 169.254.103.231  # TB-only send link; must print a line; else STOP
 ```
 
+Clock gate SATISFIED first-hand (send-sitting-3,
+2026-10-18T01:06Z reads past the gate; `B2-POST-READY.md` +
+`COMBO-RERUN-9.md` both expired-first-hand; live suite 12/12
+re-confirmed 2026-10-18T00:58Z). Owner still runs step 0 at
+post — the TB-link half is owner-link-only.
+
 ## 1. Global preflight (repo root, merged master)
 
 ```sh
-git log --oneline -1                     # expect 2def950 ff/merged: must-fix-A-r6 (or later parent merge)
+git log --oneline -1                     # expect 717941a ff/merged: ff/doc-combo-9 (or later parent merge)
 ls -l doc/post/*.mbox                    # sizes MUST read:
 ```
 Expected bytes: `series-A-decoder` 507373, `series-A0-head` 43263,
 `series-B-fate` 40729, `series-C-encoder` 650794, `series-E-ts`
-12774, `series-D-mp4` 163076. All six are the MUST-final fixed
-mboxes at master `fc5573a` (B/C/D/E fixed per
-`ASSEMBLY-DEBTS-R2.md`; A0/A blob-identical to the `2def950`
+12774, `series-D-mp4` 163071. All six are the MUST-final fixed
+mboxes at master `717941a` + N1 fix (this branch; B/C/D/E fixed
+per `ASSEMBLY-DEBTS-R2.md`; A0/A blob-identical to the `2def950`
 union bytes; C is the corrected union, `ff/doc-union-C`, 10
 mails — old 08/11 neg gate dropped, its two layout negatives now
-ride B 2/2 as FATE); stale STAGED `series-B-decfate.mbox`
+ride B 2/2 as FATE; D is 163071 (-5 B vs the `fc5573a` 163076:
+N1 5/6 subject word-drop, zero gate impact per
+`HO-SEND-SITTING-3.md`); stale STAGED `series-B-decfate.mbox`
 removed from tree; B pack is `series-B-fate.mbox` only.
 
 ```sh
@@ -61,6 +69,12 @@ Stack order (accepted by running this): the six packs form ONE
 ordered stack (A0 -> A -> B -> C -> E -> D, see STACK-DAG.md) and
 apply with plain `git am` in that order only -- 23/23 per the
 union re-proof (24/24 pre-drop, C08 dropped after).
+Close-out cites (all green): `COMBO-RERUN-9.md` POST-OK (23/23
+plain am, build 0-ac4, fate-ac4 29/29, A0D 3/3, N5 14/14, live
+suite 12/12), `B2-POST-READY.md` ALL READY (clock expired,
+B-tip 16/16 x2, trio 3/3), `COVER-SIZE-SWEEP-R2.md` sizes
+current (A0/A/B/C/E blob-identical since; D N1 delta -5 B
+noted in §1, re-proven in `HO-SEND-SITTING-3.md`).
 One sitting sends before anything lands, so tell the maintainer
 the application order in each cover thread if asked: A0 first,
 then A, B, C, E, D. B's A/A0 need stays functional (FATE legs),
@@ -190,6 +204,7 @@ post-D re-pins, T3 roundtrip area, M20 split).
 ```sh
 mkdir -p sendD && git mailsplit -osendD $R/doc/post/series-D-mp4.mbox  # -> 0001..0006
 cp $R/doc/covers/COVER-D.txt sendD/0000
+sed -i '' '43{/^  test$/d;}' sendD/0000  # N1 fold: drop wrapped cover word so 5/6 matches the patch subject exactly (same as D-OWNER-SEND-STEPS §1)
 git send-email --to=ffmpeg-devel@ffmpeg.org \
   --from="Michael Rowlinson <mrowlinson@gmail.com>" \
   sendD/0000 sendD/0001 sendD/0002 sendD/0003 sendD/0004 sendD/0005 sendD/0006
@@ -247,6 +262,24 @@ counts 2/1/2/10/2/6; byte sizes match the MUST-union table exactly.
 Attached `-osendX` form used throughout (`-o send/` fails on this
 git — see `A-SENDSTEPS-NITFIX.md`). TB-IP check dry-ran absent
 here (owner link only).
+
+## Dry-run record (send-sitting-3, 2026-10-18T01:06Z, git 2.56.0)
+
+Final-bytes dry-run (this branch: `717941a` + N1 fix). Every
+command in steps 0-8 EXCEPT the six live `git send-email`
+invocations was run verbatim: all six `mailsplit -osendX` rc=0
+with exact file counts (1/2/2/10/2/6 = 23 patch files); all six
+cover copies 0000 shape (Subject + blank + body);
+`git send-email --dry-run` `Result: OK` on all 29 wire messages
+(2+3+3+11+3+7) with ZERO warning lines; N1 send-time fold
+variant (sendD/0000 minus wrapped L43 `  test`) dry-ran 7/7 OK,
+zero warnings, folded-cover↔mbox subjects 6/6 identical;
+non-ASCII byte count 0 across all mboxes + covers; signoff
+counts 2/1/2/10/2/6; `^From ` counts 2 1 2 10 2 6; byte sizes
+match the §1 table exactly (D 163071). TB-IP check dry-ran
+absent here (owner link only). NOTHING sent: no live
+`git send-email` ran; Owner-at-post stays unchecked — the actual
+send is the owner action (no send link on this seat).
 
 ## Owner-at-post (fill when sending)
 
