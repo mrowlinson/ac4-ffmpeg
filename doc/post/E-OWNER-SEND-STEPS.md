@@ -1,23 +1,30 @@
 # E-OWNER-SEND-STEPS — Series E TS-mux post (owner posts)
 
 Final pack, gated 2026-10-16 on master `f827e56` (r3 covers in-tree;
-`COVER-E.txt` untouched since). Pre-flight record:
+`COVER-E.txt` untouched since). MUST-final fixed cut, re-gated
+2026-10-17 on master `fc5573a` (debt 2: tail-CMD context + GEN
+`-strict -2` + 1 msg clause; plain-am 17/17 + fate 25/25 proof in
+`doc/post/E-R2-VERIFY.md`). Pre-flight record:
 `doc/post/E-PREFLIGHT-CHECKLIST.md`. Stack gates: `ff-submit-fix`
 `FIX-REPORT.md` + `ff-mbp-r4build` `MBP-R4BUILD.md` (carried, cited in
 the checklist).
 
-Pack: `doc/post/series-E-ts.mbox` (2 patches on Series C, 12693 B) +
+Pack: `doc/post/series-E-ts.mbox` (2 patches on Series C, 12774 B) +
 `doc/covers/COVER-E.txt` (`[PATCH 0/2]`).
 From/Signoff: `Michael Rowlinson <mrowlinson@gmail.com>`.
 
 ## 0. Preconditions (all true at gate time)
 
 - Source line: `ac4/E-ts-r3@a2485a9` (2 commits, linear, no merges).
-  Mbox is the stack re-cut (12693 B, 2 patches; see Pack line):
-  it supersedes the r3 cut that was byte-identical to the gated
-  `submit-fix/E/0001..0002` (11605 B) — the re-cut adds the M22
-  message rewrite, M19 Changelog line, and probe `-strict -2`,
-  so the staging bytes no longer match.
+  Mbox is the MUST-final fixed cut (12774 B, 2 patches; see Pack
+  line): it supersedes the 12693 B stack re-cut (which itself
+  superseded the r3 cut byte-identical to the gated
+  `submit-fix/E/0001..0002` (11605 B) — the re-cut added the M22
+  message rewrite, M19 Changelog line, and probe `-strict -2`).
+  The MUST-final delta is debt 2 only (tail-CMD context + GEN
+  `-strict -2` + 1 msg clause); the `a2485a9` staging pin is dead
+  (object absent, no `E-ts-r3` branch — verified 2026-10-17), so
+  the mbox bytes are the source of truth.
 - NOTHING sent yet: no SENT marker in repo; all series unsent. No
   suite/sample wait for this series (asynth-only, zero new samples).
 - Posts AFTER Series C merges (functional, not convention): patch 2/2
