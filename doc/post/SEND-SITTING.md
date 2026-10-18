@@ -283,13 +283,25 @@ send is the owner action (no send link on this seat).
 
 ## Owner-at-post (fill when sending)
 
-- [ ] Clock >= 2026-10-17T22:23:09Z confirmed: _______________
-- [ ] TB link 169.254.103.231 confirmed: _______________
-- [ ] B cover Testing refresh confirmed (incl. fate-source): _______________
-- [ ] A0 sent date + Message-IDs (cover,1/1): _______________
-- [ ] A sent date + Message-IDs (0/2,1/2,2/2): _______________
-- [ ] B sent date + Message-IDs (0/2,1/2,2/2): _______________
-- [ ] C sent date + Message-IDs (0/10..10/10): _______________
-- [ ] E sent date + Message-IDs (0/2,1/2,2/2): _______________
-- [ ] D sent date + Message-IDs (0/6..6/6): _______________
-- [ ] Archive shows all six threads complete, in order.
+- [x] Clock >= 2026-10-17T22:23:09Z confirmed: 2026-10-18T20:19:12Z
+- [x] MBP link confirmed: MacBook-Pro.lan ssh OK (raw TB IP .103.231
+  stale post-crash; .lan is the stable name)
+- [x] B cover Testing refresh confirmed (incl. fate-source)
+- [x] A0 sent 2026-10-18 16:21 EDT, 2/2 Gmail-accepted:
+  `<20261018202121.94470-1-mrowlinson@gmail.com>` (cover),
+  `<20261018202121.94470-2-mrowlinson@gmail.com>`
+- [x] A sent 2026-10-18 16:21 EDT, 3/3 Gmail-accepted:
+  `...2102132.906-1/2/3...` (0/2, 1/2, 2/2)
+- [x] B sent 2026-10-18 16:21 EDT, 3/3 Gmail-accepted:
+  `...2102142.7096-1/2/3...` (0/2, 1/2, 2/2)
+- [x] C sent 2026-10-18 16:21 EDT, 11/11 Gmail-accepted:
+  `...2102153.13632-1...-11...` (0/10..10/10)
+- [x] E sent 2026-10-18 16:22 EDT, 3/3 Gmail-accepted:
+  `...2102217.27867-1/2/3...` (0/2, 1/2, 2/2)
+- [x] D sent 2026-10-18 16:22 EDT, 7/7 Gmail-accepted:
+  `...2102225.32283-1...-7...` (0/6..6/6)
+  (full IDs: iCloud Downloads/ffmpeg-ac4-send/SEND-EMAILS.md §4 +
+  send-logs/*.log; Gmail Sent Mail holds 29/29)
+- [ ] Archive shows all six threads complete, in order
+  (pipermail mirror stale at 2025-August; first-time posts may
+  await list moderation — watch inbox for mod notices).
