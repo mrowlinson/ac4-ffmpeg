@@ -1,5 +1,11 @@
 # COVER-SIZE-SWEEP — doc size/count claims vs merged mbox bytes
 
+> SCOPE NOTE (R2 sweep `COVER-SIZE-SWEEP-R2.md`): R1 record at
+> master `224ec0b`. Mboxes B/C/D/E re-cut by `20bb917`
+> (now 40729/650794/163076/12774 B; A0/A unchanged at
+> 43263/507373 B). Numbers below describe R1 bytes, kept as
+> gated evidence; current record is `COVER-SIZE-SWEEP-R2.md`.
+
 Seat `ff-cover-size-sweep`, 2026-10-17. Base master `224ec0b`.
 Method: `wc -c` / `wc -l`, `git mailsplit`, `grep -c` subjects /
 signoffs / From lines, `git apply --stat/--numstat`, perl

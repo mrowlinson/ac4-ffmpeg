@@ -27,13 +27,14 @@ git log --oneline -1                     # expect 2def950 ff/merged: must-fix-A-
 ls -l doc/post/*.mbox                    # sizes MUST read:
 ```
 Expected bytes: `series-A-decoder` 507373, `series-A0-head` 43263,
-`series-B-fate` 40708, `series-C-encoder` 650974, `series-E-ts`
-12693, `series-D-mp4` 162643. All six are the MUST-fix union
-re-cuts at master `2def950` (C is the corrected union,
-`ff/doc-union-C`, 10 mails — old 08/11 neg gate dropped, its two
-layout negatives now ride B 2/2 as FATE); stale STAGED
-`series-B-decfate.mbox` removed from tree; B pack is
-`series-B-fate.mbox` only.
+`series-B-fate` 40729, `series-C-encoder` 650794, `series-E-ts`
+12774, `series-D-mp4` 163076. All six are the MUST-final fixed
+mboxes at master `fc5573a` (B/C/D/E fixed per
+`ASSEMBLY-DEBTS-R2.md`; A0/A blob-identical to the `2def950`
+union bytes; C is the corrected union, `ff/doc-union-C`, 10
+mails — old 08/11 neg gate dropped, its two layout negatives now
+ride B 2/2 as FATE); stale STAGED `series-B-decfate.mbox`
+removed from tree; B pack is `series-B-fate.mbox` only.
 
 ```sh
 perl -ne '$c += tr/\x80-\xFF//; END { print "non-ascii=$c (want 0)\n" }' \
@@ -228,6 +229,11 @@ Mail cannot be unsent. Per-series recovery, worst first:
   no repost needed once they do (same bytes).
 
 ## Dry-run record (this seat, 2026-10-17T09:12Z, git 2.56.0)
+
+> SCOPE NOTE (R2 sweep `COVER-SIZE-SWEEP-R2.md`): ran against
+> `2def950` bytes. Counts/subjects/signoffs/hygiene re-verified
+> identical on `fc5573a` (1/2/2/10/2/6 = 23, 29 wire, non-ASCII
+> 0); B/C/D/E sizes are now 40729/650794/12774/163076 (see §1).
 
 Every command in steps 0-8 EXCEPT the six live `git send-email`
 invocations was run verbatim against master `2def950` bytes in

@@ -1,9 +1,12 @@
 # D-PREFLIGHT-CHECKLIST — Series D MP4+dac4 FINAL (owner posts)
 
-> SCOPE NOTE (size sweep `COVER-SIZE-SWEEP.md`): this file records
-> the r3 pre-union bytes (staging 128977 B; C(11)+E(2)+D(6) 19/19;
-> zero TAB lines). The merged mbox is the union re-cut:
-> `series-D-mp4.mbox` 162643 B, 6 patches; C is 10 (C08 dropped)
+> SCOPE NOTE (size sweeps `COVER-SIZE-SWEEP.md` R1 +
+> `COVER-SIZE-SWEEP-R2.md` R2): this file records the r3
+> pre-union bytes (staging 128977 B; C(11)+E(2)+D(6) 19/19; zero
+> TAB lines). The merged mbox is the MUST-final fixed mbox:
+> `series-D-mp4.mbox` 163076 B, 6 patches (MUST-final: toc.h-create
+> dropped, 7 re-pins, T3 GEN strict; ASSEMBLY-DEBTS-R2 debts
+> 3/4/6); C is 10 (C08 dropped)
 > so the stack arithmetic is C(10)+E(2)+D(6) = 18 (arithmetic
 > only, gates not re-proven here); the mbox has 6 TAB lines
 > (make-recipe indentation, ASCII). The "identical bytes" carries

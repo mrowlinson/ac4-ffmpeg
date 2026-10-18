@@ -1,9 +1,12 @@
 # E-PREFLIGHT-CHECKLIST — Series E TS-mux FINAL (owner posts)
 
-> SCOPE NOTE (size sweep `COVER-SIZE-SWEEP.md`): this file records
-> the r3 pre-stack-re-cut bytes (staging 11605 B; C(11)+E(2)
-> 13/13). The merged mbox is the stack re-cut (M22/M19):
-> `series-E-ts.mbox` 12693 B, 2 patches; C is 10 (C08 dropped)
+> SCOPE NOTE (size sweeps `COVER-SIZE-SWEEP.md` R1 +
+> `COVER-SIZE-SWEEP-R2.md` R2): this file records the r3
+> pre-stack-re-cut bytes (staging 11605 B; C(11)+E(2) 13/13).
+> The merged mbox is the MUST-final fixed mbox (M22/M19):
+> `series-E-ts.mbox` 12774 B, 2 patches (MUST-final: GEN
+> `-strict -2` + message clause; ASSEMBLY-DEBTS-R2 debt 2);
+> C is 10 (C08 dropped)
 > so the stack arithmetic is C(10)+E(2) = 12 (arithmetic only,
 > gates not re-proven here). The "identical bytes" carries below
 > predate the re-cut. Size/count claims below describe r3,
