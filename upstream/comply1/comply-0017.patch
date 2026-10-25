@@ -1,0 +1,211 @@
+From 366dc5a2d55f7b3d1a95d499b55e3550ca150bc0 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Sat, 17 Oct 2026 03:14:00 -0400
+Subject: [PATCH 17/23] fate: ac4 ts mux tests
+
+Add fate-ac4-mpegts-pmt: encode asynth stereo to MPEG-TS with
+-mpegts_flags system_b, then tests/fate/ac4-pmt-section.sh (POSIX sh +
+od + awk, no extra tooling) locates the PMT pid via the PAT and prints
+the first PMT section (table_id through CRC32) as one hex line, pinning
+stream_type 0x06, the 'AC-4' registration and the 0x7F/0x15 AC-4
+descriptor without coupling to float-encoder bytes.
+
+Also fate-ac4-mpegts-probe (generated .ts probes back as codec_name=ac4,
+codec_tag_string=AC-4; carries -strict -2 because Series D's parser
+makes find_stream_info open the experimental decoder). No new samples;
+-loudness_target 0 dodges the by-design full-span loudness refusal. No
+framecrc stage yet: demux-side sample rate/channels stay unknown until
+the Series D parser lands.
+
+The GEN step runs at loglevel error and passes -strict -2 (the native encoder is EXPERIMENTAL): mpegtsenc's default-PCR helper
+calls av_get_audio_frame_duration2(par, 0), and with frame_bytes 0 the
+frame_size fallback cannot fire while AC-4 has no switch case, so it
+warns once and uses 512 (PCR cadence only; the encoder does set
+frame_size 2048). The warning is upstream-generic for caseless codecs,
+not an AC-4 defect.
+
+Appends to the C-extended tests/fate/ac4.mak (after Series B+C) and
+extends the fate-ac4 aggregate instead of creating it.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ tests/fate/ac4-pmt-section.sh   | 105 ++++++++++++++++++++++++++++++++
+ tests/fate/ac4.mak              |  44 ++++++++++++-
+ tests/ref/fate/ac4-mpegts-probe |   4 ++
+ 3 files changed, 152 insertions(+), 1 deletion(-)
+ create mode 100755 tests/fate/ac4-pmt-section.sh
+ create mode 100644 tests/ref/fate/ac4-mpegts-probe
+
+diff --git a/tests/fate/ac4-pmt-section.sh b/tests/fate/ac4-pmt-section.sh
+new file mode 100755
+index 0000000..640cbe2
+--- /dev/null
++++ b/tests/fate/ac4-pmt-section.sh
+@@ -0,0 +1,105 @@
++#!/bin/sh
++# Print the first PMT section of a 188-byte MPEG-TS file as one lowercase
++# hex line (table_id through CRC32). The PAT (pid 0) locates the PMT pid
++# of the first nonzero program; the first PUSI packet on that pid carries
++# the section. Single-packet sections only; anything unexpected (sync
++# loss, missing PAT/PMT, multi-packet section) fails loudly. POSIX sh +
++# od + awk (+ cat for stderr, all POSIX), so fate clients need no extra
++# tooling.
++set -u
++
++[ -r "${1:-}" ] || { echo "usage: $0 file.ts" >&2; exit 1; }
++
++od -A d -t u1 -v "$1" | awk '
++{
++    for (i = 2; i <= NF; i++)
++        b[n++] = $i
++}
++function payload(o,   afc, s) {
++    afc = int(b[o+3] / 16) % 4
++    s = o + 4
++    if (afc == 2 || afc == 3)
++        s += 1 + b[o+4]
++    if (s >= o + 188) {
++        print "adaptation overrun" | "cat >&2"
++        return -1
++    }
++    return s
++}
++END {
++    if (n % 188 != 0) {
++        print "not 188-byte TS" | "cat >&2"
++        exit 1
++    }
++    npkt = n / 188
++    # PAT: first PUSI packet on pid 0 -> PMT pid of program != 0.
++    pmt_pid = -1
++    for (k = 0; k < npkt && pmt_pid < 0; k++) {
++        o = k * 188
++        if (b[o] != 71) {
++            print "sync loss" | "cat >&2"
++            exit 1
++        }
++        if ((b[o+1] % 32) * 256 + b[o+2] != 0)
++            continue
++        if (int(b[o+1] / 64) % 2 == 0)
++            continue
++        s = payload(o)
++        if (s < 0)
++            exit 1
++        sec = s + 1 + b[s]
++        if (sec + 2 >= o + 188) {
++            print "pointer overrun" | "cat >&2"
++            exit 1
++        }
++        if (b[sec] != 0) {
++            print "PAT table_id" | "cat >&2"
++            exit 1
++        }
++        slen = (b[sec+1] % 16) * 256 + b[sec+2]
++        end = sec + 3 + slen - 4
++        for (j = sec + 8; j + 3 < end; j += 4) {
++            if (b[j] * 256 + b[j+1] == 0)
++                continue
++            pmt_pid = (b[j+2] % 32) * 256 + b[j+3]
++            break
++        }
++    }
++    if (pmt_pid < 0) {
++        print "no PMT pid" | "cat >&2"
++        exit 1
++    }
++    # PMT: first PUSI packet on that pid -> whole section as hex.
++    for (k = 0; k < npkt; k++) {
++        o = k * 188
++        if ((b[o+1] % 32) * 256 + b[o+2] != pmt_pid)
++            continue
++        if (int(b[o+1] / 64) % 2 == 0)
++            continue
++        s = payload(o)
++        if (s < 0)
++            exit 1
++        sec = s + 1 + b[s]
++        if (sec + 2 >= o + 188) {
++            print "pointer overrun" | "cat >&2"
++            exit 1
++        }
++        if (b[sec] != 2) {
++            print "PMT table_id" | "cat >&2"
++            exit 1
++        }
++        slen = (b[sec+1] % 16) * 256 + b[sec+2]
++        total = 3 + slen
++        if (sec + total > o + 188) {
++            print "multi-packet section" | "cat >&2"
++            exit 1
++        }
++        out = ""
++        for (i = sec; i < sec + total; i++)
++            out = out sprintf("%02x", b[i])
++        print out
++        exit 0
++    }
++    print "no PMT" | "cat >&2"
++    exit 1
++}'
+diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
+index 69e0295..81db40d 100644
+--- a/tests/fate/ac4.mak
++++ b/tests/fate/ac4.mak
+@@ -222,4 +222,46 @@ fate-ac4-tail: SRC = $(TARGET_PATH)/tests/data/asynth-48000-2.wav
+ fate-ac4-tail: CMD = framecrc -i $(SRC) -c:a ac4 -strict -2 -ab 128k -af aresample,atrim=end_sample=12097
+ FATE_FFMPEG += $(FATE_AC4_ENC-yes)
+ 
+-fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes)
++# AC-4 mux tests. No new samples: inputs are generated asynth only.
++#
++# fate-ac4-mpegts-pmt: encode asynth stereo to MPEG-TS (-mpegts_flags
++# system_b), then pin the PMT descriptor bytes without touching the
++# encoder payload: ac4-pmt-section.sh locates the PMT pid via the PAT
++# and prints the first PMT section (table_id through CRC32) as one hex
++# line -- stream_type 0x06, 'AC-4' registration, 0x7F/0x15 AC-4
++# descriptor. A whole-file .ts md5 would couple this to float-encoder
++# bytes (breaks on heterogeneous fate clients / any encoder change).
++# -loudness_target 0 dodges the by-design full-span loudness refusal
++# (encoder keeps the measure path, skips the correction gain).
++tests/data/fate/ac4-mpegts.ts: TAG = GEN
++tests/data/fate/ac4-mpegts.ts: tests/data/asynth-48000-2.wav
++tests/data/fate/ac4-mpegts.ts: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data/fate
++	$(M)$(TARGET_EXEC) $(TARGET_PATH)/$< \
++	-hide_banner -loglevel error -nostdin \
++	-i $(TARGET_PATH)/tests/data/asynth-48000-2.wav \
++	-c:a ac4 -strict -2 -ab 128k -loudness_target 0 -mpegts_flags system_b \
++	-flags +bitexact -fflags +bitexact -af aresample \
++	-f mpegts -y $(TARGET_PATH)/$@
++
++FATE_AC4_MPEGTS_PMT-$(call ALLYES, FFMPEG AC4_ENCODER MPEGTS_MUXER \
++    WAV_DEMUXER PCM_S16LE_DECODER ARESAMPLE_FILTER FILE_PROTOCOL) += fate-ac4-mpegts-pmt
++fate-ac4-mpegts-pmt: tests/data/fate/ac4-mpegts.ts
++fate-ac4-mpegts-pmt: SRC = $(TARGET_PATH)/tests/data/fate/ac4-mpegts.ts
++fate-ac4-mpegts-pmt: CMD = runlocal fate/ac4-pmt-section.sh "$(SRC)"
++fate-ac4-mpegts-pmt: CMP = oneline
++fate-ac4-mpegts-pmt: REF = 02b01d0001c10000e100f00006e100f00b050441432d347f0315802057f3bb20
++
++# fate-ac4-mpegts-probe: the generated .ts probes back as AC-4.
++# (Demux fills codec id via the 'AC-4' registration descriptor; sample
++# rate/channels stay unknown until the Series D parser lands, so there is
++# no framecrc stage yet -- PMT section + probe pin what E1 writes.)
++FATE_AC4_MPEGTS_PROBE-$(call ALLYES, FFMPEG FFPROBE AC4_ENCODER MPEGTS_MUXER MPEGTS_DEMUXER \
++    WAV_DEMUXER PCM_S16LE_DECODER ARESAMPLE_FILTER FILE_PROTOCOL) += fate-ac4-mpegts-probe
++fate-ac4-mpegts-probe: tests/data/fate/ac4-mpegts.ts
++fate-ac4-mpegts-probe: SRC = $(TARGET_PATH)/tests/data/fate/ac4-mpegts.ts
++fate-ac4-mpegts-probe: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -v 0 -strict -2 -bitexact \
++    -show_entries stream=codec_name,codec_tag_string -of default -i "$(SRC)"
++
++FATE_FFMPEG += $(FATE_AC4_MPEGTS_PMT-yes)
++FATE_FFPROBE += $(FATE_AC4_MPEGTS_PROBE-yes)
++fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes)
+diff --git a/tests/ref/fate/ac4-mpegts-probe b/tests/ref/fate/ac4-mpegts-probe
+new file mode 100644
+index 0000000..d350be5
+--- /dev/null
++++ b/tests/ref/fate/ac4-mpegts-probe
+@@ -0,0 +1,4 @@
++[STREAM]
++codec_name=ac4
++codec_tag_string=AC-4
++[/STREAM]

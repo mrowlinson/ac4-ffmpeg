@@ -1,0 +1,61 @@
+From 2a8c01d0596cd3c74e304da4af04e93c0448c9e6 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 08:16:02 -0400
+Subject: [PATCH 15/23] avcodec/ac4enc: drive DSI layout from the lavc-mask
+ table
+
+Replace the explicit stereo/5.1 channel trio in build_dsi_extradata
+with ac4dsi_pres_set_layout_mask(), fed straight from
+avctx->ch_layout.u.mask (DSI-12). The mapping table now owns the
+translation: 0x3 -> 0/1/0x1, 0x60f (5.1 side, the variant this
+encoder accepts) -> 1/4/0x47; anything else -- including 5.1-back
+0x3f -- fails init loudly, matching the wrapper's layout gate.
+
+Behavior-identical for stereo/5.1 (wire bytes unchanged, same
+fate refs); the mask table and the explicit trio are pinned
+equivalent by the DSI differential suite.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ libavcodec/ac4enc.c | 21 +++++++++++----------
+ 1 file changed, 11 insertions(+), 10 deletions(-)
+
+diff --git a/libavcodec/ac4enc.c b/libavcodec/ac4enc.c
+index ee54b16..f7b2a1d 100644
+--- a/libavcodec/ac4enc.c
++++ b/libavcodec/ac4enc.c
+@@ -125,8 +125,8 @@ static int lib_err_to_averror(int rc)
+  * header; the MP4 muxer wraps it verbatim as dac4). Stream params are
+  * the lib defaults (bsv 2, 48 kHz base, encoder frame-rate index,
+  * mode 2 ABR) plus our snapped target bitrate; the presentation is a
+- * synthesized pv1 block whose channel trio is set explicitly for the
+- * validated layout (the mask-table form follows separately). The
++ * synthesized pv1 block whose channel trio comes from the lavc-mask
++ * layout table (DSI-12), fed straight from avctx->ch_layout. The
+  * encoder shape needs ~32 B, so the 128 B buffer can never overflow;
+  * any serializer refusal fails init loudly rather than emitting a
+  * stream with missing or wrong DSI. */
+@@ -142,14 +142,15 @@ static int build_dsi_extradata(AVCodecContext *avctx)
+     ac4dsi_stream_init(&ds);
+     ds.bit_rate = (uint32_t)s->rate_kbps * 1000u;
+     ac4dsi_pres_init_v1(&dp);
+-    if (s->nch == 2) {
+-        dp.md_compat      = 0;
+-        dp.ch_mode        = 1;
+-        dp.channel_groups = 0x000001u;
+-    } else {
+-        dp.md_compat      = 1;
+-        dp.ch_mode        = 4;
+-        dp.channel_groups = 0x000047u;
++    /* Layout was validated against stereo/5.1 above, so the table
++     * lookup cannot fail; refuse loudly anyway (never guess DSI). */
++    rc = ac4dsi_pres_set_layout_mask(&dp, avctx->ch_layout.u.mask);
++    if (rc) {
++        av_log(avctx, AV_LOG_ERROR, "unsupported channel layout for "
++               "DSI (mask 0x%llx): only stereo and 5.1 are "
++               "supported\n",
++               (unsigned long long)avctx->ch_layout.u.mask);
++        return AVERROR(EINVAL);
+     }
+     rc = ac4dsi_serialize_putbits(&ds, &dp, 1, dsi, sizeof dsi, &dsi_len);
+     if (rc) {

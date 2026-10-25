@@ -1,0 +1,788 @@
+From d8179a03af7aa712f1e06832ebf61a2b25b4a025 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 09:14:46 -0400
+Subject: [PATCH 23/23] fate: add self-contained ac4 ts demux test
+
+Upstream takes no testless demux path: the TS side relied on the
+Series E mux+PMT pins plus a codec-id probe, with nothing asserting
+demux through in-tree mpegts + ff_ac4_parser. New
+api-ac4-ts-demux-test synthesizes its vectors in code (the same
+minimal version-2 stereo TOC shape as fate-ac4-parser, wrapped as
+Annex G AC41 with CRCs solved per frame), so the suite needs no
+uploaded samples and no encoder: pre-encoded synth payloads keep
+the Series C encoder dependency out by design (documented choice).
+
+Roundtrip: mux 4x70 B AC41 to MPEG-TS with -mpegts_flags system_b
+(via the Series E descriptor path), then assert at the file level
+(188 framing, PAT/PMT CRCs, one stream, stream_type 0x06, 'AC-4'
+registration, 0x7F/0x15 config-only stereo descriptor) and at the
+demux level (1 stream, codec ac4/tag AC-4, pid match, post-parse
+48 kHz stereo params, 4 packets == byte-identical payloads). Two
+negatives fail loud: every PMT section corrupted (table_id 0x02->0xFF,
+id+CRC both break) must not yield an AC-4 stream -- observed shape is
+open-ok with codec unknown on pid 0x100 -- and a file cut
+mid-PES-payload of frame 3 must yield <4 packets (observed: the 2
+whole frames, matched) with the read loop terminating.
+
+Wired as fate-ac4-ts-demux behind MPEGTS_MUXER + MPEGTS_DEMUXER
++ AC4_PARSER, next to fate-ac4-parser/fate-ac4-mp4-roundtrip in
+tests/fate/ac4.mak. No mux/demux code changes.
+
+Upstream placement: Series D (parser), not E and not standalone.
+The test pins demux+parser behavior (params fill, framing,
+negatives); the Series E mux bytes are only the stimulus.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ tests/api/Makefile                |   2 +
+ tests/api/api-ac4-ts-demux-test.c | 691 ++++++++++++++++++++++++++++++
+ tests/fate/ac4.mak                |  14 +-
+ 3 files changed, 705 insertions(+), 2 deletions(-)
+ create mode 100644 tests/api/api-ac4-ts-demux-test.c
+
+diff --git a/tests/api/Makefile b/tests/api/Makefile
+index a7db808..5c79713 100644
+--- a/tests/api/Makefile
++++ b/tests/api/Makefile
+@@ -13,6 +13,8 @@ APITESTPROGS-$(CONFIG_PCM_S16LE_DECODER) += api-skip-samples
+ APITESTPROGS-$(call ALLYES, H261_ENCODER H261_PARSER) += api-enc-parser
+ APITESTPROGS-$(CONFIG_AC4_PARSER) += api-ac4-parser
+ APITESTPROGS-$(call ALLYES, MP4_MUXER MOV_DEMUXER AC4_PARSER) += api-ac4-mp4-roundtrip
++APITESTPROGS-$(call ALLYES, MPEGTS_MUXER MPEGTS_DEMUXER \
++    AC4_PARSER) += api-ac4-ts-demux
+ APITESTPROGS += $(APITESTPROGS-yes)
+ 
+ APITESTOBJS  := $(APITESTOBJS:%=$(APITESTSDIR)%) $(APITESTPROGS:%=$(APITESTSDIR)/%-test.o)
+diff --git a/tests/api/api-ac4-ts-demux-test.c b/tests/api/api-ac4-ts-demux-test.c
+new file mode 100644
+index 0000000..7b6d2c2
+--- /dev/null
++++ b/tests/api/api-ac4-ts-demux-test.c
+@@ -0,0 +1,691 @@
++/*
++ * AC-4 MPEG-TS mux/demux roundtrip test.
++ * Copyright (c) 2026 Michael Rowlinson
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file
++ * Self-contained AC-4 MPEG-TS roundtrip tests. Annex G AC41 vectors are
++ * synthesized in code (the same minimal version-2 stereo TOC shape as
++ * api-ac4-parser-test, CRCs solved per frame), muxed to MPEG-TS via the
++ * E1 descriptor path, demuxed back through in-tree mpegts +
++ * ff_ac4_parser, and checked for PMT descriptor bytes, stream params,
++ * packet counts and byte-identical payloads. Bad-PMT and truncated-PES
++ * negatives must fail loud. No fate-suite samples needed and no
++ * encoder dependency: the payloads are pre-encoded synth by design.
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdint.h>
++
++#include "libavformat/avformat.h"
++#include "libavcodec/avcodec.h"
++#include "libavutil/channel_layout.h"
++#include "libavutil/common.h"
++#include "libavutil/error.h"
++#include "libavutil/mem.h"
++#include "libavutil/opt.h"
++
++static int failures = 0;
++#define CHECK(cond, ...) do { \
++    if (!(cond)) { \
++        printf("FAIL: " __VA_ARGS__); printf("\n"); failures++; \
++    } \
++} while (0)
++
++/* Deterministic noise without stray sync bytes. */
++static uint32_t lcg_state;
++static void noise(uint8_t *d, int n, uint32_t seed)
++{
++    lcg_state = seed;
++    for (int i = 0; i < n; i++) {
++        int b;
++        lcg_state = lcg_state * 1103515245u + 12345u;
++        b = (lcg_state >> 16) & 0xFF;
++        d[i] = (b == 0xAC) ? 0xAD : b;
++    }
++}
++
++/* CRC-16, MSB-first, poly 0x8005, init 0 (test-local copy of the
++ * sync-layer rule: accept on zero remainder over the span). */
++static unsigned int crc16_update(unsigned int crc, const uint8_t *p, int len)
++{
++    for (int i = 0; i < len; i++) {
++        crc ^= (unsigned int) p[i] << 8;
++        for (int k = 0; k < 8; k++)
++            crc = (crc & 0x8000) ? ((crc << 1) ^ 0x8005) : (crc << 1);
++        crc &= 0xFFFF;
++    }
++    return crc;
++}
++
++/* Stored word making (span plus word) check to zero. The map from the
++ * 16 stored bits to the final remainder is bijective, so the search
++ * always terminates. */
++static unsigned int crc16_fix(const uint8_t *span, int len)
++{
++    unsigned int r = crc16_update(0, span, len);
++
++    for (int v = 0; v < 65536; v++) {
++        uint8_t tail[2] = { v >> 8, v & 0xFF };
++        if (crc16_update(r, tail, 2) == 0)
++            return v;
++    }
++    return 0;
++}
++
++typedef struct BitW {
++    uint8_t *d;
++    int bit;
++} BitW;
++
++static void put_bits(BitW *w, int n, unsigned int v)
++{
++    for (int i = n - 1; i >= 0; i--) {
++        if ((v >> i) & 1)
++            w->d[w->bit / 8] |= 1 << (7 - w->bit % 8);
++        w->bit++;
++    }
++}
++
++/* Minimal version-2 stereo TOC: presentation 0, group 0, one
++ * channel-coded bed element, channel_mode 2. All other fields take
++ * their zero/absent shape. */
++static int build_toc(uint8_t *raw, int bv, int seq, int fs, int rate,
++                     int ig, int n_pres)
++{
++    BitW w = { raw, 0 };
++
++    put_bits(&w, 2, bv);
++    put_bits(&w, 10, seq);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, fs);
++    put_bits(&w, 4, rate);
++    put_bits(&w, 1, ig);
++    if (n_pres) {
++        put_bits(&w, 1, 1);
++    } else {
++        put_bits(&w, 1, 0);
++        put_bits(&w, 1, 0);
++    }
++    put_bits(&w, 1, 0);
++    if (bv == 2)
++        put_bits(&w, 1, 0);
++    if (!n_pres)
++        return (w.bit + 7) / 8;
++    /* One v1 presentation record, group index 0. */
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 0);       /* presentation_version 0 */
++    put_bits(&w, 3, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 2, 0);       /* emdf substream/version/shape: absent */
++    put_bits(&w, 3, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 2, 0);
++    put_bits(&w, 2, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 3, 0);       /* group index */
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 2, 0);
++    /* Group 0 head: bed present, channel_mode 2 (stereo). */
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 0);
++    if (fs)
++        put_bits(&w, 1, 0);
++    return (w.bit + 7) / 8;
++}
++
++#define RAW_LEN 64
++#define F41_LEN (4 + RAW_LEN + 2)
++#define NFRAMES 4
++
++/* One synthetic AC41 frame: bv2, rate 13 (48 kHz grid), iframe. */
++static void build_f41(uint8_t *d, int seq, uint32_t seed)
++{
++    uint8_t raw[RAW_LEN];
++    int head_bytes;
++    unsigned int crc;
++
++    memset(raw, 0, sizeof(raw));
++    head_bytes = build_toc(raw, 2, seq, 1, 13, 1, 1);
++    noise(raw + head_bytes, RAW_LEN - head_bytes, seed);
++    d[0] = 0xAC;
++    d[1] = 0x41;
++    d[2] = RAW_LEN >> 8;
++    d[3] = RAW_LEN & 0xFF;
++    memcpy(d + 4, raw, RAW_LEN);
++    /* CRC over the length bytes plus raw, stored big-endian. */
++    crc = crc16_fix(d + 2, 2 + RAW_LEN);
++    d[4 + RAW_LEN]     = crc >> 8;
++    d[4 + RAW_LEN + 1] = crc & 0xFF;
++}
++
++/* MPEG-2 CRC32 (poly 0x04C11DB7, init all-ones): a section including
++ * its stored CRC checks to zero. The demuxer enforces this before it
++ * trusts a PAT/PMT, so pinning it pins the demux precondition. */
++static uint32_t mpeg2_crc32(const uint8_t *p, int len)
++{
++    uint32_t crc = 0xFFFFFFFFu;
++
++    for (int i = 0; i < len; i++) {
++        crc ^= (uint32_t) p[i] << 24;
++        for (int k = 0; k < 8; k++)
++            crc = (crc & 0x80000000u) ? (crc << 1) ^ 0x04C11DB7u :
++                                        crc << 1;
++    }
++    return crc;
++}
++
++/* Payload offset of TS packet o, with pid/PUSI out. -1 past the end. */
++static int ts_payload(const uint8_t *b, int o, int *pid, int *pusi)
++{
++    int afc = (b[o + 3] >> 4) & 3;
++    int s = o + 4;
++
++    *pid  = ((b[o + 1] & 0x1F) << 8) | b[o + 2];
++    *pusi = (b[o + 1] & 0x40) != 0;
++    if (afc == 2 || afc == 3)
++        s += 1 + b[o + 4];
++    if (s >= o + 188)
++        return -1;
++    return s;
++}
++
++/* Section start in a PUSI packet: skip the pointer field. -1 when the
++ * section head would leave the packet. */
++static int ts_section(const uint8_t *b, int o, int s)
++{
++    int sec = s + 1 + b[s];
++
++    if (sec + 3 > o + 188)
++        return -1;
++    return sec;
++}
++
++/* PMT pid of the first nonzero program, straight from the PAT. */
++static int find_pmt_pid(const char *tag, const uint8_t *b, int len)
++{
++    int npkt = len / 188;
++
++    for (int k = 0; k < npkt; k++) {
++        int o = k * 188, pid, pusi, s, sec, slen, total, end;
++
++        s = ts_payload(b, o, &pid, &pusi);
++        if (pid != 0 || !pusi || s < 0)
++            continue;
++        sec = ts_section(b, o, s);
++        CHECK(sec >= 0, "%s: PAT pointer overrun", tag);
++        if (sec < 0)
++            return -1;
++        CHECK(b[sec] == 0x00, "%s: PAT table_id 0x%02x", tag, b[sec]);
++        if (b[sec] != 0x00)
++            return -1;
++        slen  = ((b[sec + 1] & 0x0F) << 8) | b[sec + 2];
++        total = 3 + slen;
++        CHECK(sec + total <= o + 188, "%s: multi-packet PAT", tag);
++        if (sec + total > o + 188)
++            return -1;
++        CHECK(mpeg2_crc32(b + sec, total) == 0, "%s: PAT CRC bad", tag);
++        end = sec + 3 + slen - 4;
++        for (int j = sec + 8; j + 3 < end; j += 4) {
++            if (((b[j] << 8) | b[j + 1]) == 0)
++                continue;
++            return ((b[j + 2] & 0x1F) << 8) | b[j + 3];
++        }
++        CHECK(0, "%s: no PMT pid in PAT", tag);
++        return -1;
++    }
++    CHECK(0, "%s: no PAT found", tag);
++    return -1;
++}
++
++/* First PMT section: one stream, stream_type 0x06, the 'AC-4'
++ * registration and the DVB AC-4 descriptor (0x7F/0x15, config-only
++ * stereo). Returns the audio pid. */
++static int check_pmt(const char *tag, const uint8_t *b, int len, int pmt_pid)
++{
++    int npkt = len / 188;
++
++    for (int k = 0; k < npkt; k++) {
++        int o = k * 188, pid, pusi, s, sec, slen, total;
++        int pilen, q, qend, nstreams = 0, apid = -1, stype = -1;
++        int reg_ok = 0, ac4_ok = 0;
++
++        s = ts_payload(b, o, &pid, &pusi);
++        if (pid != pmt_pid || !pusi || s < 0)
++            continue;
++        sec = ts_section(b, o, s);
++        CHECK(sec >= 0, "%s: PMT pointer overrun", tag);
++        if (sec < 0)
++            return -1;
++        CHECK(b[sec] == 0x02, "%s: PMT table_id 0x%02x", tag, b[sec]);
++        if (b[sec] != 0x02)
++            return -1;
++        slen  = ((b[sec + 1] & 0x0F) << 8) | b[sec + 2];
++        total = 3 + slen;
++        CHECK(sec + total <= o + 188, "%s: multi-packet PMT", tag);
++        if (sec + total > o + 188)
++            return -1;
++        CHECK(mpeg2_crc32(b + sec, total) == 0, "%s: PMT CRC bad", tag);
++        pilen = ((b[sec + 10] & 0x0F) << 8) | b[sec + 11];
++        q     = sec + 12 + pilen;
++        qend  = sec + 3 + slen - 4;
++        while (q + 5 <= qend) {
++            int eslen = ((b[q + 3] & 0x0F) << 8) | b[q + 4];
++            int r = q + 5, rend = r + eslen;
++
++            nstreams++;
++            apid  = ((b[q + 1] & 0x1F) << 8) | b[q + 2];
++            stype = b[q];
++            if (rend > qend) {
++                CHECK(0, "%s: ES descriptors overrun", tag);
++                return -1;
++            }
++            while (r + 2 <= rend) {
++                int dtag = b[r], dlen = b[r + 1];
++
++                if (r + 2 + dlen > rend) {
++                    CHECK(0, "%s: descriptor overrun", tag);
++                    return -1;
++                }
++                if (dtag == 0x05 && dlen == 4 &&
++                    memcmp(b + r + 2, "AC-4", 4) == 0)
++                    reg_ok = 1;
++                if (dtag == 0x7F && dlen == 3 && b[r + 2] == 0x15 &&
++                    b[r + 3] == 0x80 && b[r + 4] == 0x20)
++                    ac4_ok = 1;
++                r += 2 + dlen;
++            }
++            q = rend;
++        }
++        CHECK(nstreams == 1, "%s: %d PMT streams != 1", tag, nstreams);
++        CHECK(stype == 0x06, "%s: stream_type 0x%02x != 0x06",
++              tag, stype);
++        CHECK(reg_ok, "%s: AC-4 registration descriptor missing", tag);
++        CHECK(ac4_ok, "%s: DVB AC-4 descriptor missing/mismatch", tag);
++        return apid;
++    }
++    CHECK(0, "%s: no PMT found", tag);
++    return -1;
++}
++
++/* Whole-file TS framing plus PAT/PMT; returns the audio pid. */
++static int check_ts_file(const char *tag, const uint8_t *b, int len)
++{
++    int npkt, pmt_pid;
++
++    CHECK(len % 188 == 0, "%s: file length %d not 188-aligned", tag, len);
++    if (len % 188 != 0)
++        return -1;
++    npkt = len / 188;
++    for (int k = 0; k < npkt; k++)
++        if (b[k * 188] != 0x47) {
++            CHECK(0, "%s: sync loss at packet %d", tag, k);
++            return -1;
++        }
++    pmt_pid = find_pmt_pid(tag, b, len);
++    if (pmt_pid < 0)
++        return -1;
++    return check_pmt(tag, b, len, pmt_pid);
++}
++
++static uint8_t *read_file(const char *path, int *len_out)
++{
++    FILE *f = fopen(path, "rb");
++    uint8_t *buf;
++    long len;
++
++    if (!f)
++        return NULL;
++    fseek(f, 0, SEEK_END);
++    len = ftell(f);
++    fseek(f, 0, SEEK_SET);
++    if (len < 0 || len > 16 * 1024 * 1024) {
++        fclose(f);
++        return NULL;
++    }
++    buf = malloc(len + 1);
++    if (!buf) {
++        fclose(f);
++        return NULL;
++    }
++    if (len > 0 && fread(buf, 1, len, f) != (size_t) len) {
++        free(buf);
++        fclose(f);
++        return NULL;
++    }
++    fclose(f);
++    *len_out = (int) len;
++    return buf;
++}
++
++static int write_file(const char *path, const uint8_t *buf, int len)
++{
++    FILE *f = fopen(path, "wb");
++
++    if (!f)
++        return -1;
++    if (len > 0 && fwrite(buf, 1, len, f) != (size_t) len) {
++        fclose(f);
++        return -1;
++    }
++    fclose(f);
++    return 0;
++}
++
++/* Mux the synth frames to MPEG-TS with system_b (the DVB AC-4
++ * descriptor rides the SYSTEM_B path). */
++static int mux_file(const char *path, uint8_t frames[][F41_LEN], int n)
++{
++    AVFormatContext *out = NULL;
++    AVStream *st;
++    AVPacket *pkt = NULL;
++    int ret, i;
++
++    ret = avformat_alloc_output_context2(&out, NULL, "mpegts", path);
++    if (ret < 0 || !out)
++        return ret < 0 ? ret : AVERROR(ENOMEM);
++    st = avformat_new_stream(out, NULL);
++    if (!st) {
++        avformat_free_context(out);
++        return AVERROR(ENOMEM);
++    }
++    st->codecpar->codec_type  = AVMEDIA_TYPE_AUDIO;
++    st->codecpar->codec_id    = AV_CODEC_ID_AC4;
++    st->codecpar->sample_rate = 48000;
++    av_channel_layout_default(&st->codecpar->ch_layout, 2);
++    st->codecpar->frame_size  = 2048;
++    st->time_base = (AVRational){ 1, 48000 };
++    ret = av_opt_set(out->priv_data, "mpegts_flags", "system_b", 0);
++    if (ret < 0) {
++        avformat_free_context(out);
++        return ret;
++    }
++
++    ret = avio_open(&out->pb, path, AVIO_FLAG_WRITE);
++    if (ret < 0) {
++        avformat_free_context(out);
++        return ret;
++    }
++    ret = avformat_write_header(out, NULL);
++    if (ret < 0)
++        goto done;
++    pkt = av_packet_alloc();
++    if (!pkt) {
++        ret = AVERROR(ENOMEM);
++        goto done;
++    }
++    for (i = 0; i < n; i++) {
++        ret = av_new_packet(pkt, F41_LEN);
++        if (ret < 0)
++            break;
++        memcpy(pkt->data, frames[i], F41_LEN);
++        pkt->pts = pkt->dts = (int64_t) i * 2048;
++        pkt->duration = 2048;
++        pkt->stream_index = 0;
++        ret = av_interleaved_write_frame(out, pkt);
++        av_packet_unref(pkt);
++        if (ret < 0)
++            break;
++    }
++    if (ret >= 0)
++        ret = av_write_trailer(out);
++done:
++    av_packet_free(&pkt);
++    if (out->pb)
++        avio_closep(&out->pb);
++    avformat_free_context(out);
++    return ret;
++}
++
++static void check_roundtrip(const char *tag, const char *path,
++                            uint8_t frames[][F41_LEN], int n)
++{
++    AVFormatContext *in = NULL;
++    AVPacket *pkt = NULL;
++    uint8_t *file;
++    int file_len, apid, count = 0, ret;
++
++    file = read_file(path, &file_len);
++    CHECK(file != NULL, "%s: cannot read back %s", tag, path);
++    if (!file)
++        return;
++    apid = check_ts_file(tag, file, file_len);
++    free(file);
++    if (apid < 0)
++        return;
++
++    ret = avformat_open_input(&in, path, NULL, NULL);
++    CHECK(ret >= 0, "%s: open failed (%d)", tag, ret);
++    if (ret < 0)
++        return;
++    ret = avformat_find_stream_info(in, NULL);
++    CHECK(ret >= 0, "%s: find_stream_info failed (%d)", tag, ret);
++    CHECK(in->nb_streams == 1, "%s: %d streams != 1", tag,
++          in->nb_streams);
++    if (in->nb_streams == 1) {
++        AVCodecParameters *par = in->streams[0]->codecpar;
++
++        CHECK(par->codec_id == AV_CODEC_ID_AC4, "%s: codec %d != ac4",
++              tag, par->codec_id);
++        CHECK(par->codec_type == AVMEDIA_TYPE_AUDIO, "%s: not audio",
++              tag);
++        CHECK(par->codec_tag == MKTAG('A', 'C', '-', '4'),
++              "%s: codec_tag 0x%08x != AC-4", tag, par->codec_tag);
++        CHECK(in->streams[0]->id == apid, "%s: stream id %d != pid %d",
++              tag, in->streams[0]->id, apid);
++        CHECK(par->sample_rate == 48000, "%s: rate %d != 48000",
++              tag, par->sample_rate);
++        CHECK(par->ch_layout.nb_channels == 2, "%s: ch %d != 2",
++              tag, par->ch_layout.nb_channels);
++    }
++    pkt = av_packet_alloc();
++    if (!pkt) {
++        CHECK(0, "%s: packet alloc failed", tag);
++        avformat_close_input(&in);
++        return;
++    }
++    for (;;) {
++        ret = av_read_frame(in, pkt);
++        if (ret == AVERROR_EOF)
++            break;
++        if (ret < 0) {
++            CHECK(0, "%s: read failed (%d)", tag, ret);
++            break;
++        }
++        if (pkt->stream_index == 0) {
++            CHECK(pkt->size == F41_LEN, "%s: pkt %d size %d != %d",
++                  tag, count, pkt->size, F41_LEN);
++            if (count < n && pkt->size == F41_LEN)
++                CHECK(memcmp(pkt->data, frames[count], F41_LEN) == 0,
++                      "%s: pkt %d payload differs", tag, count);
++            count++;
++        }
++        av_packet_unref(pkt);
++    }
++    av_packet_free(&pkt);
++    avformat_close_input(&in);
++    CHECK(count == n, "%s: %d packets != %d", tag, count, n);
++}
++
++/* Every PMT section corrupted (table_id 0x02 -> 0xFF breaks the id
++ * and the CRC): the demuxer must not yield the good outcome. Either
++ * open refuses or no AC-4 stream survives; a clean AC-4 demux here
++ * means the corruption did not take and fails loud. */
++static void check_bad_pmt(const char *tag, const char *good,
++                          const char *path)
++{
++    AVFormatContext *in = NULL;
++    uint8_t *file;
++    int file_len, pmt_pid, npkt, ncorrupt = 0, ret;
++
++    file = read_file(good, &file_len);
++    CHECK(file != NULL, "%s: cannot read %s", tag, good);
++    if (!file)
++        return;
++    pmt_pid = find_pmt_pid(tag, file, file_len);
++    if (pmt_pid < 0) {
++        free(file);
++        return;
++    }
++    npkt = file_len / 188;
++    for (int k = 0; k < npkt; k++) {
++        int o = k * 188, pid, pusi, s, sec;
++
++        s = ts_payload(file, o, &pid, &pusi);
++        if (pid != pmt_pid || !pusi || s < 0)
++            continue;
++        sec = ts_section(file, o, s);
++        if (sec < 0 || sec + 3 > o + 188)
++            continue;
++        file[sec] = 0xFF;
++        ncorrupt++;
++    }
++    CHECK(ncorrupt >= 1, "%s: no PMT section corrupted", tag);
++    ret = write_file(path, file, file_len);
++    free(file);
++    CHECK(ret == 0, "%s: cannot write %s", tag, path);
++    if (ret)
++        return;
++    ret = avformat_open_input(&in, path, NULL, NULL);
++    if (ret < 0)
++        return;
++    avformat_find_stream_info(in, NULL);
++    if (in->nb_streams == 1 &&
++        in->streams[0]->codecpar->codec_id == AV_CODEC_ID_AC4)
++        CHECK(0, "%s: bad-pmt still yields an AC-4 stream", tag);
++    avformat_close_input(&in);
++}
++
++/* File cut mid-PES-payload of the third frame: only the two whole
++ * frames ahead of the cut may emit, and what emits must match. */
++static void check_trunc_pes(const char *tag, const char *good,
++                            const char *path, uint8_t frames[][F41_LEN])
++{
++    AVFormatContext *in = NULL;
++    AVPacket *pkt = NULL;
++    uint8_t *file;
++    int file_len, pmt_pid, apid, npkt, npes = 0, cut = -1;
++    int count = 0, ret;
++
++    file = read_file(good, &file_len);
++    CHECK(file != NULL, "%s: cannot read %s", tag, good);
++    if (!file)
++        return;
++    pmt_pid = find_pmt_pid(tag, file, file_len);
++    apid = pmt_pid < 0 ? -1 : check_pmt(tag, file, file_len, pmt_pid);
++    if (apid >= 0) {
++        npkt = file_len / 188;
++        for (int k = 0; k < npkt; k++) {
++            int o = k * 188, pid, pusi, s;
++
++            s = ts_payload(file, o, &pid, &pusi);
++            if (pid != apid || !pusi || s < 0)
++                continue;
++            if (npes == 2)
++                cut = o + 50;
++            npes++;
++        }
++    }
++    CHECK(npes == NFRAMES, "%s: %d PES packets != %d", tag, npes,
++          NFRAMES);
++    CHECK(cut > 0 && cut < file_len, "%s: no mid-PES cut point", tag);
++    if (cut <= 0 || cut >= file_len) {
++        free(file);
++        return;
++    }
++    ret = write_file(path, file, cut);
++    free(file);
++    CHECK(ret == 0, "%s: cannot write %s", tag, path);
++    if (ret)
++        return;
++    ret = avformat_open_input(&in, path, NULL, NULL);
++    CHECK(ret >= 0, "%s: trunc-pes open failed (%d)", tag, ret);
++    if (ret < 0)
++        return;
++    avformat_find_stream_info(in, NULL);
++    pkt = av_packet_alloc();
++    if (!pkt) {
++        CHECK(0, "%s: packet alloc failed", tag);
++        avformat_close_input(&in);
++        return;
++    }
++    for (;;) {
++        ret = av_read_frame(in, pkt);
++        if (ret == AVERROR_EOF)
++            break;
++        if (ret < 0) {
++            CHECK(0, "%s: trunc-pes read failed (%d)", tag, ret);
++            break;
++        }
++        if (pkt->stream_index == 0) {
++            if (count < 2 && pkt->size == F41_LEN)
++                CHECK(memcmp(pkt->data, frames[count], F41_LEN) == 0,
++                      "%s: trunc-pes pkt %d differs", tag, count);
++            count++;
++        }
++        av_packet_unref(pkt);
++    }
++    av_packet_free(&pkt);
++    avformat_close_input(&in);
++    CHECK(count < NFRAMES, "%s: trunc-pes yielded %d, want < %d",
++          tag, count, NFRAMES);
++}
++
++static const char *tmpdir(void)
++{
++    const char *t = getenv("TMPDIR");
++
++    return t && *t ? t : "/tmp";
++}
++
++int main(void)
++{
++    static uint8_t frames[NFRAMES][F41_LEN];
++    char good[512], bad[512], trunc[512];
++    int i;
++
++    av_log_set_level(AV_LOG_ERROR);
++    for (i = 0; i < NFRAMES; i++)
++        build_f41(frames[i], i, 101 + i);
++
++    snprintf(good, sizeof(good), "%s/ac4ts-good.ts", tmpdir());
++    CHECK(mux_file(good, frames, NFRAMES) == 0, "mux: write failed");
++    check_roundtrip("roundtrip", good, frames, NFRAMES);
++
++    snprintf(bad, sizeof(bad), "%s/ac4ts-badpmt.ts", tmpdir());
++    check_bad_pmt("neg", good, bad);
++    snprintf(trunc, sizeof(trunc), "%s/ac4ts-trunc.ts", tmpdir());
++    check_trunc_pes("neg", good, trunc, frames);
++
++    if (failures == 0)
++        printf("PASS: ac4 ts demux (roundtrip + 2 negatives)\n");
++    else
++        printf("%d FAILURES\n", failures);
++    return failures != 0;
++}
+diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
+index cc882e0..9da45e9 100644
+--- a/tests/fate/ac4.mak
++++ b/tests/fate/ac4.mak
+@@ -274,7 +274,7 @@ fate-ac4-parser: CMP = null
+ 
+ fate-ac4-parse: $(FATE_AC4_PARSE-yes)
+ 
+-FATE-yes += $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes) $(FATE_AC4_RT-yes)
++FATE-yes += $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes) $(FATE_AC4_TSDEMUX-yes) $(FATE_AC4_RT-yes)
+ # AC-4 MP4 mux/demux roundtrip. Frames and DSI are synthesized inside
+ # the test tool, so this needs no fate-suite samples either: bare and
+ # Annex G framed inputs mux to MP4 and demux back with byte-exact dac4
+@@ -286,6 +286,16 @@ fate-ac4-mp4-roundtrip: CMP = null
+ 
+ fate-ac4-mp4: $(FATE_AC4_MP4-yes)
+ 
++# AC-4 MPEG-TS demux tests. The vectors are synthesized inside the test
++# tool, so this needs no fate-suite samples.
++FATE_AC4_TSDEMUX-$(call ALLYES, MPEGTS_MUXER MPEGTS_DEMUXER \
++    AC4_PARSER) += fate-ac4-ts-demux
++fate-ac4-ts-demux: $(APITESTSDIR)/api-ac4-ts-demux-test$(EXESUF)
++fate-ac4-ts-demux: CMD = run $(APITESTSDIR)/api-ac4-ts-demux-test$(EXESUF)
++fate-ac4-ts-demux: CMP = null
++
++fate-ac4-ts: $(FATE_AC4_TSDEMUX-yes)
++
+ # --- T3: encoder->decoder audio roundtrip (priming/skip + DSI end-to-end) ---
+ # Synth stereo encodes to raw AC-4 (GEN, no suite samples) and decodes
+ # back; the framemd5 golden pins the 4096 first-frame offset, catching
+@@ -308,4 +318,4 @@ fate-ac4-roundtrip: CMD = framemd5 -strict -2 -i "$(SRC)"
+ 
+ fate-ac4-rt: $(FATE_AC4_RT-yes)
+ 
+-fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes) $(FATE_AC4_RT-yes)
++fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes) $(FATE_AC4_TSDEMUX-yes) $(FATE_AC4_RT-yes)

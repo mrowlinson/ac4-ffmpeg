@@ -1,0 +1,31 @@
+From 3c9b4053133d1b52f25f37c84dd10d735799e75c Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 08:15:44 -0400
+Subject: [PATCH 11/23] fate: run ac4 encoder tests without SAMPLES
+
+05/10 appended the asynth-only encoder tests to FATE_SAMPLES_AVCONV
+(copied ac3.mak tail), so the encoder tests hard-failed without
+SAMPLES even though no test reads $(SAMPLES). Re-home them to
+FATE_FFMPEG like ac3.mak's self-contained tests; the aggregate
+stays `fate-ac4` (all five sets).
+
+Re-cut (r6): stacked form.
+Union: appendix shape (flips the appendix SAMPLES tail).
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ tests/fate/ac4.mak | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
+index 735ee9d..40836bf 100644
+--- a/tests/fate/ac4.mak
++++ b/tests/fate/ac4.mak
+@@ -209,6 +209,6 @@ FATE_AC4_ENC-$(call FRAMECRC, WAV, PCM_S16LE, ARESAMPLE_FILTER ATRIM_FILTER AC4_
+ fate-ac4-tail: tests/data/asynth-48000-2.wav
+ fate-ac4-tail: SRC = $(TARGET_PATH)/tests/data/asynth-48000-2.wav
+ fate-ac4-tail: CMD = framecrc -i $(SRC) -c:a ac4 -strict -2 -ab 128k -af aresample,atrim=end_sample=12097
+-FATE_SAMPLES_AVCONV += $(FATE_AC4_ENC-yes)
++FATE_FFMPEG += $(FATE_AC4_ENC-yes)
+ 
+ fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes)

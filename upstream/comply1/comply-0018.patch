@@ -1,0 +1,880 @@
+From a223017d38dc26cb891b8b87cad99bc6f7b62736 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Sat, 17 Oct 2026 03:55:55 -0400
+Subject: [PATCH 18/23] avcodec: add ff_ac4_parser
+
+Streaming splitter for the Annex G sync stream plus a TOC prober.
+
+AC41 frames accept on CRC-16 (MSB-first poly 0x8005 over length
+bytes, raw frame and stored word, zero remainder). AC40 frames
+accept on a chaining anchor (next head parses exactly at the frame
+end) or, at EOF, on an exact end plus a valid TOC head. Every
+accept also passes a TOC-head gate that rejects the reserved rate
+rows 14/15; any reject advances exactly one byte. Sequence-counter
+stride is never a criterion. Heads claiming past AC4_MAX_SCAN
+(128 KiB) classify as not-a-head before buffering or CRC, bounding
+adversarial resync cost.
+
+The TOC probe reports key_frame from b_iframe_global and, when the
+bed walk completes, the output-domain (sample_rate, duration) pair
+(base sample frequency x sf_mult with exact Table E.1 counts,
+N5-consistent, never the internal spf x fps grid; nominal unlocked
+phase on 1001-rate rows), channels (IMS presented counts for
+cm120/121 with pres_ver 2) and a running bit_rate average. Failures
+leave params untouched while the frame still emits. The walk lives in
+the shared header-only libavcodec/ac4_toc.h (landed with Series A0;
+no Makefile change): one walker, one rate table. Landing the parser
+refines demuxer keyflags in-stack (A0's need_parsing=HEADERS now
+resolves to this parser instead of PARSE_NONE), so this patch re-pins
+the 7 affected goldens: the B copy/seek refs (copy-stereo, copy-51,
+frac-copy, seek-eof) gain parser keyflags and true -copyts stamps,
+and the A0 demux/seek refs (demux, demux-51, extra-ac4) likewise.
+No suite bytes change.
+
+COMPLETE_FRAMES mode passes bare raw frames through untouched and
+only probes the TOC; it never scans for sync.
+
+Registration in parsers.c and the Makefile, ac4_demuxer_select in
+configure (generic containers select no codec parsers; minimal
+mov/mpegts builds enable --enable-parser=ac4 explicitly). Changelog
+entry after Series E's line (one policy for the whole submission;
+Series D applies stacked).
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ Changelog                      |   1 +
+ configure                      |   1 +
+ libavcodec/Makefile            |   1 +
+ libavcodec/ac4_parser.c        | 420 +++++++++++++++++++++++++++++++++
+ libavcodec/parsers.c           |   1 +
+ tests/ref/fate/ac4-copy-51     |   2 +-
+ tests/ref/fate/ac4-copy-stereo |   2 +-
+ tests/ref/fate/ac4-demux       |   2 +-
+ tests/ref/fate/ac4-demux-51    |   2 +-
+ tests/ref/fate/ac4-frac-copy   | 232 +++++++++---------
+ tests/ref/fate/ac4-seek-eof    |   3 +-
+ tests/ref/seek/extra-ac4       |  18 +-
+ 12 files changed, 555 insertions(+), 130 deletions(-)
+ create mode 100644 libavcodec/ac4_parser.c
+
+diff --git a/Changelog b/Changelog
+index 19f3a38..0ca9c65 100644
+--- a/Changelog
++++ b/Changelog
+@@ -5,6 +5,7 @@ version <next>:
+ - native AC-4 audio decoder
+ - native AC-4 audio encoder
+ - MPEG-TS muxer: AC-4 descriptors
++- AC-4 parser
+ 
+ version 9.1:
+ - ASTC image encoding and decoding via libastcenc, with .astc and KTX 1.0 muxers and demuxers
+diff --git a/configure b/configure
+index bbec53a..d68d80a 100755
+--- a/configure
++++ b/configure
+@@ -3884,6 +3884,7 @@ videotoolbox_encoder_deps="videotoolbox VTCompressionSessionPrepareToEncodeFrame
+ 
+ # demuxers / muxers
+ ac3_demuxer_select="ac3_parser"
++ac4_demuxer_select="ac4_parser"
+ act_demuxer_select="riffdec"
+ adts_muxer_select="mpeg4audio"
+ aiff_muxer_select="iso_media"
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index db58b3a..0511afe 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -1293,6 +1293,7 @@ OBJS-$(CONFIG_AAC_LATM_PARSER)         += latm_parser.o
+ OBJS-$(CONFIG_AAC_PARSER)              += aac_parser.o aac_ac3_parser.o
+ OBJS-$(CONFIG_AC3_PARSER)              += aac_ac3_parser.o ac3tab.o \
+                                           ac3_channel_layout_tab.o
++OBJS-$(CONFIG_AC4_PARSER)              += ac4_parser.o
+ OBJS-$(CONFIG_ADX_PARSER)              += adx_parser.o
+ OBJS-$(CONFIG_AHX_PARSER)              += ahx_parser.o
+ OBJS-$(CONFIG_AMR_PARSER)              += amr_parser.o
+diff --git a/libavcodec/ac4_parser.c b/libavcodec/ac4_parser.c
+new file mode 100644
+index 0000000..320c742
+--- /dev/null
++++ b/libavcodec/ac4_parser.c
+@@ -0,0 +1,420 @@
++/*
++ * AC-4 parser
++ * Copyright (c) 2026 Michael Rowlinson
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file
++ * AC-4 frame splitter and TOC prober.
++ *
++ * Streaming mode splits the Annex G sync stream (AC40 bare / AC41
++ * checksummed markers). AC41 frames accept on CRC-16; AC40 frames
++ * accept on a chaining anchor (the next head parses exactly at the
++ * frame end) or, at EOF, on an exact end plus a valid TOC head.
++ * Every accept also passes a TOC-head gate (reserved rate rows 14/15
++ * rejected). Any reject advances exactly one byte.
++ *
++ * COMPLETE_FRAMES mode passes bare raw frames through (MP4 samples,
++ * raw-demux packets) and only probes the TOC. It never scans.
++ *
++ * Split and param fill are decoupled: the frame emits once framing
++ * verifies, while avctx/params update atomically and only when the
++ * bed walk completes. Any TOC failure leaves params untouched.
++ */
++
++#include <string.h>
++
++#include "libavutil/channel_layout.h"
++#include "libavutil/common.h"
++#include "libavutil/error.h"
++#include "libavutil/intreadwrite.h"
++#include "libavutil/log.h"
++#include "libavutil/mem.h"
++
++#include "ac4_toc.h"
++#include "get_bits.h"
++#include "parser.h"
++#include "parser_internal.h"
++
++#define AC4_SYNC_BARE 0xAC40
++#define AC4_SYNC_CRC  0xAC41
++
++/* Largest representable sync frame: 7-byte header + 2^24-1 raw + CRC. */
++#define AC4_MAX_TOTAL 16777224
++
++/* Largest plausible sync frame. The corpus max is 4286 B and the 16-bit
++ * length field tops out at 65540 B total, so a claim past 128 KiB would
++ * need ~24 Mbps of audio in one 43 ms frame: absurd. Heads claiming more
++ * reject before buffering or CRC, bounding per-position resync work. */
++#define AC4_MAX_SCAN (128 * 1024)
++
++typedef struct AC4ParseContext {
++    ParseContext pc;
++    int tent_logged;        /* tentative-layout notice already shown */
++    int64_t frame_number;   /* param fills, for the bit_rate average */
++} AC4ParseContext;
++
++
++/* CRC-16, MSB-first, poly 0x8005, init 0. The span covers the length
++ * field, the raw frame and the stored word; accept on zero remainder.
++ * AV_CRC_16_ANSI is reflected, so it cannot be used here. */
++static int ac4_crc_ok(const uint8_t *p, int len)
++{
++    unsigned int crc = 0;
++
++    for (int i = 0; i < len; i++) {
++        crc ^= (unsigned int) p[i] << 8;
++        for (int k = 0; k < 8; k++)
++            crc = (crc & 0x8000) ? ((crc << 1) ^ 0x8005) : (crc << 1);
++        crc &= 0xFFFF;
++    }
++    return !crc;
++}
++
++typedef struct AC4Candidate {
++    int total;  /* full sync-frame span */
++    int hlen;   /* header bytes: 4, or 7 with the extended length */
++    int crc;    /* 1 for the checksummed marker */
++} AC4Candidate;
++
++/* Classify the head at p: 1 = complete head, 0 = not a head (resync),
++ * -1 = split head, more data needed. The span is hlen + rawlen plus
++ * the stored word for checksummed frames. Absurd claims past AC4_MAX_SCAN
++ * count as not-a-head, so they resync without buffering or CRC. */
++static int ac4_head_at(const uint8_t *p, int avail, AC4Candidate *c)
++{
++    unsigned int marker, rawlen;
++
++    if (avail < 2)
++        return -1;
++    marker = AV_RB16(p);
++    if (marker != AC4_SYNC_BARE && marker != AC4_SYNC_CRC)
++        return 0;
++    if (avail < 4)
++        return -1;
++    c->crc  = (marker == AC4_SYNC_CRC);
++    c->hlen = 4;
++    rawlen  = AV_RB16(p + 2);
++    if (rawlen == 0xFFFF) {
++        if (avail < 7)
++            return -1;
++        c->hlen = 7;
++        rawlen  = AV_RB24(p + 4);
++    }
++    c->total = (int) ((unsigned int) c->hlen + rawlen + (c->crc ? 2u : 0u));
++    if (c->total > AC4_MAX_TOTAL)
++        return 0;
++    if (c->total > AC4_MAX_SCAN)
++        return 0;
++    return 1;
++}
++
++/* Append exactly n input bytes to the carried window. Only bytes
++ * inside the current candidate frame (plus a bounded AC40 anchor
++ * probe past its end) ever enter the window, so emission via
++ * ff_combine_frame always spans exactly the carried bytes. */
++static int ac4_append(AC4ParseContext *s, const uint8_t **in, int *in_len,
++                      int n, int *consumed)
++{
++    ParseContext *pc = &s->pc;
++    uint8_t *nb = av_fast_realloc(pc->buffer, &pc->buffer_size,
++                                  (size_t) pc->index + n +
++                                  AV_INPUT_BUFFER_PADDING_SIZE);
++
++    if (!nb) {
++        pc->index = 0;
++        return AVERROR(ENOMEM);
++    }
++    pc->buffer = nb;
++    memcpy(pc->buffer + pc->index, *in, n);
++    memset(pc->buffer + pc->index + n, 0, AV_INPUT_BUFFER_PADDING_SIZE);
++    pc->index += n;
++    *in       += n;
++    *in_len   -= n;
++    *consumed += n;
++    return 0;
++}
++
++/* Drop the first n window bytes (rejected head bytes, resync noise). */
++static void ac4_drop(AC4ParseContext *s, int n)
++{
++    ParseContext *pc = &s->pc;
++
++    if (n > pc->index)
++        n = pc->index;
++    pc->index -= n;
++    if (pc->index > 0)
++        memmove(pc->buffer, pc->buffer + n, pc->index);
++}
++
++typedef enum AC4Verdict {
++    AC4_ACCEPT,
++    AC4_REJECT,
++    AC4_NEED_MORE,   /* AC40 anchor split past the available bytes */
++} AC4Verdict;
++
++/* Judge one complete candidate frame: the TOC-head gate first, then
++ * the CRC for checksummed frames or the chaining anchor for bare
++ * ones. `after`/`after_len` are the bytes past the frame end. */
++static AC4Verdict ac4_validate(const uint8_t *frame, const AC4Candidate *c,
++                               const uint8_t *after, int after_len,
++                               int eof, FFAC4TOC *toc)
++{
++    const uint8_t *raw = frame + c->hlen;
++    int raw_len = c->total - c->hlen - (c->crc ? 2 : 0);
++
++    ff_ac4_toc_parse(raw, raw_len, toc);
++    if (!toc->head_ok)
++        return AC4_REJECT;
++    if (c->crc)
++        return ac4_crc_ok(frame + 2, c->total - 2) ? AC4_ACCEPT : AC4_REJECT;
++    {
++        AC4Candidate a;
++        int ar = ac4_head_at(after, after_len, &a);
++
++        if (ar > 0)
++            return AC4_ACCEPT;
++        if (ar == 0)
++            return AC4_REJECT;
++        if (!eof)
++            return AC4_NEED_MORE;
++        return after_len == 0 ? AC4_ACCEPT : AC4_REJECT;
++    }
++}
++
++static void ac4_fill_params(AC4ParseContext *s, AVCodecParserContext *s1,
++                            AVCodecContext *avctx, const FFAC4TOC *toc,
++                            int emitted_bytes)
++{
++    int sample_rate = (toc->fs ? 48000 : 44100) * toc->sf_mult;
++    int num, den, duration;
++    int64_t bit_rate;
++
++    ff_ac4_toc_frame_len(toc->rate, toc->fs, toc->sf_mult, &num, &den);
++    duration = ff_ac4_toc_frame_dur(num, den, s->frame_number);
++
++    s1->key_frame = toc->ig;
++    if (!toc->bed_ok)
++        return;
++    s1->duration       = duration;
++    avctx->sample_rate = sample_rate;
++    av_channel_layout_uninit(&avctx->ch_layout);
++    switch (toc->channels) {
++    case 1:
++        av_channel_layout_from_mask(&avctx->ch_layout, AV_CH_LAYOUT_MONO);
++        break;
++    case 2:
++        av_channel_layout_from_mask(&avctx->ch_layout, AV_CH_LAYOUT_STEREO);
++        break;
++    case 6:
++        av_channel_layout_from_mask(&avctx->ch_layout, AV_CH_LAYOUT_5POINT1);
++        break;
++    case 8:
++        av_channel_layout_from_mask(&avctx->ch_layout, AV_CH_LAYOUT_7POINT1);
++        break;
++    default:
++        avctx->ch_layout.order       = AV_CHANNEL_ORDER_UNSPEC;
++        avctx->ch_layout.nb_channels = toc->channels;
++        break;
++    }
++    if (toc->tentative && !s->tent_logged) {
++        s->tent_logged = 1;
++        av_log(avctx, AV_LOG_DEBUG,
++               "ac4: tentative 24-channel layout for row-15 mode\n");
++    }
++    bit_rate = (int64_t) emitted_bytes * 8 * sample_rate / duration;
++    s->frame_number++;
++    avctx->bit_rate += (bit_rate - avctx->bit_rate) / s->frame_number;
++}
++
++static int ac4_parse(AVCodecParserContext *s1, AVCodecContext *avctx,
++                     const uint8_t **poutbuf, int *poutbuf_size,
++                     const uint8_t *buf, int buf_size)
++{
++    AC4ParseContext *s = s1->priv_data;
++    ParseContext *pc = &s->pc;
++    const uint8_t *in = buf;
++    int in_len = buf_size;
++    int consumed = 0;
++    int eof = (buf_size == 0);
++
++    *poutbuf      = NULL;
++    *poutbuf_size = 0;
++    s1->key_frame = -1;
++
++    if (s1->flags & PARSER_FLAG_COMPLETE_FRAMES) {
++        if (buf_size > 0) {
++            FFAC4TOC toc;
++
++            ff_ac4_toc_parse(buf, buf_size, &toc);
++            if (toc.head_ok)
++                ac4_fill_params(s, s1, avctx, &toc, buf_size);
++            *poutbuf      = buf;
++            *poutbuf_size = buf_size;
++        }
++        return buf_size;
++    }
++
++    /* Streaming is scan-then-combine. Noise is skipped in the input
++     * without buffering, and only candidate-frame bytes (plus a
++     * bounded AC40 anchor probe past the frame end) enter the carried
++     * window, so every emit spans exactly the frame and the return
++     * value is the frame-end offset. Every iteration consumes input,
++     * shrinks the window, emits, or returns, so the loop terminates;
++     * every return on input consumes at least one byte. */
++    if (pc->overread) {
++        /* Restore the anchor-probe tail kept back by the previous
++         * emit. Deferred to this call because the emitted packet
++         * aliases the window. */
++        for (; pc->overread > 0; pc->overread--)
++            pc->buffer[pc->index++] = pc->buffer[pc->overread_index++];
++    }
++    for (;;) {
++        AC4Candidate c;
++        FFAC4TOC toc;
++        AC4Verdict v;
++        int hr, ret;
++
++        /* The carried window starts at a head, or is empty. */
++        while (pc->index > 0) {
++            hr = ac4_head_at(pc->buffer, pc->index, &c);
++            if (hr > 0)
++                break;
++            if (hr == 0) {
++                ac4_drop(s, 1);
++                continue;
++            }
++            if (eof || in_len == 0) {
++                if (eof)
++                    ac4_drop(s, 1);
++                else
++                    return consumed;
++            } else if (ac4_append(s, &in, &in_len,
++                                  FFMIN(7 - pc->index, in_len),
++                                  &consumed) < 0) {
++                return buf_size;
++            }
++        }
++
++        if (!pc->index) {
++            const uint8_t *m;
++
++            if (!in_len)
++                return consumed;
++            /* Skip noise in the input; it never enters the window. */
++            m = memchr(in, 0xAC, in_len);
++            if (!m)
++                return consumed + in_len;
++            consumed += m - in;
++            in_len   -= m - in;
++            in        = m;
++            hr = ac4_head_at(in, in_len, &c);
++            if (hr == 0) {
++                consumed++;
++                in++;
++                in_len--;
++                continue;
++            }
++            if (hr < 0 || in_len < c.total) {
++                /* Split head or partial frame: every remaining byte
++                 * lies inside the candidate span, so buffer it all. */
++                if (ac4_append(s, &in, &in_len, in_len, &consumed) < 0)
++                    return buf_size;
++                return consumed;
++            }
++            v = ac4_validate(in, &c, in + c.total, in_len - c.total,
++                             eof, &toc);
++            if (v == AC4_REJECT) {
++                consumed++;
++                in++;
++                in_len--;
++                continue;
++            }
++            if (v == AC4_NEED_MORE) {
++                /* The frame is complete but the anchor runs past the
++                 * input end; carry the frame and probe the anchor
++                 * from the next input. */
++                if (ac4_append(s, &in, &in_len, c.total, &consumed) < 0)
++                    return buf_size;
++                continue;
++            }
++            ret = ff_combine_frame(pc, c.total, &in, &in_len);
++            if (ret < 0)
++                return buf_size;
++            ac4_fill_params(s, s1, avctx, &toc, c.total);
++            *poutbuf      = in;
++            *poutbuf_size = in_len;
++            return consumed + c.total;
++        }
++
++        hr = ac4_head_at(pc->buffer, pc->index, &c);
++        if (pc->index < c.total) {
++            int need;
++
++            if (eof) {
++                /* A head that never completes still resyncs: later
++                 * bytes may hold the next frame. */
++                ac4_drop(s, 1);
++                continue;
++            }
++            if (!in_len)
++                return consumed;
++            need = c.total - pc->index;
++            if (ac4_append(s, &in, &in_len, FFMIN(need, in_len),
++                           &consumed) < 0)
++                return buf_size;
++            if (pc->index < c.total)
++                return consumed;
++        }
++        v = ac4_validate(pc->buffer, &c, pc->buffer + c.total,
++                         pc->index - c.total, eof, &toc);
++        if (v == AC4_REJECT) {
++            ac4_drop(s, 1);
++            continue;
++        }
++        if (v == AC4_NEED_MORE) {
++            int probe = pc->index - c.total;
++
++            if (!in_len)
++                return consumed;
++            /* Top up the anchor probe, at most to a classifiable
++             * head past the frame end. */
++            if (ac4_append(s, &in, &in_len, FFMIN(7 - probe, in_len),
++                           &consumed) < 0)
++                return buf_size;
++            continue;
++        }
++        /* A negative next keeps the probe tail past the frame end in
++         * the overread area; it is restored on the next call. */
++        ret = ff_combine_frame(pc, c.total - pc->index, &in, &in_len);
++        if (ret < 0)
++            return buf_size;
++        ac4_fill_params(s, s1, avctx, &toc, c.total);
++        *poutbuf      = in;
++        *poutbuf_size = in_len;
++        return consumed;
++    }
++}
++
++const FFCodecParser ff_ac4_parser = {
++    PARSER_CODEC_LIST(AV_CODEC_ID_AC4),
++    .priv_data_size = sizeof(AC4ParseContext),
++    .parse          = ac4_parse,
++    .close          = ff_parse_close,
++};
+diff --git a/libavcodec/parsers.c b/libavcodec/parsers.c
+index 263b606..d205bb6 100644
+--- a/libavcodec/parsers.c
++++ b/libavcodec/parsers.c
+@@ -24,6 +24,7 @@
+ extern const FFCodecParser ff_aac_parser;
+ extern const FFCodecParser ff_aac_latm_parser;
+ extern const FFCodecParser ff_ac3_parser;
++extern const FFCodecParser ff_ac4_parser;
+ extern const FFCodecParser ff_adx_parser;
+ extern const FFCodecParser ff_ahx_parser;
+ extern const FFCodecParser ff_amr_parser;
+diff --git a/tests/ref/fate/ac4-copy-51 b/tests/ref/fate/ac4-copy-51
+index c744cba..ef1e58d 100644
+--- a/tests/ref/fate/ac4-copy-51
++++ b/tests/ref/fate/ac4-copy-51
+@@ -5,4 +5,4 @@
+ #channel_layout_name 0: 5.1(side)
+ 0,          0,          0,     2048,      683, 0x9c591a26
+ 0,       2048,       2048,     2048,      682, 0x469a1126
+-0,       4096,       4096,     2048,      683, 0xada5fdc8
++0,       4096,       4096,     2048,      683, 0xada5fdc8, F=0x0
+diff --git a/tests/ref/fate/ac4-copy-stereo b/tests/ref/fate/ac4-copy-stereo
+index 530102b..688e8fe 100644
+--- a/tests/ref/fate/ac4-copy-stereo
++++ b/tests/ref/fate/ac4-copy-stereo
+@@ -5,4 +5,4 @@
+ #channel_layout_name 0: stereo
+ 0,          0,          0,     2048,      342, 0x23081287
+ 0,       2048,       2048,     2048,      341, 0xbad70aae
+-0,       4096,       4096,     2048,      341, 0x27346f7e
++0,       4096,       4096,     2048,      341, 0x27346f7e, F=0x0
+diff --git a/tests/ref/fate/ac4-demux b/tests/ref/fate/ac4-demux
+index 530102b..688e8fe 100644
+--- a/tests/ref/fate/ac4-demux
++++ b/tests/ref/fate/ac4-demux
+@@ -5,4 +5,4 @@
+ #channel_layout_name 0: stereo
+ 0,          0,          0,     2048,      342, 0x23081287
+ 0,       2048,       2048,     2048,      341, 0xbad70aae
+-0,       4096,       4096,     2048,      341, 0x27346f7e
++0,       4096,       4096,     2048,      341, 0x27346f7e, F=0x0
+diff --git a/tests/ref/fate/ac4-demux-51 b/tests/ref/fate/ac4-demux-51
+index c744cba..ef1e58d 100644
+--- a/tests/ref/fate/ac4-demux-51
++++ b/tests/ref/fate/ac4-demux-51
+@@ -5,4 +5,4 @@
+ #channel_layout_name 0: 5.1(side)
+ 0,          0,          0,     2048,      683, 0x9c591a26
+ 0,       2048,       2048,     2048,      682, 0x469a1126
+-0,       4096,       4096,     2048,      683, 0xada5fdc8
++0,       4096,       4096,     2048,      683, 0xada5fdc8, F=0x0
+diff --git a/tests/ref/fate/ac4-frac-copy b/tests/ref/fate/ac4-frac-copy
+index 43a6ee6..5338987 100644
+--- a/tests/ref/fate/ac4-frac-copy
++++ b/tests/ref/fate/ac4-frac-copy
+@@ -4,122 +4,122 @@
+ #sample_rate 0: 48000
+ #channel_layout_name 0: stereo
+ 0,          0,          0,     1602,      348, 0x9b45a720
+-0,       1602,       1602,     1601,      310, 0x9e8e8f67
+-0,       3203,       3203,     1602,      308, 0xea438d4a
+-0,       4805,       4805,     1601,      288, 0x0547886b
+-0,       6406,       6406,     1602,      291, 0x0b2e84fb
+-0,       8008,       8008,     1602,      280, 0x847885c3
+-0,       9610,       9610,     1601,      373, 0x6650b509
+-0,      11211,      11211,     1602,      403, 0xf3e2c9a3
+-0,      12813,      12813,     1601,      259, 0x5d8d76db
+-0,      14414,      14414,     1602,      280, 0x3a178151
+-0,      16016,      16016,     1602,      313, 0x096c90b9
+-0,      17618,      17618,     1601,      258, 0xc0997e8c
+-0,      19219,      19219,     1602,      274, 0xcf57820a
+-0,      20821,      20821,     1601,      239, 0xc3526ac3
+-0,      22422,      22422,     1602,      243, 0x743671b9
+-0,      24024,      24024,     1602,      361, 0xe2fbb174
+-0,      25626,      25626,     1601,      268, 0xf94b7aeb
+-0,      27227,      27227,     1602,      238, 0x574d73cc
+-0,      28829,      28829,     1601,      248, 0x8fc773dd
+-0,      30430,      30430,     1602,      229, 0xc08c6c29
+-0,      32032,      32032,     1602,      232, 0x97e66592
+-0,      33634,      33634,     1601,      244, 0x175772fa
+-0,      35235,      35235,     1602,      271, 0x2b8980c9
+-0,      36837,      36837,     1601,      308, 0xc6a18c89
+-0,      38438,      38438,     1602,      244, 0x50327379
+-0,      40040,      40040,     1602,      218, 0x19b76622
+-0,      41642,      41642,     1601,      231, 0x20166bc9
+-0,      43243,      43243,     1602,      236, 0x2b626ce0
+-0,      44845,      44845,     1601,      244, 0x2a3e772b
+-0,      46446,      46446,     1602,      242, 0xb82474b3
++0,       1602,       1602,     1601,      310, 0x9e8e8f67, F=0x0
++0,       3203,       3203,     1602,      308, 0xea438d4a, F=0x0
++0,       4805,       4805,     1601,      288, 0x0547886b, F=0x0
++0,       6406,       6406,     1602,      291, 0x0b2e84fb, F=0x0
++0,       8008,       8008,     1602,      280, 0x847885c3, F=0x0
++0,       9610,       9610,     1601,      373, 0x6650b509, F=0x0
++0,      11211,      11211,     1602,      403, 0xf3e2c9a3, F=0x0
++0,      12813,      12813,     1601,      259, 0x5d8d76db, F=0x0
++0,      14414,      14414,     1602,      280, 0x3a178151, F=0x0
++0,      16016,      16016,     1602,      313, 0x096c90b9, F=0x0
++0,      17618,      17618,     1601,      258, 0xc0997e8c, F=0x0
++0,      19219,      19219,     1602,      274, 0xcf57820a, F=0x0
++0,      20821,      20821,     1601,      239, 0xc3526ac3, F=0x0
++0,      22422,      22422,     1602,      243, 0x743671b9, F=0x0
++0,      24024,      24024,     1602,      361, 0xe2fbb174, F=0x0
++0,      25626,      25626,     1601,      268, 0xf94b7aeb, F=0x0
++0,      27227,      27227,     1602,      238, 0x574d73cc, F=0x0
++0,      28829,      28829,     1601,      248, 0x8fc773dd, F=0x0
++0,      30430,      30430,     1602,      229, 0xc08c6c29, F=0x0
++0,      32032,      32032,     1602,      232, 0x97e66592, F=0x0
++0,      33634,      33634,     1601,      244, 0x175772fa, F=0x0
++0,      35235,      35235,     1602,      271, 0x2b8980c9, F=0x0
++0,      36837,      36837,     1601,      308, 0xc6a18c89, F=0x0
++0,      38438,      38438,     1602,      244, 0x50327379, F=0x0
++0,      40040,      40040,     1602,      218, 0x19b76622, F=0x0
++0,      41642,      41642,     1601,      231, 0x20166bc9, F=0x0
++0,      43243,      43243,     1602,      236, 0x2b626ce0, F=0x0
++0,      44845,      44845,     1601,      244, 0x2a3e772b, F=0x0
++0,      46446,      46446,     1602,      242, 0xb82474b3, F=0x0
+ 0,      48048,      48048,     1602,      297, 0x1cff8ece
+-0,      49650,      49650,     1601,      245, 0x389572a3
+-0,      51251,      51251,     1602,      248, 0xf0717a27
+-0,      52853,      52853,     1601,      242, 0x4f32751a
+-0,      54454,      54454,     1602,      245, 0x7033771b
+-0,      56056,      56056,     1602,      248, 0x2aad7885
+-0,      57658,      57658,     1601,      254, 0xa4597356
+-0,      59259,      59259,     1602,      264, 0x83187508
+-0,      60861,      60861,     1601,      274, 0xe1477a21
+-0,      62462,      62462,     1602,      268, 0x65487645
+-0,      64064,      64064,     1602,      270, 0x55c77f67
+-0,      65666,      65666,     1601,      236, 0xe1396f40
+-0,      67267,      67267,     1602,      281, 0xcb89814a
+-0,      68869,      68869,     1601,      298, 0xaa9985ba
+-0,      70470,      70470,     1602,      283, 0xadb182cb
+-0,      72072,      72072,     1602,      367, 0xea73aea0
+-0,      73674,      73674,     1601,      349, 0x5ccc9a41
+-0,      75275,      75275,     1602,      321, 0x4a7f9691
+-0,      76877,      76877,     1601,      285, 0x7b288cb1
+-0,      78478,      78478,     1602,      288, 0x878f8c54
+-0,      80080,      80080,     1602,      292, 0x9dd88c28
+-0,      81682,      81682,     1601,      302, 0xa3729042
+-0,      83283,      83283,     1602,      293, 0xc5ce8888
+-0,      84885,      84885,     1601,      287, 0x4d4f833a
+-0,      86486,      86486,     1602,      276, 0x80577c26
+-0,      88088,      88088,     1602,      260, 0xfa197d3a
+-0,      89690,      89690,     1601,      286, 0x04448a9a
+-0,      91291,      91291,     1602,      281, 0x65228827
+-0,      92893,      92893,     1601,      280, 0xf9f98500
+-0,      94494,      94494,     1602,      271, 0xe3677fb3
++0,      49650,      49650,     1601,      245, 0x389572a3, F=0x0
++0,      51251,      51251,     1602,      248, 0xf0717a27, F=0x0
++0,      52853,      52853,     1601,      242, 0x4f32751a, F=0x0
++0,      54454,      54454,     1602,      245, 0x7033771b, F=0x0
++0,      56056,      56056,     1602,      248, 0x2aad7885, F=0x0
++0,      57658,      57658,     1601,      254, 0xa4597356, F=0x0
++0,      59259,      59259,     1602,      264, 0x83187508, F=0x0
++0,      60861,      60861,     1601,      274, 0xe1477a21, F=0x0
++0,      62462,      62462,     1602,      268, 0x65487645, F=0x0
++0,      64064,      64064,     1602,      270, 0x55c77f67, F=0x0
++0,      65666,      65666,     1601,      236, 0xe1396f40, F=0x0
++0,      67267,      67267,     1602,      281, 0xcb89814a, F=0x0
++0,      68869,      68869,     1601,      298, 0xaa9985ba, F=0x0
++0,      70470,      70470,     1602,      283, 0xadb182cb, F=0x0
++0,      72072,      72072,     1602,      367, 0xea73aea0, F=0x0
++0,      73674,      73674,     1601,      349, 0x5ccc9a41, F=0x0
++0,      75275,      75275,     1602,      321, 0x4a7f9691, F=0x0
++0,      76877,      76877,     1601,      285, 0x7b288cb1, F=0x0
++0,      78478,      78478,     1602,      288, 0x878f8c54, F=0x0
++0,      80080,      80080,     1602,      292, 0x9dd88c28, F=0x0
++0,      81682,      81682,     1601,      302, 0xa3729042, F=0x0
++0,      83283,      83283,     1602,      293, 0xc5ce8888, F=0x0
++0,      84885,      84885,     1601,      287, 0x4d4f833a, F=0x0
++0,      86486,      86486,     1602,      276, 0x80577c26, F=0x0
++0,      88088,      88088,     1602,      260, 0xfa197d3a, F=0x0
++0,      89690,      89690,     1601,      286, 0x04448a9a, F=0x0
++0,      91291,      91291,     1602,      281, 0x65228827, F=0x0
++0,      92893,      92893,     1601,      280, 0xf9f98500, F=0x0
++0,      94494,      94494,     1602,      271, 0xe3677fb3, F=0x0
+ 0,      96096,      96096,     1602,      349, 0x1a87a8da
+-0,      97698,      97698,     1601,      256, 0xa31184c6
+-0,      99299,      99299,     1602,      298, 0xf3e98c9a
+-0,     100901,     100901,     1601,      267, 0xad8781e9
+-0,     102502,     102502,     1602,      267, 0x1c2080b2
+-0,     104104,     104104,     1602,      265, 0xd4cb7e29
+-0,     105706,     105706,     1601,      256, 0x68237fde
+-0,     107307,     107307,     1602,      266, 0x22c381ee
+-0,     108909,     108909,     1601,      258, 0x6fb47a64
+-0,     110510,     110510,     1602,      253, 0x81027ffb
+-0,     112112,     112112,     1602,      257, 0x45e77d7b
+-0,     113714,     113714,     1601,      249, 0xddd77325
+-0,     115315,     115315,     1602,      235, 0x3fe07087
+-0,     116917,     116917,     1601,      274, 0x28cf7ba4
+-0,     118518,     118518,     1602,      231, 0xb942757e
+-0,     120120,     120120,     1602,      282, 0xe5f989d5
+-0,     121722,     121722,     1601,      226, 0xc6ca71a4
+-0,     123323,     123323,     1602,      267, 0xea9b81f6
+-0,     124925,     124925,     1601,      249, 0x10e17743
+-0,     126526,     126526,     1602,      261, 0xac927b2c
+-0,     128128,     128128,     1602,      234, 0x7903723f
+-0,     129730,     129730,     1601,      262, 0x91087efb
+-0,     131331,     131331,     1602,      261, 0x93867cab
+-0,     132933,     132933,     1601,      250, 0x9c2e75b6
+-0,     134534,     134534,     1602,      261, 0xcbdd794d
+-0,     136136,     136136,     1602,      233, 0xa0f2765e
+-0,     137738,     137738,     1601,      257, 0xc0fb7b5c
+-0,     139339,     139339,     1602,      246, 0x18667711
+-0,     140941,     140941,     1601,      255, 0x0bf2754e
+-0,     142542,     142542,     1602,      267, 0xaf7e7f85
++0,      97698,      97698,     1601,      256, 0xa31184c6, F=0x0
++0,      99299,      99299,     1602,      298, 0xf3e98c9a, F=0x0
++0,     100901,     100901,     1601,      267, 0xad8781e9, F=0x0
++0,     102502,     102502,     1602,      267, 0x1c2080b2, F=0x0
++0,     104104,     104104,     1602,      265, 0xd4cb7e29, F=0x0
++0,     105706,     105706,     1601,      256, 0x68237fde, F=0x0
++0,     107307,     107307,     1602,      266, 0x22c381ee, F=0x0
++0,     108909,     108909,     1601,      258, 0x6fb47a64, F=0x0
++0,     110510,     110510,     1602,      253, 0x81027ffb, F=0x0
++0,     112112,     112112,     1602,      257, 0x45e77d7b, F=0x0
++0,     113714,     113714,     1601,      249, 0xddd77325, F=0x0
++0,     115315,     115315,     1602,      235, 0x3fe07087, F=0x0
++0,     116917,     116917,     1601,      274, 0x28cf7ba4, F=0x0
++0,     118518,     118518,     1602,      231, 0xb942757e, F=0x0
++0,     120120,     120120,     1602,      282, 0xe5f989d5, F=0x0
++0,     121722,     121722,     1601,      226, 0xc6ca71a4, F=0x0
++0,     123323,     123323,     1602,      267, 0xea9b81f6, F=0x0
++0,     124925,     124925,     1601,      249, 0x10e17743, F=0x0
++0,     126526,     126526,     1602,      261, 0xac927b2c, F=0x0
++0,     128128,     128128,     1602,      234, 0x7903723f, F=0x0
++0,     129730,     129730,     1601,      262, 0x91087efb, F=0x0
++0,     131331,     131331,     1602,      261, 0x93867cab, F=0x0
++0,     132933,     132933,     1601,      250, 0x9c2e75b6, F=0x0
++0,     134534,     134534,     1602,      261, 0xcbdd794d, F=0x0
++0,     136136,     136136,     1602,      233, 0xa0f2765e, F=0x0
++0,     137738,     137738,     1601,      257, 0xc0fb7b5c, F=0x0
++0,     139339,     139339,     1602,      246, 0x18667711, F=0x0
++0,     140941,     140941,     1601,      255, 0x0bf2754e, F=0x0
++0,     142542,     142542,     1602,      267, 0xaf7e7f85, F=0x0
+ 0,     144144,     144144,     1602,      280, 0xb1f68a3a
+-0,     145746,     145746,     1601,      293, 0xf28580e8
+-0,     147347,     147347,     1602,      240, 0x70b176db
+-0,     148949,     148949,     1601,      222, 0xb5c86fed
+-0,     150550,     150550,     1602,      256, 0x59277f14
+-0,     152152,     152152,     1602,      240, 0xd9b97907
+-0,     153754,     153754,     1601,      242, 0x1e937040
+-0,     155355,     155355,     1602,      240, 0xbfcf6ffb
+-0,     156957,     156957,     1601,      243, 0xfcad77a8
+-0,     158558,     158558,     1602,      254, 0xaeb18185
+-0,     160160,     160160,     1602,      241, 0x186c769a
+-0,     161762,     161762,     1601,      243, 0x052d7caf
+-0,     163363,     163363,     1602,      263, 0x882d7ea8
+-0,     164965,     164965,     1601,      274, 0xfa98819b
+-0,     166566,     166566,     1602,      260, 0x1fd17fd7
+-0,     168168,     168168,     1602,      280, 0xcb818c18
+-0,     169770,     169770,     1601,      266, 0xf3bf8065
+-0,     171371,     171371,     1602,      243, 0x85f87080
+-0,     172973,     172973,     1601,      255, 0xff1d75fb
+-0,     174574,     174574,     1602,      258, 0x97067f94
+-0,     176176,     176176,     1602,      265, 0x71057e2d
+-0,     177778,     177778,     1601,      265, 0x309c8544
+-0,     179379,     179379,     1602,      244, 0xaecb75a2
+-0,     180981,     180981,     1601,      283, 0x4cf18849
+-0,     182582,     182582,     1602,      238, 0xac4b6da9
+-0,     184184,     184184,     1602,      239, 0x04a17bc8
+-0,     185786,     185786,     1601,      284, 0x5bfb878e
+-0,     187387,     187387,     1602,      243, 0xe572757a
+-0,     188989,     188989,     1601,      246, 0xa8db75b9
+-0,     190590,     190590,     1602,      251, 0x89997c08
++0,     145746,     145746,     1601,      293, 0xf28580e8, F=0x0
++0,     147347,     147347,     1602,      240, 0x70b176db, F=0x0
++0,     148949,     148949,     1601,      222, 0xb5c86fed, F=0x0
++0,     150550,     150550,     1602,      256, 0x59277f14, F=0x0
++0,     152152,     152152,     1602,      240, 0xd9b97907, F=0x0
++0,     153754,     153754,     1601,      242, 0x1e937040, F=0x0
++0,     155355,     155355,     1602,      240, 0xbfcf6ffb, F=0x0
++0,     156957,     156957,     1601,      243, 0xfcad77a8, F=0x0
++0,     158558,     158558,     1602,      254, 0xaeb18185, F=0x0
++0,     160160,     160160,     1602,      241, 0x186c769a, F=0x0
++0,     161762,     161762,     1601,      243, 0x052d7caf, F=0x0
++0,     163363,     163363,     1602,      263, 0x882d7ea8, F=0x0
++0,     164965,     164965,     1601,      274, 0xfa98819b, F=0x0
++0,     166566,     166566,     1602,      260, 0x1fd17fd7, F=0x0
++0,     168168,     168168,     1602,      280, 0xcb818c18, F=0x0
++0,     169770,     169770,     1601,      266, 0xf3bf8065, F=0x0
++0,     171371,     171371,     1602,      243, 0x85f87080, F=0x0
++0,     172973,     172973,     1601,      255, 0xff1d75fb, F=0x0
++0,     174574,     174574,     1602,      258, 0x97067f94, F=0x0
++0,     176176,     176176,     1602,      265, 0x71057e2d, F=0x0
++0,     177778,     177778,     1601,      265, 0x309c8544, F=0x0
++0,     179379,     179379,     1602,      244, 0xaecb75a2, F=0x0
++0,     180981,     180981,     1601,      283, 0x4cf18849, F=0x0
++0,     182582,     182582,     1602,      238, 0xac4b6da9, F=0x0
++0,     184184,     184184,     1602,      239, 0x04a17bc8, F=0x0
++0,     185786,     185786,     1601,      284, 0x5bfb878e, F=0x0
++0,     187387,     187387,     1602,      243, 0xe572757a, F=0x0
++0,     188989,     188989,     1601,      246, 0xa8db75b9, F=0x0
++0,     190590,     190590,     1602,      251, 0x89997c08, F=0x0
+diff --git a/tests/ref/fate/ac4-seek-eof b/tests/ref/fate/ac4-seek-eof
+index 8fb34e0..d022b37 100644
+--- a/tests/ref/fate/ac4-seek-eof
++++ b/tests/ref/fate/ac4-seek-eof
+@@ -3,4 +3,5 @@
+ #codec_id 0: ac4
+ #sample_rate 0: 48000
+ #channel_layout_name 0: stereo
+-0,       4096,       4096,     2048,      341, 0x27346f7e
++0,       2048,       2048,     2048,      341, 0xbad70aae
++0,       4096,       4096,     2048,      341, 0x27346f7e, F=0x0
+diff --git a/tests/ref/seek/extra-ac4 b/tests/ref/seek/extra-ac4
+index 08c9d1e..d17c68a 100644
+--- a/tests/ref/seek/extra-ac4
++++ b/tests/ref/seek/extra-ac4
+@@ -2,39 +2,39 @@ ret: 0         st: 0 flags:1 dts: 0.000000 pts: 0.000000 pos:      0 size:   342
+ ret: 0         st:-1 flags:0  ts:-1.000000
+ ret: 0         st: 0 flags:1 dts: 0.000000 pts: 0.000000 pos:      0 size:   342
+ ret: 0         st:-1 flags:1  ts: 1.894167
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret:-1         st: 0 flags:0  ts: 0.788333
+ ret:-1         st: 0 flags:1  ts:-0.317500
+ ret:-1         st:-1 flags:0  ts: 2.576668
+ ret: 0         st:-1 flags:1  ts: 1.470835
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret:-1         st: 0 flags:0  ts: 0.365000
+ ret:-1         st: 0 flags:1  ts:-0.740833
+ ret:-1         st:-1 flags:0  ts: 2.153336
+ ret: 0         st:-1 flags:1  ts: 1.047503
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret: 0         st: 0 flags:0  ts:-0.058333
+ ret: 0         st: 0 flags:1 dts: 0.000000 pts: 0.000000 pos:      0 size:   342
+ ret: 0         st: 0 flags:1  ts: 2.835833
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret:-1         st:-1 flags:0  ts: 1.730004
+ ret: 0         st:-1 flags:1  ts: 0.624171
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret: 0         st: 0 flags:0  ts:-0.481667
+ ret: 0         st: 0 flags:1 dts: 0.000000 pts: 0.000000 pos:      0 size:   342
+ ret: 0         st: 0 flags:1  ts: 2.412500
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret:-1         st:-1 flags:0  ts: 1.306672
+ ret: 0         st:-1 flags:1  ts: 0.200839
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret: 0         st: 0 flags:0  ts:-0.905000
+ ret: 0         st: 0 flags:1 dts: 0.000000 pts: 0.000000 pos:      0 size:   342
+ ret: 0         st: 0 flags:1  ts: 1.989167
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret:-1         st:-1 flags:0  ts: 0.883340
+ ret:-1         st:-1 flags:1  ts:-0.222493
+ ret:-1         st: 0 flags:0  ts: 2.671667
+ ret: 0         st: 0 flags:1  ts: 1.565833
+-ret: 0         st: 0 flags:1 dts: 0.085333 pts: 0.085333 pos:    695 size:   341
++ret: 0         st: 0 flags:1 dts: 0.042667 pts: 0.042667 pos:    348 size:   341
+ ret:-1         st:-1 flags:0  ts: 0.460008
+ ret:-1         st:-1 flags:1  ts:-0.645825

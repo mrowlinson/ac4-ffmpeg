@@ -1,0 +1,244 @@
+From 5b03e54ba6d7e1b76d5bf8fbc4e4200581fa04b7 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Sat, 17 Oct 2026 03:56:24 -0400
+Subject: [PATCH 20/23] avformat/movenc: add AC-4 ac-4/dac4 muxing support
+
+MP4/MOV muxer writes the ac-4 sample entry with a dac4 box carrying
+the encoder DSI extradata verbatim (ETSI TS 103 190-2 Annex E), and
+emits one bare raw frame per MP4 sample (Annex E strip rule).
+
+- codec_mp4_tags: AC-4 -> ac-4 (MOV mode already resolves via movaudio tags).
+- mov_write_dac4_tag: size+8 + fourcc + DSI bytes; clean EINVAL when
+  extradata is missing, never an empty box.
+- stsd arms in mov_write_wave_tag (MOV) and mov_write_audio_tag (MP4);
+  MOV mode forces sample-entry v2 like EAC3, MP4 keeps v0.
+- Packet path: stateless per-packet strip of the Annex G syncframe
+  wrapper (sync + size [+ ext] + CRC iff AC41) when the packet carries
+  it; bare packets (raw demuxer / native encoder) pass through. A
+  sync-like prefix whose declared length mismatches the packet is a
+  bare-frame coincidence and is not stripped. An exact chain of two
+  or more syncframes in one packet fails loudly (EINVAL): MP4 samples
+  carry one raw frame each. No buffering, no delay_moov, no
+  mux-queue/drain/priv hooks.
+
+Changelog entry after the parser line (one policy for the whole submission; Series D applies stacked).
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ Changelog            |   1 +
+ libavformat/movenc.c | 141 +++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 142 insertions(+)
+
+diff --git a/Changelog b/Changelog
+index 0ca9c65..b0d008e 100644
+--- a/Changelog
++++ b/Changelog
+@@ -6,6 +6,7 @@ version <next>:
+ - native AC-4 audio encoder
+ - MPEG-TS muxer: AC-4 descriptors
+ - AC-4 parser
++- AC-4 audio in MP4/MOV (ac-4 sample entry with dac4 box)
+ 
+ version 9.1:
+ - ASTC image encoding and decoding via libastcenc, with .astc and KTX 1.0 muxers and demuxers
+diff --git a/libavformat/movenc.c b/libavformat/movenc.c
+index debe1ac..f6e04bc 100644
+--- a/libavformat/movenc.c
++++ b/libavformat/movenc.c
+@@ -698,6 +698,116 @@ static int mov_write_eac3_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *tra
+     return size;
+ }
+ 
++/* Locate the bare raw frame within an AC-4 packet: strip the syncframe
++ * wrapper (sync_word + frame_size [+ ext] + CRC iff AC41, ETSI
++ * TS 103 190-2 Annex G) when the packet carries it. Returns the raw
++ * offset and sets *rawlen to the raw length. Bare raw frames (raw
++ * demuxer / native encoder output) return 0 with *rawlen = size.
++ * A sync-like prefix whose declared length does not match the packet
++ * is a bare frame coincidence, not a wrapper: same passthrough.
++ * The strip lives here rather than in a BSF: handle_eac3 already parses
++ * packets in this muxer, framed packets are a real in-tree producer path
++ * (parser streaming mode emits full syncframes), and the gate is an
++ * exact length match with passthrough default, so bare input is untouched.
++ * No CRC verification: the wire CRC is MSB-first poly 0x8005 while the
++ * in-tree raw muxer writes reflected ANSI LE, so verifying would reject
++ * FFmpeg's own output (the raw demuxer likewise skips CRC). */
++static int mov_ac4_raw_offset(const uint8_t *data, int size, int *rawlen_out)
++{
++    unsigned rawlen;
++    int head, crc;
++
++    *rawlen_out = size;
++    if (size < 4 || data[0] != 0xAC || (data[1] != 0x40 && data[1] != 0x41))
++        return 0;
++    crc = data[1] == 0x41 ? 2 : 0;
++    rawlen = AV_RB16(data + 2);
++    head = 4;
++    if (rawlen == 0xFFFF) {
++        if (size < 7)
++            return 0;
++        rawlen = AV_RB24(data + 4);
++        head = 7;
++    }
++    /* rawlen 0 is never a valid frame (4-byte AC 40 00 00 coincidence). */
++    if (rawlen == 0 || (uint64_t)head + rawlen + crc != (uint64_t)size)
++        return 0;
++    *rawlen_out = rawlen;
++    return head;
++}
++
++/* True when the packet is an exact chain of two or more syncframes
++ * covering every byte: each head parses (sync + sane length) and the
++ * last frame ends exactly at the packet end. MP4 samples carry one
++ * raw frame each, so such a packet must fail loudly rather than be
++ * written as one corrupt sample. Only exact full-packet chains fail;
++ * anything else keeps the passthrough default, so bare frames with a
++ * sync-like prefix still mux untouched. */
++static int mov_ac4_is_multiframe(const uint8_t *data, int size)
++{
++    int pos = 0, frames = 0;
++
++    while (pos < size) {
++        unsigned rawlen;
++        uint64_t total;
++        int head, crc, left = size - pos;
++
++        if (left < 4 || data[pos] != 0xAC ||
++            (data[pos + 1] != 0x40 && data[pos + 1] != 0x41))
++            return 0;
++        crc = data[pos + 1] == 0x41 ? 2 : 0;
++        rawlen = AV_RB16(data + pos + 2);
++        head = 4;
++        if (rawlen == 0xFFFF) {
++            if (left < 7)
++                return 0;
++            rawlen = AV_RB24(data + pos + 4);
++            head = 7;
++        }
++        if (!rawlen)
++            return 0;
++        total = (uint64_t)head + rawlen + (uint64_t)crc;
++        if (total > (uint64_t)left)
++            return 0;
++        pos += (int)total;
++        frames++;
++    }
++    return frames > 1;
++}
++
++static int mov_write_dac4_tag(AVFormatContext *s, AVIOContext *pb,
++                              MOVTrack *track)
++{
++    int size = track->extradata_size[track->last_stsd_index];
++    const uint8_t *dsi = track->extradata[track->last_stsd_index];
++
++    if (!dsi || size <= 0) {
++        av_log(s, AV_LOG_ERROR,
++               "Cannot write dac4 atom without AC-4 decoder specific info "
++               "(extradata). Provide DSI extradata for the AC-4 stream.\n");
++        return AVERROR(EINVAL);
++    }
++
++    /* Fail fast on wire-crossed extradata; deeper DSI validation stays
++     * demux/decoder-side (demux rejects payloads < 5 bytes). */
++    if (size < 5) {
++        av_log(s, AV_LOG_ERROR,
++               "Invalid AC-4 DSI extradata (size %d < 5).\n", size);
++        return AVERROR(EINVAL);
++    }
++    if ((dsi[0] >> 5) != 1) {
++        av_log(s, AV_LOG_ERROR,
++               "Invalid AC-4 DSI extradata (ac4_dsi_version != 1).\n");
++        return AVERROR(EINVAL);
++    }
++
++    avio_wb32(pb, size + 8);
++    ffio_wfourcc(pb, "dac4");
++    avio_write(pb, dsi, size);
++
++    return size + 8;
++}
++
+ /**
+  * This function writes extradata "as is".
+  * Extradata must be formatted like a valid atom (with size and tag).
+@@ -1156,6 +1266,10 @@ static int mov_write_wave_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *tra
+         mov_write_ac3_tag(s, pb, track);
+     } else if (track->par->codec_id == AV_CODEC_ID_EAC3) {
+         mov_write_eac3_tag(s, pb, track);
++    } else if (track->par->codec_id == AV_CODEC_ID_AC4) {
++        int ret = mov_write_dac4_tag(s, pb, track);
++        if (ret < 0)
++            return ret;
+     } else if (track->par->codec_id == AV_CODEC_ID_ALAC ||
+                track->par->codec_id == AV_CODEC_ID_QDM2) {
+         mov_write_extradata_tag(pb, track);
+@@ -1457,6 +1571,7 @@ static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
+     if (track->mode == MODE_MOV) {
+         if (track->par->sample_rate > UINT16_MAX || !track->par->ch_layout.nb_channels ||
+             track->par->codec_id == AV_CODEC_ID_EAC3 ||
++            track->par->codec_id == AV_CODEC_ID_AC4 ||
+             track->par->ch_layout.nb_channels > 2) {
+             if (mov_get_lpcm_flags(track->par->codec_id))
+                 tag = AV_RL32("lpcm");
+@@ -1560,6 +1675,7 @@ static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
+         (track->par->codec_id == AV_CODEC_ID_AAC           ||
+          track->par->codec_id == AV_CODEC_ID_AC3           ||
+          track->par->codec_id == AV_CODEC_ID_EAC3          ||
++         track->par->codec_id == AV_CODEC_ID_AC4           ||
+          track->par->codec_id == AV_CODEC_ID_AMR_NB        ||
+          track->par->codec_id == AV_CODEC_ID_ALAC          ||
+          track->par->codec_id == AV_CODEC_ID_ADPCM_MS      ||
+@@ -1580,6 +1696,8 @@ static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
+         ret = mov_write_ac3_tag(s, pb, track);
+     else if (track->par->codec_id == AV_CODEC_ID_EAC3)
+         ret = mov_write_eac3_tag(s, pb, track);
++    else if (track->par->codec_id == AV_CODEC_ID_AC4)
++        ret = mov_write_dac4_tag(s, pb, track);
+     else if (track->par->codec_id == AV_CODEC_ID_ALAC)
+         ret = mov_write_extradata_tag(pb, track);
+     else if (track->par->codec_id == AV_CODEC_ID_WMAPRO)
+@@ -6375,6 +6493,9 @@ static int mov_write_ftyp_tag(AVIOContext *pb, AVFormatContext *s)
+             has_h264 = 1;
+         if (st->codecpar->codec_id == AV_CODEC_ID_AV1)
+             has_av1 = 1;
++        /* AC-4 omitted on purpose: wild AC-4 files brand mp42/isom with
++         * no dby1 and play fine, so no dby1 brand is written for AC-4
++         * output. */
+         if (st->codecpar->codec_id == AV_CODEC_ID_AC3 ||
+             st->codecpar->codec_id == AV_CODEC_ID_EAC3 ||
+             st->codecpar->codec_id == AV_CODEC_ID_TRUEHD ||
+@@ -7359,6 +7480,25 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
+         else if (!size)
+             goto end;
+         avio_write(pb, pkt->data, size);
++    } else if (par->codec_id == AV_CODEC_ID_AC4) {
++        /* MP4 samples are bare raw frames: strip the syncframe wrapper
++         * when the packet carries it, else write the packet as-is. */
++        int rawlen;
++        if (trk->cenc.aes_ctr) {
++            av_log(s, AV_LOG_ERROR,
++                   "Encrypted AC-4 output not yet supported.\n");
++            return AVERROR_PATCHWELCOME;
++        }
++        offset = mov_ac4_raw_offset(pkt->data, pkt->size, &rawlen);
++        if (!offset && mov_ac4_is_multiframe(pkt->data, pkt->size)) {
++            av_log(s, AV_LOG_ERROR,
++                   "AC-4 packet holds multiple sync frames; MP4 samples "
++                   "carry one raw frame each. Split the packet before "
++                   "muxing.\n");
++            return AVERROR(EINVAL);
++        }
++        size = rawlen;
++        avio_write(pb, pkt->data + offset, size);
+     } else if (par->codec_id == AV_CODEC_ID_EIA_608) {
+         size = 8;
+ 
+@@ -9482,6 +9622,7 @@ static const AVCodecTag codec_mp4_tags[] = {
+     { AV_CODEC_ID_MP2,             MKTAG('m', 'p', '4', 'a') },
+     { AV_CODEC_ID_AC3,             MKTAG('a', 'c', '-', '3') },
+     { AV_CODEC_ID_EAC3,            MKTAG('e', 'c', '-', '3') },
++    { AV_CODEC_ID_AC4,             MKTAG('a', 'c', '-', '4') },
+     { AV_CODEC_ID_DTS,             MKTAG('m', 'p', '4', 'a') },
+     { AV_CODEC_ID_TRUEHD,          MKTAG('m', 'l', 'p', 'a') },
+     { AV_CODEC_ID_FLAC,            MKTAG('f', 'L', 'a', 'C') },

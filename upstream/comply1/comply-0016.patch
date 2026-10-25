@@ -1,0 +1,87 @@
+From 1973bc08bb64f0ccf77fd8f2d1872bfcb01ace88 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Sat, 17 Oct 2026 03:13:00 -0400
+Subject: [PATCH 16/23] lavf/mpegtsenc: write AC-4 descriptors
+
+AC-4 over MPEG-TS rides as PES private data (ETSI TS 103 190-2 Annex D).
+Give it an explicit DVB stream type (0x06, no more "may not be
+recognized" warning), the AC-4 registration descriptor demuxers key on,
+and the DVB AC-4 descriptor (EN 300 468 D.7: tag 0x7F, ext 0x15) on the
+SYSTEM_B path.
+
+The AC-4 descriptor carries config only (dialog enhancement off, channel
+mode from the channel count: 0 mono / 1 stereo / 2 multi); TOC is
+omitted (optional per EN 300 468 D.6). Unknown channel layouts
+(nb_channels 0) map to stereo, the most common case.
+
+Changelog entry (one policy across the stack: B/C/E/D all carry lines).
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ Changelog               |  1 +
+ libavformat/mpegtsenc.c | 26 ++++++++++++++++++++++++++
+ 2 files changed, 27 insertions(+)
+
+diff --git a/Changelog b/Changelog
+index 262f79d..19f3a38 100644
+--- a/Changelog
++++ b/Changelog
+@@ -4,6 +4,7 @@ releases are sorted from youngest to oldest.
+ version <next>:
+ - native AC-4 audio decoder
+ - native AC-4 audio encoder
++- MPEG-TS muxer: AC-4 descriptors
+ 
+ version 9.1:
+ - ASTC image encoding and decoding via libastcenc, with .astc and KTX 1.0 muxers and demuxers
+diff --git a/libavformat/mpegtsenc.c b/libavformat/mpegtsenc.c
+index e57889c..d8adf92 100644
+--- a/libavformat/mpegtsenc.c
++++ b/libavformat/mpegtsenc.c
+@@ -428,6 +428,11 @@ static int get_dvb_stream_type(AVFormatContext *s, AVStream *st)
+                       ? STREAM_TYPE_PRIVATE_DATA
+                       : STREAM_TYPE_ATSC_AUDIO_EAC3;
+         break;
++    case AV_CODEC_ID_AC4:
++        /* ETSI TS 103 190-2 Annex D: AC-4 rides as PES private data;
++         * identified by the AC-4 registration and AC-4 descriptors below. */
++        stream_type = STREAM_TYPE_PRIVATE_DATA;
++        break;
+     case AV_CODEC_ID_DTS:
+         stream_type = STREAM_TYPE_BLURAY_AUDIO_DTS; // should be STREAM_TYPE_PRIVATE_DATA (ETSI TS 101 154), needs a DTS_descriptor() (ETSI EN 300 468)
+         break;
+@@ -590,6 +595,8 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
+                 put_registration_descriptor(&q, MKTAG('A', 'C', '-', '3'));
+             if (codec_id == AV_CODEC_ID_EAC3)
+                 put_registration_descriptor(&q, MKTAG('E', 'A', 'C', '3'));
++            if (codec_id == AV_CODEC_ID_AC4)
++                put_registration_descriptor(&q, MKTAG('A', 'C', '-', '4'));
+             if (ts->flags & MPEGTS_FLAG_SYSTEM_B) {
+                 if (codec_id == AV_CODEC_ID_AC3) {
+                     DVBAC3Descriptor *dvb_ac3_desc = ts_st->dvb_ac3_desc;
+@@ -618,6 +625,25 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
+                     *q++= ENHANCED_AC3_DESCRIPTOR; // EAC3 descriptor see A038 DVB SI
+                     *q++=1; // 1 byte, all flags sets to 0
+                     *q++=0; // omit all fields...
++                } else if (codec_id == AV_CODEC_ID_AC4) {
++                    /* DVB AC-4 descriptor, EN 300 468 D.7: extension tag
++                     * 0x15. TOC omitted (optional per D.6); config
++                     * carries channel mode only. */
++                    int ch = st->codecpar->ch_layout.nb_channels;
++                    int channel_mode = ch <= 0 ? 1 : ch <= 1 ? 0 :
++                                       ch <= 2 ? 1 : 2;
++
++                    /* tag + len + ext_tag + flags + config */
++                    if (q - data > SECTION_LENGTH - 5) {
++                        err = 1;
++                        break;
++                    }
++
++                    *q++ = DVB_EXTENSION_DESCRIPTOR;
++                    *q++ = 3;                 /* ext_tag + flags + config */
++                    *q++ = AC4_DESCRIPTOR;    /* 0x15 */
++                    *q++ = 0x80;              /* ac4_config_flag=1, toc=0 */
++                    *q++ = channel_mode << 5; /* dialog_enh=0, mode, reserved */
+                 }
+             }
+             if (codec_id == AV_CODEC_ID_S302M)
