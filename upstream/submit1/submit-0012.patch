@@ -1,0 +1,36 @@
+From a58ea72c79939156629edfe507a110711980d853 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 08:15:44 -0400
+Subject: [PATCH 12/23] doc/ac4enc: note CLI silent auto-fold, explicit-layout
+ exit 234, immersive deferred
+
+The ffmpeg CLI auto-downmixes >6ch inputs to 5.1 silently
+(framework auto_aresample, upstream of the encoder); only an explicit
+-channel_layout outside stereo/5.1 fails loud (exit 234). Immersive
+(5.1.4/objects) encode is out of scope for this series.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ doc/encoders.texi | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/doc/encoders.texi b/doc/encoders.texi
+index 6bf4ea85af..feb8f0e8a2 100644
+--- a/doc/encoders.texi
++++ b/doc/encoders.texi
+@@ -562,6 +562,12 @@ the loudness floor (use @code{loudness_target=0} to skip the
+ correction gain). A streaming (low-memory) mode is planned but not
+ implemented here.
+ 
++Inputs with more than 6 channels are silently downmixed to 5.1 by the
++framework's automatic resampling before the encoder sees them. Only an
++explicit @code{-channel_layout} outside stereo and 5.1 fails loudly
++(@samp{not supported by the ac4 encoder}, exit code 234). Immersive
++(5.1.4 and object-based) encoding is not implemented in this series.
++
+ @subsection Options
+ 
+ @table @option
+-- 
+2.56.0
+

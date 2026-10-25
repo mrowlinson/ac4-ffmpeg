@@ -1,0 +1,145 @@
+From ba04910183c217276032f8d4aeda9c99a30fdedf Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 08:15:39 -0400
+Subject: [PATCH 10/23] fate: add ac4 encoder tests
+
+4 asynth-only encode tests (no new samples), goldens recorded from
+the real R2 re-synced wrapper and verified through the harness:
+stereo md5 (with the -loudness_target 0 correction -- full-span
+defaults trip the by-design loud refusal on fate's own input),
+5.1 md5, stereo framecrc, and the odd-length tail framecrc (pins
+the m2 last-packet duration 1857). Gates follow the ac3.mak
+precedent (ENCMUX/FRAMECRC deps); the encoder stanzas append to the
+decoder ac4.mak this series stacks on (tests/Makefile include comes
+from that series), extending its aggregates.
+
+Re-cut (r3): re-pin the stereo goldens for the S5FU x2.0
+staging (encode md5 0f0e9f60.. -> 86828e84.., same 98193 B;
+framecrc/tail checksums rows 2-7 change, sizes/durations
+identical). 5.1 md5 (53a44aca..) and framing are byte-identical
+to r2 (MC untouched, cmp-verified).
+
+Re-cut (r6): stacked append (no separate mak/include: closes the
+B/C mak + include collisions); M11 -strict -2 on all 4 encode
+CMDs (experimental encoder). Goldens byte-identical to r5.
+Union: appendix shape (encoder section at mak end per STACK-DAG).
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ tests/fate/ac4.mak          | 53 ++++++++++++++++++++++++++++++++-----
+ tests/ref/fate/ac4-framecrc | 13 +++++++++
+ tests/ref/fate/ac4-tail     | 13 +++++++++
+ 3 files changed, 73 insertions(+), 6 deletions(-)
+ create mode 100644 tests/ref/fate/ac4-framecrc
+ create mode 100644 tests/ref/fate/ac4-tail
+
+diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
+index c2aa001ba5..735ee9de89 100644
+--- a/tests/fate/ac4.mak
++++ b/tests/fate/ac4.mak
+@@ -1,12 +1,12 @@
+-# AC-4 decoder and demux FATE tests.
++# AC-4 decoder, demux, and encoder FATE tests.
+ #
+ # Inputs live in the fate-suite under ac4/ (see the [samples-request]
+ # AC-4 decoder mail for the 12-file set); pcm REF files are suite
+ # files too, while framemd5/framecrc goldens live in tests/ref/fate/.
+-# The Series A decoder is experimental, so every decode CMD carries
+-# -strict -2 (fate/acodec.mak DCA precedent). Goldens pin current
+-# behavior; no suite test diffs against an independent decoder yet
+-# (see COVER-A).
++# The Series A decoder and the Series C encoder are experimental,
++# so every decode/encode CMD carries -strict -2 (fate/acodec.mak
++# DCA precedent). Goldens pin current behavior; no suite test
++# diffs against an independent decoder yet (see COVER-A).
+ 
+ # --- decode (pcm): stereo, byte-exact pcm vs suite ref ---
+ FATE_AC4 += fate-ac4-stereo
+@@ -170,4 +170,45 @@ FATE_AC4_REMUX-$(call REMUX, AC4) += $(FATE_AC4_REMUX)
+ FATE_SAMPLES_AVCONV += $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes)
+ FATE_FFMPEG += $(FATE_AC4_ENCNEG-yes)
+ 
+-fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes)
++# AC-4 encoder tests. No new samples: inputs are generated asynth only.
++# Goldens recorded from the real Series C wrapper (r3 re-vendor:
++# R3 guards + S5FU x2.0 stereo); T4 last-packet duration pins the m2
++# fix (1857, not 2048).
++#
++# fate-ac4-encode carries -loudness_target 0: the full-span default
++# path trips the by-design loud refusal on fate's own asynth input
++# (pre-S1 behavior; post-S1 the S1 sparse class encodes instead, but
++# the corrected path is the stable, CLI-cross-checked golden). The
++# flag keeps the loudness-measure code path under test while
++# skipping the correction gain.
++
++# --- encode: stereo md5 ---
++FATE_AC4_ENC-$(call ENCMUX, AC4, AC4, WAV_DEMUXER PCM_S16LE_DECODER ARESAMPLE_FILTER) += fate-ac4-encode
++fate-ac4-encode: tests/data/asynth-48000-2.wav
++fate-ac4-encode: SRC = $(TARGET_PATH)/tests/data/asynth-48000-2.wav
++fate-ac4-encode: CMD = md5 -i $(SRC) -c ac4 -strict -2 -ab 128k -loudness_target 0 -f ac4 -flags +bitexact -af aresample
++fate-ac4-encode: CMP = oneline
++fate-ac4-encode: REF = 86828e84ccecb4171d775806616e0e93
++
++# --- encode: 5.1 md5 (covers _mc path) ---
++FATE_AC4_ENC-$(call ENCMUX, AC4, AC4, WAV_DEMUXER PCM_S16LE_DECODER ARESAMPLE_FILTER) += fate-ac4-encode-51
++fate-ac4-encode-51: tests/data/asynth-48000-6.wav
++fate-ac4-encode-51: SRC = $(TARGET_PATH)/tests/data/asynth-48000-6.wav
++fate-ac4-encode-51: CMD = md5 -i $(SRC) -c ac4 -strict -2 -ab 256k -f ac4 -flags +bitexact -af aresample
++fate-ac4-encode-51: CMP = oneline
++fate-ac4-encode-51: REF = 53a44acaa21853f91cfef7dbdcccb67e
++
++# --- encode: framecrc (size/pts debuggability) ---
++FATE_AC4_ENC-$(call FRAMECRC, WAV, PCM_S16LE, ARESAMPLE_FILTER AC4_ENCODER) += fate-ac4-framecrc
++fate-ac4-framecrc: tests/data/asynth-48000-2.wav
++fate-ac4-framecrc: SRC = $(TARGET_PATH)/tests/data/asynth-48000-2.wav
++fate-ac4-framecrc: CMD = framecrc -i $(SRC) -c:a ac4 -strict -2 -ab 128k -frames:a 6 -af aresample
++
++# --- encode: odd-length tail (SMALL_LAST_FRAME drain) ---
++FATE_AC4_ENC-$(call FRAMECRC, WAV, PCM_S16LE, ARESAMPLE_FILTER ATRIM_FILTER AC4_ENCODER) += fate-ac4-tail
++fate-ac4-tail: tests/data/asynth-48000-2.wav
++fate-ac4-tail: SRC = $(TARGET_PATH)/tests/data/asynth-48000-2.wav
++fate-ac4-tail: CMD = framecrc -i $(SRC) -c:a ac4 -strict -2 -ab 128k -af aresample,atrim=end_sample=12097
++FATE_SAMPLES_AVCONV += $(FATE_AC4_ENC-yes)
++
++fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes)
+diff --git a/tests/ref/fate/ac4-framecrc b/tests/ref/fate/ac4-framecrc
+new file mode 100644
+index 0000000000..ce774f27e2
+--- /dev/null
++++ b/tests/ref/fate/ac4-framecrc
+@@ -0,0 +1,13 @@
++#tb 0: 1/48000
++#media_type 0: audio
++#codec_id 0: ac4
++#sample_rate 0: 48000
++#channel_layout_name 0: stereo
++0,          0,          0,     2048,      683, 0x94dd1336
++0,       2048,       2048,     2048,      682, 0xf56f0aae
++0,       4096,       4096,     2048,      683, 0x85c92268, F=0x0
++0,       6144,       6144,     2048,      683, 0x892c2569, F=0x0
++0,       8192,       8192,     2048,      682, 0x5f222404, F=0x0
++0,      10240,      10240,     2048,      683, 0xe9e0279c, F=0x0
++0,      12288,      12288,     2048,      683, 0xc078270e, F=0x0
++0,      14336,      14336,     2048,      682, 0x1dafd1e5, F=0x0
+diff --git a/tests/ref/fate/ac4-tail b/tests/ref/fate/ac4-tail
+new file mode 100644
+index 0000000000..f6ebafd1f3
+--- /dev/null
++++ b/tests/ref/fate/ac4-tail
+@@ -0,0 +1,13 @@
++#tb 0: 1/48000
++#media_type 0: audio
++#codec_id 0: ac4
++#sample_rate 0: 48000
++#channel_layout_name 0: stereo
++0,          0,          0,     2048,      683, 0x94dd1336
++0,       2048,       2048,     2048,      682, 0xf56f0aae
++0,       4096,       4096,     2048,      683, 0x9ed220f4, F=0x0
++0,       6144,       6144,     2048,      683, 0xf8fe2596, F=0x0
++0,       8192,       8192,     2048,      682, 0x630f232d, F=0x0
++0,      10240,      10240,     2048,      683, 0xf3ce26d4, F=0x0
++0,      12288,      12288,     2048,      683, 0xca93277c, F=0x0
++0,      14336,      14336,     1857,      682, 0xc06c072d, F=0x0
+-- 
+2.56.0
+

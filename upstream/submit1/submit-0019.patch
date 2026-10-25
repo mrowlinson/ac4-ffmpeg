@@ -1,0 +1,98 @@
+From b28ebeee677537dfa7927bb0fa4747d51c025f6e Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 04:07:01 -0400
+Subject: [PATCH 19/23] avformat/mov: add AC-4 dac4 box support
+
+Add mov_read_dac4, modeled on mov_read_dec3: preserve the complete
+AC4SpecificBox payload (ETSI TS 103 190-2, E.5) as opaque DSI
+extradata. v1 keeps stsd channels/rate; no DSI-derived layout.
+Wire the dac4 parse-table entry and AVSTREAM_PARSE_HEADERS for
+AC-4: MP4 samples are bare raw_ac4_frames with no sync word
+(E.3), one frame per sample, so the parser runs in COMPLETE_FRAMES
+mode and fills real params from the TOC. No isom_tags change
+(ac-4 mapping already exists).
+
+Box hygiene: dac4 on a non-AC-4 entry is skipped (DEBUG note),
+repeats warn and keep the first box, and sizes outside the
+generic sanity floor fail the open with AVERROR_INVALIDDATA.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ libavformat/mov.c | 47 +++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/libavformat/mov.c b/libavformat/mov.c
+index e2f33643f7..2e7e4d921a 100644
+--- a/libavformat/mov.c
++++ b/libavformat/mov.c
+@@ -1174,6 +1174,48 @@ static int mov_read_dec3(MOVContext *c, AVIOContext *pb, MOVAtom atom)
+     return 0;
+ }
+ 
++static int mov_read_dac4(MOVContext *c, AVIOContext *pb, MOVAtom atom)
++{
++    AVStream *st;
++    int ret;
++
++    if (c->fc->nb_streams < 1)
++        return 0;
++    st = c->fc->streams[c->fc->nb_streams - 1];
++
++    /* dac4 only belongs to an ac-4 sample entry; codec_id is already set
++     * from the entry tag before child atoms parse, so anything else is a
++     * misplaced box. mov_read_default skips the unconsumed payload. */
++    if (st->codecpar->codec_id != AV_CODEC_ID_AC4) {
++        av_log(c->fc, AV_LOG_DEBUG, "skipping misplaced dac4\n");
++        return 0;
++    }
++
++    if (st->codecpar->extradata) {
++        av_log(c->fc, AV_LOG_WARNING, "ignoring repeated dac4\n");
++        return 0;
++    }
++
++    /* Preserve the complete AC4SpecificBox payload (ETSI TS 103 190-2, E.5)
++     * as opaque DSI extradata. Channel layout and sample rate stay at the
++     * stsd values here; the AC-4 parser (HEADERS mode) derives the real
++     * params from the TOC once need_parsing runs. */
++    /* Generic sanity floor, not the E.5 minimum: a valid DSI is necessarily
++     * larger (fixed header alone is 3 bytes plus at least one presentation
++     * record). The cap keeps the int64_t->int narrowing into
++     * ff_get_extradata safe. */
++    if (atom.size < 5 || (uint64_t)atom.size > (1 << 30)) {
++        av_log(c->fc, AV_LOG_WARNING,
++               "rejecting dac4 with invalid size %"PRId64"\n", atom.size);
++        return AVERROR_INVALIDDATA;
++    }
++    ret = ff_get_extradata(c->fc, st->codecpar, pb, atom.size);
++    if (ret < 0)
++        return ret;
++
++    return 0;
++}
++
+ /* Maps the DTS `StreamConstruction` field (ETSI TS 102 114 Table E-2) to the
+  * coarse FFmpeg DTS profile enum. Extension-substream XLL maps to HD_MA;
+  * extension-substream XXCH, X96, or XBR maps to HD_HRA; core-substream XCH or
+@@ -3313,6 +3355,10 @@ static int mov_finalize_stsd_codec(MOVContext *c, AVIOContext *pb,
+     case AV_CODEC_ID_AV1:
+         /* field_order detection of H264 requires parsing */
+     case AV_CODEC_ID_H264:
++    case AV_CODEC_ID_AC4:
++        /* MP4 AC-4 samples are bare raw_ac4_frames (ETSI TS 103 190-2,
++         * E.3), one frame per sample with no sync word, so the parser
++         * consumes complete frames (HEADERS), never a FULL sync-scan. */
+         sti->need_parsing = AVSTREAM_PARSE_HEADERS;
+         break;
+     default:
+@@ -10362,6 +10408,7 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
+ { MKTAG('e','s','d','s'), mov_read_esds },
+ { MKTAG('d','a','c','3'), mov_read_dac3 }, /* AC-3 info */
+ { MKTAG('d','e','c','3'), mov_read_dec3 }, /* EAC-3 info */
++{ MKTAG('d','a','c','4'), mov_read_dac4 }, /* AC-4 info */
+ { MKTAG('d','d','t','s'), mov_read_ddts }, /* DTS audio descriptor */
+ { MKTAG('w','i','d','e'), mov_read_wide }, /* place holder */
+ { MKTAG('w','f','e','x'), mov_read_wfex },
+-- 
+2.56.0
+

@@ -1,0 +1,165 @@
+Subject: [PATCH 00/23] native AC-4 decoder + encoder + carriages (Forgejo resubmission)
+
+Native AC-4 support for FFmpeg: decoder, encoder, MPEG-TS
+descriptors, MP4 carriage and frame parser, with docs and FATE.
+This is a Forgejo-track resubmission of the 2026-10-18 email
+series (29 wire messages: 23 patches + 6 covers, Gmail-accepted,
+no list traction). The series is re-cut onto upstream master
+b593998340 (2026-10-25); 7 of 23 patches carry mechanical
+7-day-drift re-cuts (Changelog 9.1 section move, one api/Makefile
+anchor line), zero behavior edits. Re-cut vs clean: 7 re-cut,
+16 clean (table at the end of this letter).
+
+Stack order (single order, plain `git am`, every patch builds in
+sequence): 01 (raw demux params) -> 02-03 (decoder) -> 04-05
+(decoder docs/FATE) -> 06-15 (encoder) -> 16-17 (TS mux) ->
+18-23 (parser + MP4 + roundtrips).
+
+Patches:
+  01/23  lavf/ac4: fill codecpar + timestamps from first frame
+    Raw .ac4 demuxer peeks the first frame's TOC: publishes sample
+    rate / channel layout / bit rate to codecpar and derives packet
+    duration from samples-per-frame x sample-rate. Never publishes
+    the grid rate. need_parsing=HEADERS so the Series D parser
+    refines per-frame keyflags.
+  02/23  avcodec: add native AC-4 decoder core
+    Decoder engine (bit reader, entropy, IMDCT, QMF, A-SPX, ACPL,
+    loudness, channel/render logic, static tables as *_tab.c/h so
+    `make clean` keeps them). Builds inert under the not-yet-defined
+    CONFIG_AC4_DECODER guard. No lavc API surface yet.
+  03/23  avcodec: wire ff_ac4_decoder
+    AVCodec wrapper: init/decode/flush/close, re-framed raw input,
+    drain-per-feed to NEED_MORE, seek as close+reopen, S16-only v1,
+    EXPERIMENTAL (decode needs -strict experimental). Truncated-tail
+    rule: a lone unanchored framing fails loud at EOF (no-sync,
+    zero output). Private option: pres_sel only.
+  04/23  doc: AC-4 decoder docs
+    decoders.texi @section ac4 (pres_sel), general-contents audio
+    row, Changelog entry under version <next>.
+  05/23  fate: add ac4 decoder tests
+    framemd5/framecrc decode tests over suite clips (stereo, 5.1,
+    ims120, 7.1, stereo51, impulse, skip-bad), fractional-spf pair
+    over the 29.97 fps clip (1601/1602 counts), encoder-layout
+    negatives (AC4_ENCODER-guarded, empty until 06-15 land), seek
+    and pcm tests, probe/copy/seek-eof demux tests. Mono + codec-4
+    gap tests deferred (no public bytes exist).
+  06/23  avcodec/ac4: add encoder static tables
+    Huffman/A-SPX/sfb-offset tables + Makefile OBJS. Pure data.
+  07/23  avcodec/ac4: add encoder core + lib adapter
+    Engine (enc_core_*), DSP (bits/asf/mdct/loudness), algo modules
+    (mc3/jshort/tail59/aspx/acpl), pycompat shim, ac4enc_lib adapter
+    (measured-loudness pass, bake API). Ctx owns all state;
+    concurrent encodes on separate ctx objects are safe.
+  08/23  avcodec: add native AC-4 encoder
+    ff_ac4_encoder wrapper (ENCODE_CB, EXPERIMENTAL), allcodecs
+    registration, configure-probed float CFLAGS + sincos probe,
+    Changelog. Carries fuzz-found s64 hardenings (pts add saturates
+    via av_sat_add64; top-500 bit_rate values take early EINVAL).
+  09/23  doc: AC-4 encoder docs
+    encoders.texi @section ac4 + private options, experimental +
+    limits paragraph, single general-contents row.
+  10/23  fate: add ac4 encoder tests
+    fate-ac4-encode/-51 (md5) + fate-ac4-framecrc/-tail (framecrc)
+    from synth asynth inputs (zero new samples).
+  11/23  fate: run ac4 encoder tests without SAMPLES
+    Re-home the asynth-only tests from FATE_SAMPLES_AVCONV to
+    FATE_FFMPEG (1 line).
+  12/23  doc/ac4enc: note CLI silent auto-fold, explicit-layout
+    >6ch inputs fold silently to 5.1 (framework auto_aresample);
+    only an explicit -channel_layout outside stereo/5.1 fails loud
+    (exit 234). Immersive out of scope.
+  13/23  fate/ac4enc: pin 8ch silent fold to 5.1 (fold8)
+    fate-ac4-fold8: 8ch asynth in, framecrc golden pins the
+    5.1(side) output header, exit 0, deterministic.
+  14/23  avcodec/ac4: emit DSI extradata via putbits serializer
+    Vendored DSI serializer + PutBitContext emitter: the wrapper
+    builds one raw ac4_dsi_v1 payload at init (no atom header; the
+    MP4 muxer wraps it verbatim as dac4). Any serializer refusal
+    fails init loudly. Packet bytes unchanged.
+  15/23  avcodec/ac4enc: drive DSI layout from the lavc-mask
+    Channel trio from ac4dsi_pres_set_layout_mask() fed by
+    avctx->ch_layout.u.mask: 0x3 -> stereo, 0x60f -> 1/4/0x47;
+    anything else fails init loudly. Wire bytes unchanged.
+  16/23  lavf/mpegtsenc: write AC-4 descriptors
+    DVB stream type 0x06 (kills the "may not be recognized"
+    warning), AC-4 registration descriptor in the PMT audio block,
+    DVB AC-4 descriptor (0x7F/0x15) in SYSTEM_B, Opus-pattern
+    overflow guard. Changelog entry.
+  17/23  fate: ac4 ts mux tests
+    fate-ac4-mpegts-pmt (PMT-section pin) + fate-ac4-mpegts-probe
+    from synth asynth inputs (zero new samples).
+  18/23  avcodec: add ff_ac4_parser
+    ParseContext + combine_frame split loop (AC40/41 sync scan,
+    ext-len, AC41 CRC-16, 1-byte resync, COMPLETE_FRAMES
+    passthrough); TOC head+bed walk in header-only ac4_toc.h;
+    output-domain duration/rate, channels/bitrate. Changelog.
+  19/23  avformat/mov: add AC-4 dac4 box support
+    mov_read_dac4 (opaque DSI extradata), parse-table entry,
+    HEADERS need_parsing. Truncated dac4 -> INVALIDDATA.
+  20/23  avformat/movenc: add AC-4 ac-4/dac4 muxing support
+    mp4 tag entry, mov_write_dac4_tag (verbatim DSI, EINVAL on
+    empty), stsd arms. 1 packet = 1 sample. Changelog.
+  21/23  fate: add self-contained ac4 parser tests
+    api-ac4-parser-test builds vectors in code (no samples):
+    split/resync over noise/lookalike/CRC-corrupt/truncated/
+    ext-len/rate-gated shapes, whole/13-byte/1-byte feeds.
+    Wired as fate-ac4-parser.
+  22/23  fate: add self-contained ac4 mp4 mux/demux roundtrip
+    api-ac4-mp4-roundtrip-test synthesizes bare/AC40/AC41/ext-len
+    vectors in code (no samples): mux to MP4, demux back, dac4
+    byte-exact at box + extradata level, stsz == 4, byte-identical
+    payloads, post-parse 48k stereo. Plus the T3 encoder->decoder
+    roundtrip (GEN synth stereo to raw AC-4, decode back, framemd5
+    pins the 4096 first-frame offset). Wired as
+    fate-ac4-mp4-roundtrip + fate-ac4-roundtrip.
+  23/23  fate: add self-contained ac4 ts demux test
+    api-ac4-ts-demux-test synthesizes Annex G AC41 vectors in code
+    (no samples, no encoder): mux to MPEG-TS via the 16/23
+    descriptor path, assert file-level framing/descriptors +
+    demux-level params/payloads, 2 loud negatives (bad-PMT,
+    mid-PES trunc). Wired as fate-ac4-ts-demux.
+
+Drift-port record (re-cut 7/23, clean 16/23; zero behavior edits):
+  04/23  Changelog hunk re-cut twice: upstream cut 9.1 in the
+         drift window (old <next> entries moved under 9.1) and the
+         decoder line first landed in the 9.1 block; final: all
+         five AC-4 entries under version <next>, decoder first.
+  08/23  Changelog hunk re-cut: encoder line under empty <next>
+         (9.1 now carries the old entries).
+  16/23  Changelog hunk re-cut: MPEG-TS line appended under <next>.
+  18/23  Changelog hunk re-cut: parser line appended under <next>.
+  20/23  Changelog hunk re-cut: MP4 line appended under <next>.
+  21/23  tests/api/Makefile hunk re-cut: upstream added an
+         api-skip-samples line above the anchor; AC-4 parser line
+         keeps its post-enc-parser position.
+  22/23  tests/api/Makefile hunk re-cut: roundtrip line after the
+         (re-cut) parser line; line-number shift only.
+  All other hunks applied byte-clean on first contact, including
+  the decoder core, wiring, encoder, parser, mov/movenc/mpegtsenc
+  code and every test ref.
+
+Testing (two pristine b593998340 legs, trees byte-identical):
+  git am --signoff 01-23: 23/23 both legs, same tip tree.
+  ./configure --disable-doc --disable-debug + make -j16: exit 0
+  both legs, zero warnings in AC-4 files.
+  make fate-ac4 (13 self-contained): 13/13 PASS both legs,
+  rc=0 (enc-neg71/neg514, encode, encode-51, framecrc, fold8,
+  tail, mpegts-pmt, mpegts-probe, parser, mp4-roundtrip,
+  ts-demux, roundtrip). The 16 suite-clip legs (stereo, seek,
+  51, ims120, 714, stereo51, delay, frac, skip-bad x2,
+  gap-trunc, copy-stereo, copy-51, frac-copy, seek-eof,
+  probe-garbage) need the ac4/ fate-suite clips, which are not
+  bundled here; they fail with the standard "requires external
+  samples" shape, no other failures.
+
+Provenance: independent cleanroom implementation in C, written from
+the published ETSI specifications TS 103 190-1 V1.4.1 and TS 103
+190-2 V1.3.1 plus black-box behavioral observation. No Dolby SDK,
+reference code, or disassembly was used. Numeric codebook/coefficient
+tables are value-only transcriptions from the ETSI deliverables
+(source versions cited per table); comments are original prose.
+Note AC-4 is covered by Dolby patents; this submission addresses
+copyright-clean code only and implementers/distributors should
+consider patent licensing.
+
+Signed-off-by on each patch: Michael Rowlinson <mrowlinson@gmail.com>
