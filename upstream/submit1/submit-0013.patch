@@ -1,0 +1,64 @@
+From eef8ce976994937deda847bc53d3e5a15b3e1d34 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 08:15:44 -0400
+Subject: [PATCH 13/23] fate/ac4enc: pin 8ch silent fold to 5.1 (fold8)
+
+8ch asynth in, framecrc out; golden pins the 5.1(side) output header
+as the documented expected framework auto-downmix behavior (exit 0).
+Deterministic under -bitexact (cmp clean across runs).
+
+Re-cut (r6): M11 -strict -2 on the fold8 CMD; M17 comment points
+at the Series B mak negatives (script gone).
+Union: C08 dropped (negatives ride Series B 2/2 behind the encoder
+ifeq); the pointer names the B stanzas.
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ tests/fate/ac4.mak       | 11 +++++++++++
+ tests/ref/fate/ac4-fold8 | 13 +++++++++++++
+ 2 files changed, 24 insertions(+)
+ create mode 100644 tests/ref/fate/ac4-fold8
+
+diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
+index 40836bf5f9..69e0295e84 100644
+--- a/tests/fate/ac4.mak
++++ b/tests/fate/ac4.mak
+@@ -204,6 +204,17 @@ fate-ac4-framecrc: tests/data/asynth-48000-2.wav
+ fate-ac4-framecrc: SRC = $(TARGET_PATH)/tests/data/asynth-48000-2.wav
+ fate-ac4-framecrc: CMD = framecrc -i $(SRC) -c:a ac4 -strict -2 -ab 128k -frames:a 6 -af aresample
+ 
++# --- encode: 8ch in folds to 5.1 (framework auto-downmix, S3.1/S3.2) ---
++# The CLI silently rematrixes >6ch to 5.1 via auto_aresample before the
++# encoder sees it (exit 0); the golden pins the 5.1(side) header as the
++# documented expected behavior. Explicit -channel_layout outside
++# stereo/5.1 instead fails loud (exit 234); see the fate-ac4-enc-neg*
++# stanzas in the Series B encoder-negatives section above.
++FATE_AC4_ENC-$(call FRAMECRC, WAV, PCM_S16LE, ARESAMPLE_FILTER AC4_ENCODER) += fate-ac4-fold8
++fate-ac4-fold8: tests/data/asynth-48000-8.wav
++fate-ac4-fold8: SRC = $(TARGET_PATH)/tests/data/asynth-48000-8.wav
++fate-ac4-fold8: CMD = framecrc -i $(SRC) -c:a ac4 -strict -2 -ab 256k -frames:a 6 -af aresample
++
+ # --- encode: odd-length tail (SMALL_LAST_FRAME drain) ---
+ FATE_AC4_ENC-$(call FRAMECRC, WAV, PCM_S16LE, ARESAMPLE_FILTER ATRIM_FILTER AC4_ENCODER) += fate-ac4-tail
+ fate-ac4-tail: tests/data/asynth-48000-2.wav
+diff --git a/tests/ref/fate/ac4-fold8 b/tests/ref/fate/ac4-fold8
+new file mode 100644
+index 0000000000..da08b13431
+--- /dev/null
++++ b/tests/ref/fate/ac4-fold8
+@@ -0,0 +1,13 @@
++#tb 0: 1/48000
++#media_type 0: audio
++#codec_id 0: ac4
++#sample_rate 0: 48000
++#channel_layout_name 0: 5.1(side)
++0,          0,          0,     2048,     1366, 0xc59619d7
++0,       2048,       2048,     2048,     1365, 0x09ae1126
++0,       4096,       4096,     2048,     1365, 0x6fc4b04d, F=0x0
++0,       6144,       6144,     2048,     1366, 0xd85cd286, F=0x0
++0,       8192,       8192,     2048,     1365, 0x3dbe6910, F=0x0
++0,      10240,      10240,     2048,     1365, 0x8b3cd2ae, F=0x0
++0,      12288,      12288,     2048,     1366, 0x7c1ed546, F=0x0
++0,      14336,      14336,     2048,     1365, 0xe112f6f5, F=0x0
+-- 
+2.56.0
+

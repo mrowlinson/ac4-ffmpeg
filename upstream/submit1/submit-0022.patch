@@ -1,0 +1,967 @@
+From 9251422f5294cbacf8ef196bc633f3135a98eaac Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Sat, 17 Oct 2026 03:56:31 -0400
+Subject: [PATCH 22/23] fate: add self-contained ac4 mp4 mux/demux roundtrip
+
+Upstream will not take a testless mux/demux pair. New
+api-ac4-mp4-roundtrip-test synthesizes its vectors in code, so the
+suite needs no uploaded samples: bare raw_ac4_frame packets (the same
+minimal version-2 stereo TOC shape as fate-ac4-parser) plus AC40, AC41
+and ext-len AC41 Annex G framings with CRCs solved per frame, muxed to
+MP4 and demuxed back, asserting dac4 payload byte-exact vs the DSI
+golden at both the box level and the demux extradata level, stsz ==
+packets == 4, byte-identical payloads, and post-parse 48 kHz stereo
+params. Four negatives fail loud: mux without extradata and mux of a
+multi-frame packet refuse EINVAL, a file cut inside dac4 and a dac4
+box claiming a 2-byte payload both fail open with INVALIDDATA. Wired
+as fate-ac4-mp4-roundtrip behind MP4_MUXER + MOV_DEMUXER + AC4_PARSER.
+
+Plus the T3 encoder->decoder audio roundtrip: synth stereo encodes
+to raw AC-4 (GEN, no suite samples) and decodes back, pinning
+framemd5 (first frame dts/pts 4096 catches the encoder
+initial_padding vs decoder skip offset end to end, with DSI in the
+loop). Needs A+C in-stack, so it rides the D tip.
+
+Stacks on Series E: appends to the stack tests/fate/ac4.mak
+(and extends the fate-ac4 aggregate) instead of creating it.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ tests/api/Makefile                     |   1 +
+ tests/api/api-ac4-mp4-roundtrip-test.c | 708 +++++++++++++++++++++++++
+ tests/fate/ac4.mak                     |  37 +-
+ tests/ref/fate/ac4-roundtrip           | 150 ++++++
+ 4 files changed, 894 insertions(+), 2 deletions(-)
+ create mode 100644 tests/api/api-ac4-mp4-roundtrip-test.c
+ create mode 100644 tests/ref/fate/ac4-roundtrip
+
+diff --git a/tests/api/Makefile b/tests/api/Makefile
+index aa2fa899b5..a7db8083e7 100644
+--- a/tests/api/Makefile
++++ b/tests/api/Makefile
+@@ -12,6 +12,7 @@ APITESTPROGS-$(CONFIG_AVCODEC) += api-enc-info
+ APITESTPROGS-$(CONFIG_PCM_S16LE_DECODER) += api-skip-samples
+ APITESTPROGS-$(call ALLYES, H261_ENCODER H261_PARSER) += api-enc-parser
+ APITESTPROGS-$(CONFIG_AC4_PARSER) += api-ac4-parser
++APITESTPROGS-$(call ALLYES, MP4_MUXER MOV_DEMUXER AC4_PARSER) += api-ac4-mp4-roundtrip
+ APITESTPROGS += $(APITESTPROGS-yes)
+ 
+ APITESTOBJS  := $(APITESTOBJS:%=$(APITESTSDIR)%) $(APITESTPROGS:%=$(APITESTSDIR)/%-test.o)
+diff --git a/tests/api/api-ac4-mp4-roundtrip-test.c b/tests/api/api-ac4-mp4-roundtrip-test.c
+new file mode 100644
+index 0000000000..3bfc0d730f
+--- /dev/null
++++ b/tests/api/api-ac4-mp4-roundtrip-test.c
+@@ -0,0 +1,708 @@
++/*
++ * AC-4 MP4 mux/demux roundtrip test.
++ * Copyright (c) 2026 Michael Rowlinson
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file
++ * Self-contained AC-4 MP4 roundtrip tests. Bare raw_ac4_frame vectors
++ * are synthesized in code (the same minimal version-2 stereo TOC shape
++ * as api-ac4-parser-test), muxed to MP4, demuxed back, and checked for
++ * dac4/extradata byte-exactness, stsz/packet counts and byte-identical
++ * payloads. Framed (Annex G) inputs cover the mux strip path; mux and
++ * demux negatives must fail loud. No fate-suite samples needed.
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdint.h>
++
++#include "libavformat/avformat.h"
++#include "libavcodec/avcodec.h"
++#include "libavutil/channel_layout.h"
++#include "libavutil/error.h"
++#include "libavutil/mem.h"
++
++static int failures = 0;
++#define CHECK(cond, ...) do { \
++    if (!(cond)) { \
++        printf("FAIL: " __VA_ARGS__); printf("\n"); failures++; \
++    } \
++} while (0)
++
++/* Deterministic noise without stray sync bytes. */
++static uint32_t lcg_state;
++static void noise(uint8_t *d, int n, uint32_t seed)
++{
++    lcg_state = seed;
++    for (int i = 0; i < n; i++) {
++        int b;
++        lcg_state = lcg_state * 1103515245u + 12345u;
++        b = (lcg_state >> 16) & 0xFF;
++        d[i] = (b == 0xAC) ? 0xAD : b;
++    }
++}
++
++/* CRC-16, MSB-first, poly 0x8005, init 0 (test-local copy of the
++ * sync-layer rule: accept on zero remainder over the span). */
++static unsigned int crc16_update(unsigned int crc, const uint8_t *p, int len)
++{
++    for (int i = 0; i < len; i++) {
++        crc ^= (unsigned int) p[i] << 8;
++        for (int k = 0; k < 8; k++)
++            crc = (crc & 0x8000) ? ((crc << 1) ^ 0x8005) : (crc << 1);
++        crc &= 0xFFFF;
++    }
++    return crc;
++}
++
++/* Stored word making (span plus word) check to zero. The map from the
++ * 16 stored bits to the final remainder is bijective, so the search
++ * always terminates. */
++static unsigned int crc16_fix(const uint8_t *span, int len)
++{
++    unsigned int r = crc16_update(0, span, len);
++
++    for (int v = 0; v < 65536; v++) {
++        uint8_t tail[2] = { v >> 8, v & 0xFF };
++        if (crc16_update(r, tail, 2) == 0)
++            return v;
++    }
++    return 0;
++}
++
++typedef struct BitW {
++    uint8_t *d;
++    int bit;
++} BitW;
++
++static void put_bits(BitW *w, int n, unsigned int v)
++{
++    for (int i = n - 1; i >= 0; i--) {
++        if ((v >> i) & 1)
++            w->d[w->bit / 8] |= 1 << (7 - w->bit % 8);
++        w->bit++;
++    }
++}
++
++/* Minimal version-2 stereo TOC: presentation 0, group 0, one
++ * channel-coded bed element, channel_mode 2. All other fields take
++ * their zero/absent shape. */
++static int build_toc(uint8_t *raw, int bv, int seq, int fs, int rate,
++                     int ig, int n_pres)
++{
++    BitW w = { raw, 0 };
++
++    put_bits(&w, 2, bv);
++    put_bits(&w, 10, seq);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, fs);
++    put_bits(&w, 4, rate);
++    put_bits(&w, 1, ig);
++    if (n_pres) {
++        put_bits(&w, 1, 1);
++    } else {
++        put_bits(&w, 1, 0);
++        put_bits(&w, 1, 0);
++    }
++    put_bits(&w, 1, 0);
++    if (bv == 2)
++        put_bits(&w, 1, 0);
++    if (!n_pres)
++        return (w.bit + 7) / 8;
++    /* One v1 presentation record, group index 0. */
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 0);       /* presentation_version 0 */
++    put_bits(&w, 3, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 2, 0);       /* emdf substream/version/shape: absent */
++    put_bits(&w, 3, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 2, 0);
++    put_bits(&w, 2, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 3, 0);       /* group index */
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 2, 0);
++    /* Group 0 head: bed present, channel_mode 2 (stereo). */
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 0);
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 1);
++    put_bits(&w, 1, 0);
++    if (fs)
++        put_bits(&w, 1, 0);
++    return (w.bit + 7) / 8;
++}
++
++#define RAW_LEN 64
++#define NFRAMES 4
++#define PKT_MAX 160
++
++/* One synthetic bare raw frame: bv2, 48 kHz grid, iframe. */
++static void build_raw(uint8_t *raw, int seq, uint32_t seed)
++{
++    int head_bytes;
++
++    memset(raw, 0, RAW_LEN);
++    head_bytes = build_toc(raw, 2, seq, 1, 13, 1, 1);
++    noise(raw + head_bytes, RAW_LEN - head_bytes, seed);
++}
++
++/* Annex G wrappers for the mux strip-path cases. CRCs solved per frame. */
++static int wrap_ac40(uint8_t *d, const uint8_t *raw)
++{
++    d[0] = 0xAC;
++    d[1] = 0x40;
++    d[2] = RAW_LEN >> 8;
++    d[3] = RAW_LEN & 0xFF;
++    memcpy(d + 4, raw, RAW_LEN);
++    return 4 + RAW_LEN;
++}
++
++static int wrap_ac41(uint8_t *d, const uint8_t *raw)
++{
++    unsigned int crc;
++
++    d[0] = 0xAC;
++    d[1] = 0x41;
++    d[2] = RAW_LEN >> 8;
++    d[3] = RAW_LEN & 0xFF;
++    memcpy(d + 4, raw, RAW_LEN);
++    /* CRC over the length bytes plus raw, stored big-endian. */
++    crc = crc16_fix(d + 2, 2 + RAW_LEN);
++    d[4 + RAW_LEN]     = crc >> 8;
++    d[4 + RAW_LEN + 1] = crc & 0xFF;
++    return 4 + RAW_LEN + 2;
++}
++
++static int wrap_ac41_ext(uint8_t *d, const uint8_t *raw)
++{
++    unsigned int crc;
++
++    d[0] = 0xAC;
++    d[1] = 0x41;
++    d[2] = 0xFF;
++    d[3] = 0xFF;
++    d[4] = (RAW_LEN >> 16) & 0xFF;
++    d[5] = (RAW_LEN >> 8) & 0xFF;
++    d[6] = RAW_LEN & 0xFF;
++    memcpy(d + 7, raw, RAW_LEN);
++    /* CRC over the 5 length bytes plus raw. */
++    crc = crc16_fix(d + 2, 5 + RAW_LEN);
++    d[7 + RAW_LEN]     = crc >> 8;
++    d[7 + RAW_LEN + 1] = crc & 0xFF;
++    return 7 + RAW_LEN + 2;
++}
++
++/* DSI golden: stereo 34 B payload (dashif shape, DSI-CONTRACT 5). */
++static const uint8_t dsi_golden[] = {
++    0x20, 0xa4, 0x01, 0x80, 0x96, 0x30, 0x00, 0x00,
++    0x00, 0x0f, 0xff, 0xff, 0xff, 0xf0, 0x01, 0x12,
++    0xf8, 0xa8, 0x00, 0x00, 0x42, 0x00, 0x00, 0x02,
++    0x50, 0x10, 0x00, 0x00, 0x03, 0x10, 0x99, 0x5b,
++    0x80, 0x80,
++};
++
++/* Minimal box reader for file-level asserts (stsz counts, dac4 bytes). */
++static uint32_t rb32(const uint8_t *p)
++{
++    return ((uint32_t) p[0] << 24) | ((uint32_t) p[1] << 16) |
++           ((uint32_t) p[2] << 8) | p[3];
++}
++
++/* First child box of type `want` in [start, end): payload range out,
++ * box head offset returned, -1 when absent. size 1/0 handled. */
++static int64_t find_box(const uint8_t *buf, int64_t start, int64_t end,
++                        uint32_t want, int64_t *pay_off, int64_t *pay_len)
++{
++    int64_t p = start;
++
++    while (p + 8 <= end) {
++        uint64_t size = rb32(buf + p);
++        uint32_t type = rb32(buf + p + 4);
++        int64_t head = 8;
++
++        if (size == 1) {
++            uint64_t hi, lo;
++            if (p + 16 > end)
++                return -1;
++            hi = rb32(buf + p + 8);
++            lo = rb32(buf + p + 12);
++            size = (hi << 32) | lo;
++            head = 16;
++        } else if (size == 0) {
++            size = end - p;
++        }
++        if (size < (uint64_t) head || p + (int64_t) size > end)
++            return -1;
++        if (type == want) {
++            *pay_off = p + head;
++            *pay_len = (int64_t) size - head;
++            return p;
++        }
++        p += size;
++    }
++    return -1;
++}
++
++static int64_t find_path(const uint8_t *buf, int64_t start, int64_t end,
++                         const uint32_t *types, int n,
++                         int64_t *pay_off, int64_t *pay_len)
++{
++    for (int i = 0; i < n; i++) {
++        if (find_box(buf, start, end, types[i], &start, pay_len) < 0)
++            return -1;
++        end = start + *pay_len;
++    }
++    *pay_off = start;
++    return start;
++}
++
++static uint8_t *read_file(const char *path, int *len_out)
++{
++    FILE *f = fopen(path, "rb");
++    uint8_t *buf;
++    long len;
++
++    if (!f)
++        return NULL;
++    fseek(f, 0, SEEK_END);
++    len = ftell(f);
++    fseek(f, 0, SEEK_SET);
++    if (len < 0 || len > 16 * 1024 * 1024) {
++        fclose(f);
++        return NULL;
++    }
++    buf = malloc(len + 1);
++    if (!buf) {
++        fclose(f);
++        return NULL;
++    }
++    if (len > 0 && fread(buf, 1, len, f) != (size_t) len) {
++        free(buf);
++        fclose(f);
++        return NULL;
++    }
++    fclose(f);
++    *len_out = (int) len;
++    return buf;
++}
++
++static int write_file(const char *path, const uint8_t *buf, int len)
++{
++    FILE *f = fopen(path, "wb");
++
++    if (!f)
++        return -1;
++    if (len > 0 && fwrite(buf, 1, len, f) != (size_t) len) {
++        fclose(f);
++        return -1;
++    }
++    fclose(f);
++    return 0;
++}
++
++static int mux_file(const char *path, uint8_t pkts[][PKT_MAX],
++                    const int *lens, int n,
++                    const uint8_t *dsi, int dsi_len)
++{
++    AVFormatContext *out = NULL;
++    AVStream *st;
++    AVPacket *pkt = NULL;
++    int ret, i;
++
++    ret = avformat_alloc_output_context2(&out, NULL, "mp4", path);
++    if (ret < 0 || !out)
++        return ret < 0 ? ret : AVERROR(ENOMEM);
++    st = avformat_new_stream(out, NULL);
++    if (!st) {
++        avformat_free_context(out);
++        return AVERROR(ENOMEM);
++    }
++    st->codecpar->codec_type  = AVMEDIA_TYPE_AUDIO;
++    st->codecpar->codec_id    = AV_CODEC_ID_AC4;
++    st->codecpar->sample_rate = 48000;
++    av_channel_layout_default(&st->codecpar->ch_layout, 2);
++    st->time_base = (AVRational){ 1, 48000 };
++    if (dsi) {
++        st->codecpar->extradata =
++            av_memdup(dsi, dsi_len + AV_INPUT_BUFFER_PADDING_SIZE);
++        if (!st->codecpar->extradata) {
++            avformat_free_context(out);
++            return AVERROR(ENOMEM);
++        }
++        memset(st->codecpar->extradata + dsi_len, 0,
++               AV_INPUT_BUFFER_PADDING_SIZE);
++        st->codecpar->extradata_size = dsi_len;
++    }
++
++    ret = avio_open(&out->pb, path, AVIO_FLAG_WRITE);
++    if (ret < 0) {
++        avformat_free_context(out);
++        return ret;
++    }
++    ret = avformat_write_header(out, NULL);
++    if (ret < 0)
++        goto done;
++    pkt = av_packet_alloc();
++    if (!pkt) {
++        ret = AVERROR(ENOMEM);
++        goto done;
++    }
++    for (i = 0; i < n; i++) {
++        ret = av_new_packet(pkt, lens[i]);
++        if (ret < 0)
++            break;
++        memcpy(pkt->data, pkts[i], lens[i]);
++        pkt->pts = pkt->dts = (int64_t) i * 2048;
++        pkt->duration = 2048;
++        pkt->stream_index = 0;
++        ret = av_interleaved_write_frame(out, pkt);
++        av_packet_unref(pkt);
++        if (ret < 0)
++            break;
++    }
++    if (ret >= 0)
++        ret = av_write_trailer(out);
++done:
++    av_packet_free(&pkt);
++    if (out->pb)
++        avio_closep(&out->pb);
++    avformat_free_context(out);
++    return ret;
++}
++
++#define TAG(a, b, c, d) \
++    (((uint32_t) (a) << 24) | ((uint32_t) (b) << 16) | \
++     ((uint32_t) (c) << 8) | (uint32_t) (d))
++
++/* stsz sample_count and per-sample sizes, straight from the boxes. */
++static int check_stsz(const char *tag, const uint8_t *buf, int len, int n)
++{
++    static const uint32_t path[] = {
++        TAG('m', 'o', 'o', 'v'), TAG('t', 'r', 'a', 'k'),
++        TAG('m', 'd', 'i', 'a'), TAG('m', 'i', 'n', 'f'),
++        TAG('s', 't', 'b', 'l'), TAG('s', 't', 's', 'z'),
++    };
++    int64_t off, plen;
++    uint32_t count, sample_size;
++    int i;
++
++    if (find_path(buf, 0, len, path, 6, &off, &plen) < 0) {
++        CHECK(0, "%s: stsz box missing", tag);
++        return -1;
++    }
++    if (plen < 12) {
++        CHECK(0, "%s: stsz payload short", tag);
++        return -1;
++    }
++    sample_size = rb32(buf + off + 4);
++    count       = rb32(buf + off + 8);
++    CHECK(count == (uint32_t) n, "%s: stsz count %u != %d", tag, count, n);
++    if (sample_size == 0) {
++        if (plen < 12 + 4 * (int64_t) count) {
++            CHECK(0, "%s: stsz entries short", tag);
++            return -1;
++        }
++        for (i = 0; i < n && (uint32_t) i < count; i++)
++            CHECK(rb32(buf + off + 12 + 4 * i) == RAW_LEN,
++                  "%s: stsz[%d] %u != %d", tag, i,
++                  rb32(buf + off + 12 + 4 * i), RAW_LEN);
++    } else {
++        CHECK(sample_size == RAW_LEN, "%s: stsz uniform %u != %d",
++              tag, sample_size, RAW_LEN);
++    }
++    return (int) count;
++}
++
++/* dac4 payload bytes, straight from the ac-4 sample entry. */
++static int64_t find_dac4(const uint8_t *buf, int len,
++                         int64_t *pay_off, int64_t *pay_len)
++{
++    static const uint32_t path[] = {
++        TAG('m', 'o', 'o', 'v'), TAG('t', 'r', 'a', 'k'),
++        TAG('m', 'd', 'i', 'a'), TAG('m', 'i', 'n', 'f'),
++        TAG('s', 't', 'b', 'l'), TAG('s', 't', 's', 'd'),
++    };
++    int64_t off, plen, entry, entry_len, children;
++
++    if (find_path(buf, 0, len, path, 6, &off, &plen) < 0)
++        return -1;
++    /* stsd: version/flags + entry_count, then sample entries. */
++    if (plen < 8 || rb32(buf + off + 4) != 1)
++        return -1;
++    off += 8;
++    plen -= 8;
++    entry_len = rb32(buf + off);
++    if (entry_len > plen || entry_len < 36 ||
++        rb32(buf + off + 4) != TAG('a', 'c', '-', '4'))
++        return -1;
++    entry = off;
++    /* v0 SoundSampleEntry header is 36 bytes; dac4 is a child. */
++    children = entry + 36;
++    return find_box(buf, children, entry + entry_len,
++                    TAG('d', 'a', 'c', '4'), pay_off, pay_len);
++}
++
++static void check_roundtrip(const char *tag, const char *path,
++                            uint8_t raws[][RAW_LEN], int n)
++{
++    AVFormatContext *in = NULL;
++    AVPacket *pkt = NULL;
++    uint8_t *file;
++    int file_len, stsz_count, count = 0, ret;
++    int64_t dac4_head, dac4_off, dac4_len;
++
++    file = read_file(path, &file_len);
++    CHECK(file != NULL, "%s: cannot read back %s", tag, path);
++    if (!file)
++        return;
++    stsz_count = check_stsz(tag, file, file_len, n);
++    dac4_head = find_dac4(file, file_len, &dac4_off, &dac4_len);
++    CHECK(dac4_head >= 0, "%s: dac4 box missing", tag);
++    if (dac4_head >= 0) {
++        CHECK(dac4_len == (int64_t) sizeof(dsi_golden),
++              "%s: dac4 payload %lld != %d", tag,
++              (long long) dac4_len, (int) sizeof(dsi_golden));
++        if (dac4_len == (int64_t) sizeof(dsi_golden))
++            CHECK(memcmp(file + dac4_off, dsi_golden, sizeof(dsi_golden)) == 0,
++                  "%s: dac4 payload differs from DSI", tag);
++    }
++    free(file);
++
++    ret = avformat_open_input(&in, path, NULL, NULL);
++    CHECK(ret >= 0, "%s: open failed (%d)", tag, ret);
++    if (ret < 0)
++        return;
++    ret = avformat_find_stream_info(in, NULL);
++    CHECK(ret >= 0, "%s: find_stream_info failed (%d)", tag, ret);
++    CHECK(in->nb_streams == 1, "%s: %d streams != 1", tag, in->nb_streams);
++    if (in->nb_streams == 1) {
++        AVCodecParameters *par = in->streams[0]->codecpar;
++        CHECK(par->codec_id == AV_CODEC_ID_AC4, "%s: codec %d != ac4",
++              tag, par->codec_id);
++        CHECK(par->extradata_size == (int) sizeof(dsi_golden) &&
++              memcmp(par->extradata, dsi_golden, sizeof(dsi_golden)) == 0,
++              "%s: demux extradata not byte-exact", tag);
++        CHECK(par->sample_rate == 48000, "%s: rate %d != 48000",
++              tag, par->sample_rate);
++        CHECK(par->ch_layout.nb_channels == 2, "%s: ch %d != 2",
++              tag, par->ch_layout.nb_channels);
++    }
++    pkt = av_packet_alloc();
++    if (!pkt) {
++        CHECK(0, "%s: packet alloc failed", tag);
++        avformat_close_input(&in);
++        return;
++    }
++    for (;;) {
++        ret = av_read_frame(in, pkt);
++        if (ret == AVERROR_EOF)
++            break;
++        if (ret < 0) {
++            CHECK(0, "%s: read failed (%d)", tag, ret);
++            break;
++        }
++        if (pkt->stream_index == 0) {
++            CHECK(pkt->size == RAW_LEN, "%s: pkt %d size %d != %d",
++                  tag, count, pkt->size, RAW_LEN);
++            if (count < n && pkt->size == RAW_LEN)
++                CHECK(memcmp(pkt->data, raws[count], RAW_LEN) == 0,
++                      "%s: pkt %d payload differs", tag, count);
++            count++;
++        }
++        av_packet_unref(pkt);
++    }
++    av_packet_free(&pkt);
++    avformat_close_input(&in);
++    CHECK(count == n, "%s: %d packets != %d", tag, count, n);
++    CHECK(count == stsz_count, "%s: %d packets != stsz %d",
++          tag, count, stsz_count);
++}
++
++/* Empty extradata must refuse with EINVAL, never an empty dac4 box. */
++static void check_mux_noext(const char *tag, const char *path,
++                            uint8_t pkts[][PKT_MAX], const int *lens, int n)
++{
++    int ret = mux_file(path, pkts, lens, n, NULL, 0);
++
++    CHECK(ret == AVERROR(EINVAL), "%s: mux-noext ret %d, want EINVAL",
++          tag, ret);
++}
++
++/* A packet chaining two syncframes must refuse with EINVAL, never
++ * become one corrupt sample. */
++static void check_mux_multiframe(const char *tag, const char *path,
++                                 uint8_t raws[][RAW_LEN])
++{
++    static uint8_t mp[1][PKT_MAX];
++    int lens[1], ret;
++
++    lens[0] = wrap_ac40(mp[0], raws[0]);
++    lens[0] += wrap_ac40(mp[0] + lens[0], raws[1]);
++    ret = mux_file(path, mp, lens, 1, dsi_golden, sizeof(dsi_golden));
++    CHECK(ret == AVERROR(EINVAL), "%s: mux-multiframe ret %d, want EINVAL",
++          tag, ret);
++}
++
++/* A file cut inside the dac4 payload must fail open, not misparse. */
++static void check_trunc_dac4(const char *tag, const char *good,
++                             const char *path)
++{
++    AVFormatContext *in = NULL;
++    uint8_t *file;
++    int file_len, ret;
++    int64_t dac4_head, dac4_off, dac4_len;
++
++    file = read_file(good, &file_len);
++    CHECK(file != NULL, "%s: cannot read %s", tag, good);
++    if (!file)
++        return;
++    dac4_head = find_dac4(file, file_len, &dac4_off, &dac4_len);
++    CHECK(dac4_head >= 0, "%s: dac4 box missing", tag);
++    if (dac4_head < 0) {
++        free(file);
++        return;
++    }
++    ret = write_file(path, file, (int) dac4_off + 10);
++    free(file);
++    CHECK(ret == 0, "%s: cannot write %s", tag, path);
++    if (ret)
++        return;
++    ret = avformat_open_input(&in, path, NULL, NULL);
++    CHECK(ret == AVERROR_INVALIDDATA,
++          "%s: trunc-dac4 ret %d, want INVALIDDATA", tag, ret);
++    if (ret >= 0)
++        avformat_close_input(&in);
++}
++
++/* A dac4 box claiming a sub-minimum payload must fail open loudly. */
++static void check_bad_dac4_size(const char *tag, const char *good,
++                                const char *path)
++{
++    AVFormatContext *in = NULL;
++    uint8_t *file;
++    int file_len, ret;
++    int64_t dac4_head, dac4_off, dac4_len;
++
++    file = read_file(good, &file_len);
++    CHECK(file != NULL, "%s: cannot read %s", tag, good);
++    if (!file)
++        return;
++    dac4_head = find_dac4(file, file_len, &dac4_off, &dac4_len);
++    CHECK(dac4_head >= 0, "%s: dac4 box missing", tag);
++    if (dac4_head < 0) {
++        free(file);
++        return;
++    }
++    /* Box length 10: a 2-byte payload trips the demux sanity floor. */
++    file[dac4_head] = 0;
++    file[dac4_head + 1] = 0;
++    file[dac4_head + 2] = 0;
++    file[dac4_head + 3] = 10;
++    ret = write_file(path, file, file_len);
++    free(file);
++    CHECK(ret == 0, "%s: cannot write %s", tag, path);
++    if (ret)
++        return;
++    ret = avformat_open_input(&in, path, NULL, NULL);
++    CHECK(ret == AVERROR_INVALIDDATA,
++          "%s: bad-dac4-size ret %d, want INVALIDDATA", tag, ret);
++    if (ret >= 0)
++        avformat_close_input(&in);
++}
++
++static const char *tmpdir(void)
++{
++    const char *t = getenv("TMPDIR");
++
++    return t && *t ? t : "/tmp";
++}
++
++int main(void)
++{
++    static uint8_t raws[NFRAMES][RAW_LEN];
++    static uint8_t pkts[NFRAMES][PKT_MAX];
++    static int lens[NFRAMES];
++    char path[512], good[512], bad[512];
++    int i;
++
++    av_log_set_level(AV_LOG_ERROR);
++    for (i = 0; i < NFRAMES; i++)
++        build_raw(raws[i], i, 101 + i);
++
++    /* Bare raw frames: mux writes samples as-is. */
++    for (i = 0; i < NFRAMES; i++) {
++        memcpy(pkts[i], raws[i], RAW_LEN);
++        lens[i] = RAW_LEN;
++    }
++    snprintf(path, sizeof(path), "%s/ac4rt-bare.mp4", tmpdir());
++    CHECK(mux_file(path, pkts, lens, NFRAMES,
++                   dsi_golden, sizeof(dsi_golden)) == 0, "bare: mux failed");
++    check_roundtrip("bare", path, raws, NFRAMES);
++    snprintf(good, sizeof(good), "%s", path);
++
++    /* AC40/AC41/ext wrappers: mux strips to the same bare samples. */
++    for (i = 0; i < NFRAMES; i++)
++        lens[i] = wrap_ac40(pkts[i], raws[i]);
++    snprintf(path, sizeof(path), "%s/ac4rt-ac40.mp4", tmpdir());
++    CHECK(mux_file(path, pkts, lens, NFRAMES,
++                   dsi_golden, sizeof(dsi_golden)) == 0, "ac40: mux failed");
++    check_roundtrip("ac40", path, raws, NFRAMES);
++
++    for (i = 0; i < NFRAMES; i++)
++        lens[i] = wrap_ac41(pkts[i], raws[i]);
++    snprintf(path, sizeof(path), "%s/ac4rt-ac41.mp4", tmpdir());
++    CHECK(mux_file(path, pkts, lens, NFRAMES,
++                   dsi_golden, sizeof(dsi_golden)) == 0, "ac41: mux failed");
++    check_roundtrip("ac41", path, raws, NFRAMES);
++
++    for (i = 0; i < NFRAMES; i++)
++        lens[i] = wrap_ac41_ext(pkts[i], raws[i]);
++    snprintf(path, sizeof(path), "%s/ac4rt-ac41ext.mp4", tmpdir());
++    CHECK(mux_file(path, pkts, lens, NFRAMES,
++                   dsi_golden, sizeof(dsi_golden)) == 0, "ac41ext: mux failed");
++    check_roundtrip("ac41ext", path, raws, NFRAMES);
++
++    /* Negatives fail loud. */
++    for (i = 0; i < NFRAMES; i++) {
++        memcpy(pkts[i], raws[i], RAW_LEN);
++        lens[i] = RAW_LEN;
++    }
++    snprintf(path, sizeof(path), "%s/ac4rt-noext.mp4", tmpdir());
++    check_mux_noext("neg", path, pkts, lens, NFRAMES);
++    snprintf(path, sizeof(path), "%s/ac4rt-multiframe.mp4", tmpdir());
++    check_mux_multiframe("neg", path, raws);
++    snprintf(bad, sizeof(bad), "%s/ac4rt-trunc.mp4", tmpdir());
++    check_trunc_dac4("neg", good, bad);
++    snprintf(bad, sizeof(bad), "%s/ac4rt-badsize.mp4", tmpdir());
++    check_bad_dac4_size("neg", good, bad);
++
++    if (failures == 0)
++        printf("PASS: ac4 mp4 roundtrip (4 shapes + 4 negatives)\n");
++    else
++        printf("%d FAILURES\n", failures);
++    return failures != 0;
++}
+diff --git a/tests/fate/ac4.mak b/tests/fate/ac4.mak
+index 41330bc7bb..cc882e0b5a 100644
+--- a/tests/fate/ac4.mak
++++ b/tests/fate/ac4.mak
+@@ -274,5 +274,38 @@ fate-ac4-parser: CMP = null
+ 
+ fate-ac4-parse: $(FATE_AC4_PARSE-yes)
+ 
+-FATE-yes += $(FATE_AC4_PARSE-yes)
+-fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes)
++FATE-yes += $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes) $(FATE_AC4_RT-yes)
++# AC-4 MP4 mux/demux roundtrip. Frames and DSI are synthesized inside
++# the test tool, so this needs no fate-suite samples either: bare and
++# Annex G framed inputs mux to MP4 and demux back with byte-exact dac4
++# extradata, stsz/packet counts and payloads, plus mux/demux negatives.
++FATE_AC4_MP4-$(call ALLYES, MP4_MUXER MOV_DEMUXER AC4_PARSER) += fate-ac4-mp4-roundtrip
++fate-ac4-mp4-roundtrip: $(APITESTSDIR)/api-ac4-mp4-roundtrip-test$(EXESUF)
++fate-ac4-mp4-roundtrip: CMD = run $(APITESTSDIR)/api-ac4-mp4-roundtrip-test$(EXESUF)
++fate-ac4-mp4-roundtrip: CMP = null
++
++fate-ac4-mp4: $(FATE_AC4_MP4-yes)
++
++# --- T3: encoder->decoder audio roundtrip (priming/skip + DSI end-to-end) ---
++# Synth stereo encodes to raw AC-4 (GEN, no suite samples) and decodes
++# back; the framemd5 golden pins the 4096 first-frame offset, catching
++# encoder initial_padding vs decoder skip handling. Needs A+C+E
++# in-stack, so it rides the D tip.
++tests/data/fate/ac4-roundtrip.ac4: TAG = GEN
++tests/data/fate/ac4-roundtrip.ac4: tests/data/asynth-48000-2.wav
++tests/data/fate/ac4-roundtrip.ac4: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data/fate
++	$(M)$(TARGET_EXEC) $(TARGET_PATH)/$< \
++	-hide_banner -loglevel error -nostdin \
++	-i $(TARGET_PATH)/tests/data/asynth-48000-2.wav \
++	-c:a ac4 -strict -2 -ab 128k -loudness_target 0 \
++	-flags +bitexact -fflags +bitexact -af aresample \
++	-f ac4 -y $(TARGET_PATH)/$@
++FATE_AC4_RT-$(call ALLYES, FFMPEG AC4_ENCODER AC4_DECODER AC4_MUXER AC4_DEMUXER \
++    WAV_DEMUXER PCM_S16LE_DECODER ARESAMPLE_FILTER FILE_PROTOCOL) += fate-ac4-roundtrip
++fate-ac4-roundtrip: tests/data/fate/ac4-roundtrip.ac4
++fate-ac4-roundtrip: SRC = $(TARGET_PATH)/tests/data/fate/ac4-roundtrip.ac4
++fate-ac4-roundtrip: CMD = framemd5 -strict -2 -i "$(SRC)"
++
++fate-ac4-rt: $(FATE_AC4_RT-yes)
++
++fate-ac4: $(FATE_AC4-yes) $(FATE_AC4_MD5-yes) $(FATE_AC4_REMUX-yes) $(FATE_AC4_ENCNEG-yes) $(FATE_AC4_ENC-yes) $(FATE_AC4_MPEGTS_PMT-yes) $(FATE_AC4_MPEGTS_PROBE-yes) $(FATE_AC4_PARSE-yes) $(FATE_AC4_MP4-yes) $(FATE_AC4_RT-yes)
+diff --git a/tests/ref/fate/ac4-roundtrip b/tests/ref/fate/ac4-roundtrip
+new file mode 100644
+index 0000000000..6ff3e5da04
+--- /dev/null
++++ b/tests/ref/fate/ac4-roundtrip
+@@ -0,0 +1,150 @@
++#format: frame checksums
++#version: 2
++#hash: MD5
++#tb 0: 1/48000
++#media_type 0: audio
++#codec_id 0: pcm_s16le
++#sample_rate 0: 48000
++#channel_layout_name 0: stereo
++#stream#, dts,        pts, duration,     size, hash
++0,       4096,       4096,     2048,     8192, c2a65bea4086cc1e21cacc5f3f05bf95
++0,       6144,       6144,     2048,     8192, b9f819d540f3f05fd6ffc113bca7a5c2
++0,       8192,       8192,     2048,     8192, ebafc3b9119074cca27faac4e4177fb8
++0,      10240,      10240,     2048,     8192, 45d75085927e9fb77750b8412dc87e45
++0,      12288,      12288,     2048,     8192, 86057b5791eeaf68e203cbf8781ea454
++0,      14336,      14336,     2048,     8192, d23c035d78a40919f38a6866179fb1d6
++0,      16384,      16384,     2048,     8192, 67137dbeeac3b4bcc18e411152fd255c
++0,      18432,      18432,     2048,     8192, d63b778d43c6b0e9cbbe6cc0bc038cae
++0,      20480,      20480,     2048,     8192, 1f38cae6a41d8388efa602bcef1bf675
++0,      22528,      22528,     2048,     8192, 46a0adb504f93180c860ea561f4b5250
++0,      24576,      24576,     2048,     8192, fcaded844683d19ab0ad090b61a01c76
++0,      26624,      26624,     2048,     8192, 8f20b6ed603df09ae2236a62e1d20d05
++0,      28672,      28672,     2048,     8192, ef15ecab445010d947e0bde1d8205a4b
++0,      30720,      30720,     2048,     8192, 98c56da23afb58a6f7cbddd12aa435aa
++0,      32768,      32768,     2048,     8192, 47b51a5712344281cf07b05dd3c44d4c
++0,      34816,      34816,     2048,     8192, 67b48b07d4fa64f6bbabfdb7d92614af
++0,      36864,      36864,     2048,     8192, bbbdde7658daf3fff8f969504af23d8c
++0,      38912,      38912,     2048,     8192, 45e2643b5e523809155abc26c6823405
++0,      40960,      40960,     2048,     8192, e5b04810f82d5829a832b9aa49f42445
++0,      43008,      43008,     2048,     8192, 8c2022ba2169b36688df7a9ff95c5415
++0,      45056,      45056,     2048,     8192, d79e1bd83a10b871cecd4990be2ad3c0
++0,      47104,      47104,     2048,     8192, c3c542be7de016dffebdb779fa9bb0a1
++0,      49152,      49152,     2048,     8192, 487397535cd49f147c325cab93f1f229
++0,      51200,      51200,     2048,     8192, e6d9983e1c99983fb6f825963bc4ce13
++0,      53248,      53248,     2048,     8192, ab2a40a32070439ae8494f256e56518d
++0,      55296,      55296,     2048,     8192, e7973e39586cbfc1594e439e9887ca40
++0,      57344,      57344,     2048,     8192, e3df192bdb76b1e183ea81689d897d44
++0,      59392,      59392,     2048,     8192, 2c38bbe24bb05aded9308f343e9e2446
++0,      61440,      61440,     2048,     8192, 1066dee1b830a87c54d3a592d9d2c834
++0,      63488,      63488,     2048,     8192, 4e113d1ae0c1163257479dff20173ce2
++0,      65536,      65536,     2048,     8192, 6c7725eedcac51ef5c0b29b074d041f0
++0,      67584,      67584,     2048,     8192, e1995fa2bb158a47c8bbb51e03e6d0d7
++0,      69632,      69632,     2048,     8192, 6744ae6a5a2903bf69712770fc930100
++0,      71680,      71680,     2048,     8192, 7038b940f0b188f4290139d12376a8cf
++0,      73728,      73728,     2048,     8192, fb5c249b17fb67b248ebb693c33a3460
++0,      75776,      75776,     2048,     8192, b109737ae4adbd36ea7b1c4870319c3a
++0,      77824,      77824,     2048,     8192, 8f77c2fb7db540d4707853ceb1bd7326
++0,      79872,      79872,     2048,     8192, e00dfca70cb36d5bb9c809b89cb3dad5
++0,      81920,      81920,     2048,     8192, f0454253c44da907e245a367ba3413a6
++0,      83968,      83968,     2048,     8192, 49d79733ba9320bad50574db67e7055b
++0,      86016,      86016,     2048,     8192, 46db4ec0fa8cbf2c48bce5c2c5e91b05
++0,      88064,      88064,     2048,     8192, c61170df24ff61b4c3d6950e07ae0ca5
++0,      90112,      90112,     2048,     8192, 5ae9587c1a616780ae82e99ccec3d50e
++0,      92160,      92160,     2048,     8192, 2caa33c6f68a73f060d9a8f072f893e5
++0,      94208,      94208,     2048,     8192, b2dedad4ca13cbf471e486414b805d07
++0,      96256,      96256,     2048,     8192, bd7be8f1f47aa1a03db282fd4733837c
++0,      98304,      98304,     2048,     8192, b8e0b84648dd45a2936166792cb0de01
++0,     100352,     100352,     2048,     8192, 7392de1d6df35c773a92940b22e96cf5
++0,     102400,     102400,     2048,     8192, 1f85524dcecfd13d36a8b1366bd2d3e4
++0,     104448,     104448,     2048,     8192, 72fd9286ffbbc54ea31f1769043c7820
++0,     106496,     106496,     2048,     8192, 2a7f33a7fc0befd4830ffe3d03026a8a
++0,     108544,     108544,     2048,     8192, 39d355e9279e4b9e55641a47d87cc3e2
++0,     110592,     110592,     2048,     8192, 587bff8e2df18f573bd399f34ace207d
++0,     112640,     112640,     2048,     8192, b17e939769d72b31e18aa52a33ee8365
++0,     114688,     114688,     2048,     8192, 455bd564d46d6a0be8facb92c018091a
++0,     116736,     116736,     2048,     8192, 1d20c00fa0bbe436955d89379c0e593d
++0,     118784,     118784,     2048,     8192, ebe0655d4ee35db597f778dea9eaa6f1
++0,     120832,     120832,     2048,     8192, 9ceefd311b02c6b505cb8c8418c35a4b
++0,     122880,     122880,     2048,     8192, a1506637ba97bf4b63d9831d77190cf4
++0,     124928,     124928,     2048,     8192, 039aaabd51f83f144d8e20e666568e79
++0,     126976,     126976,     2048,     8192, 8cca0344b9dd64193a6b535a91d75d53
++0,     129024,     129024,     2048,     8192, d62c6af88bf4bf3ebac424e004e49c7e
++0,     131072,     131072,     2048,     8192, 421b066e8dc52fd262a87aa1a51e40c9
++0,     133120,     133120,     2048,     8192, a07f03548832f8a0b05c1bf9d47670fe
++0,     135168,     135168,     2048,     8192, 94c5a1991e6e7bb57a8f9d50ea1c9485
++0,     137216,     137216,     2048,     8192, 41746aebaf5a2a57670bcfd9c534ed73
++0,     139264,     139264,     2048,     8192, 52a863d9a6d804e3a0b9f724a47397d8
++0,     141312,     141312,     2048,     8192, 0c5079ea712ae3710df2a06cfec17039
++0,     143360,     143360,     2048,     8192, 0023af384c5163e3fb320e64b7153f69
++0,     145408,     145408,     2048,     8192, 61b55dd890a01d83eb8b0c9e48c8698c
++0,     147456,     147456,     2048,     8192, 4fecab622922fc9c4727998c9281f926
++0,     149504,     149504,     2048,     8192, 187fe6d0ee00a5e62452853c25cd27fc
++0,     151552,     151552,     2048,     8192, 44870746defd2a2ba3856591a7c8925f
++0,     153600,     153600,     2048,     8192, b9806f9072afb8f0580e8fc99cbd1f62
++0,     155648,     155648,     2048,     8192, 3e9bb9e435bc87b5826e853bf431a42f
++0,     157696,     157696,     2048,     8192, 463bbf70e762d09cc7982ffd684a01fe
++0,     159744,     159744,     2048,     8192, 47a0ff2a6eade45cea964f857e033c55
++0,     161792,     161792,     2048,     8192, 0dd4c02119c055c1b1e6e0dfef8fdfac
++0,     163840,     163840,     2048,     8192, be489d6ea0d6bb19734f01d37366cd4e
++0,     165888,     165888,     2048,     8192, 3bbddb1ea8134d38ea49aa82d6667ffa
++0,     167936,     167936,     2048,     8192, 425aed58a640a4d39c14df261c8b62cc
++0,     169984,     169984,     2048,     8192, ba75b8e22b81df259b3db26662f2af47
++0,     172032,     172032,     2048,     8192, d4cdbc866de5fcd9658d8e217cdaf92c
++0,     174080,     174080,     2048,     8192, 0e7cab2b84c13fd67429e2350324c771
++0,     176128,     176128,     2048,     8192, 34a2f3022a937695b5a8878e38148482
++0,     178176,     178176,     2048,     8192, 8e24ad5bb8594f81e9de10524143c7d7
++0,     180224,     180224,     2048,     8192, a6d7493f4ce05fd9edb0a3d9dfb81d1b
++0,     182272,     182272,     2048,     8192, d37838c0d357bbf60c34410931920ea8
++0,     184320,     184320,     2048,     8192, f7b2b364707af919d55a41188585ba5c
++0,     186368,     186368,     2048,     8192, 12c3ef56259075324d05d6492d9cdfc7
++0,     188416,     188416,     2048,     8192, ef5cf5c614e3b269dfa767c28a0b4e9b
++0,     190464,     190464,     2048,     8192, 146bb604189897c057161d8908b0cee1
++0,     192512,     192512,     2048,     8192, 1f22a6d10306bafd1a3e93a8e7a0ecda
++0,     194560,     194560,     2048,     8192, 6c76e695ade580e07036d8c3ef72c276
++0,     196608,     196608,     2048,     8192, 06c020ffc8c1366ac75b6689e0c97a7c
++0,     198656,     198656,     2048,     8192, 57d50b922d598a8514bc3ad173a0ce2e
++0,     200704,     200704,     2048,     8192, 08128c424104cce5ffd99882fc6949bf
++0,     202752,     202752,     2048,     8192, 9c3491078034f960d1f77229627b49f9
++0,     204800,     204800,     2048,     8192, ee1d755ede90f89965dee36f9e71f945
++0,     206848,     206848,     2048,     8192, 744ba7adb4ae9a788189cedc617561d6
++0,     208896,     208896,     2048,     8192, 6ca986ae227bd80d57a3905076afb6d7
++0,     210944,     210944,     2048,     8192, 44fc3d6a704bd3355333c16f8769af12
++0,     212992,     212992,     2048,     8192, f8f5e1dc458468a127f3c04d27bb1120
++0,     215040,     215040,     2048,     8192, fcb9e632a4b90e9fd95a9e3ded3d8cc8
++0,     217088,     217088,     2048,     8192, 08128c424104cce5ffd99882fc6949bf
++0,     219136,     219136,     2048,     8192, 9c3491078034f960d1f77229627b49f9
++0,     221184,     221184,     2048,     8192, ee1d755ede90f89965dee36f9e71f945
++0,     223232,     223232,     2048,     8192, 744ba7adb4ae9a788189cedc617561d6
++0,     225280,     225280,     2048,     8192, 6ca986ae227bd80d57a3905076afb6d7
++0,     227328,     227328,     2048,     8192, 44fc3d6a704bd3355333c16f8769af12
++0,     229376,     229376,     2048,     8192, f8f5e1dc458468a127f3c04d27bb1120
++0,     231424,     231424,     2048,     8192, fcb9e632a4b90e9fd95a9e3ded3d8cc8
++0,     233472,     233472,     2048,     8192, 08128c424104cce5ffd99882fc6949bf
++0,     235520,     235520,     2048,     8192, 9c3491078034f960d1f77229627b49f9
++0,     237568,     237568,     2048,     8192, ee1d755ede90f89965dee36f9e71f945
++0,     239616,     239616,     2048,     8192, 744ba7adb4ae9a788189cedc617561d6
++0,     241664,     241664,     2048,     8192, 6ca986ae227bd80d57a3905076afb6d7
++0,     243712,     243712,     2048,     8192, 44fc3d6a704bd3355333c16f8769af12
++0,     245760,     245760,     2048,     8192, f8f5e1dc458468a127f3c04d27bb1120
++0,     247808,     247808,     2048,     8192, fcb9e632a4b90e9fd95a9e3ded3d8cc8
++0,     249856,     249856,     2048,     8192, 08128c424104cce5ffd99882fc6949bf
++0,     251904,     251904,     2048,     8192, 9c3491078034f960d1f77229627b49f9
++0,     253952,     253952,     2048,     8192, ee1d755ede90f89965dee36f9e71f945
++0,     256000,     256000,     2048,     8192, 744ba7adb4ae9a788189cedc617561d6
++0,     258048,     258048,     2048,     8192, 6ca986ae227bd80d57a3905076afb6d7
++0,     260096,     260096,     2048,     8192, 44fc3d6a704bd3355333c16f8769af12
++0,     262144,     262144,     2048,     8192, f8f5e1dc458468a127f3c04d27bb1120
++0,     264192,     264192,     2048,     8192, fcb9e632a4b90e9fd95a9e3ded3d8cc8
++0,     266240,     266240,     2048,     8192, 08128c424104cce5ffd99882fc6949bf
++0,     268288,     268288,     2048,     8192, 9c3491078034f960d1f77229627b49f9
++0,     270336,     270336,     2048,     8192, ee1d755ede90f89965dee36f9e71f945
++0,     272384,     272384,     2048,     8192, 744ba7adb4ae9a788189cedc617561d6
++0,     274432,     274432,     2048,     8192, 6ca986ae227bd80d57a3905076afb6d7
++0,     276480,     276480,     2048,     8192, 44fc3d6a704bd3355333c16f8769af12
++0,     278528,     278528,     2048,     8192, f8f5e1dc458468a127f3c04d27bb1120
++0,     280576,     280576,     2048,     8192, fcb9e632a4b90e9fd95a9e3ded3d8cc8
++0,     282624,     282624,     2048,     8192, 08128c424104cce5ffd99882fc6949bf
++0,     284672,     284672,     2048,     8192, 9c3491078034f960d1f77229627b49f9
++0,     286720,     286720,     2048,     8192, ee1d755ede90f89965dee36f9e71f945
++0,     288768,     288768,     2048,     8192, c60ae8d3c4c0e31d959b4852883afebe
++0,     290816,     290816,     2048,     8192, 01444ed52c7c7ecaed8106e5f1de1b2e
+-- 
+2.56.0
+

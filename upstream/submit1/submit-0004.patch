@@ -1,0 +1,74 @@
+From f6937d71cdc29b49910c95b7e89418296ab9e8ec Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Sat, 17 Oct 2026 03:10:00 -0400
+Subject: [PATCH 04/23] doc: AC-4 decoder docs
+
+Decoder table row, @section ac4 with the Series A private options,
+Changelog entry. No APIchanges entry (no public API change).
+
+Documents pres_sel only: the DRC/DE options never worked (enabling
+them fails decoder init) and are deleted in Series A, so they have
+no documented surface to reserve.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ Changelog                 |  1 +
+ doc/decoders.texi         | 17 +++++++++++++++++
+ doc/general_contents.texi |  1 +
+ 3 files changed, 19 insertions(+)
+
+diff --git a/Changelog b/Changelog
+index f4b1dba7e8..461e453d98 100644
+--- a/Changelog
++++ b/Changelog
+@@ -2,6 +2,7 @@ Entries are sorted chronologically from oldest to youngest within each release,
+ releases are sorted from youngest to oldest.
+ 
+ version <next>:
++- native AC-4 audio decoder
+ 
+ version 9.1:
+ - ASTC image encoding and decoding via libastcenc, with .astc and KTX 1.0 muxers and demuxers
+diff --git a/doc/decoders.texi b/doc/decoders.texi
+index 5652252233..5b5a77c953 100644
+--- a/doc/decoders.texi
++++ b/doc/decoders.texi
+@@ -317,6 +317,23 @@ Loud sounds are fully compressed.  Soft sounds are enhanced.
+ 
+ @end table
+ 
++@section ac4
++
++AC-4 audio decoder.
++
++Native decoder for Dolby AC-4 (ATSC A/344), handling mono, stereo
++and multichannel beds up to 7.1. Output is 16-bit PCM.
++
++@subsection AC-4 Decoder Options
++
++@table @option
++
++@item -pres_sel @var{value}
++Presentation select. Default @option{-1} decodes the default
++presentation; @option{0} to @option{63} select a specific one.
++
++@end table
++
+ @section flac
+ 
+ FLAC audio decoder.
+diff --git a/doc/general_contents.texi b/doc/general_contents.texi
+index cfaf4252c6..0e7e289ae4 100644
+--- a/doc/general_contents.texi
++++ b/doc/general_contents.texi
+@@ -1311,6 +1311,7 @@ following image formats are supported:
+ @item AAC+                   @tab  E  @tab  IX
+     @tab encoding supported through external library libfdk-aac
+ @item AC-3                   @tab IX  @tab  IX
++@item AC-4                   @tab     @tab  X
+ @item ACELP.KELVIN           @tab     @tab  X
+ @item ADPCM 4X Movie         @tab     @tab  X
+ @item ADPCM Yamaha AICA      @tab     @tab  X
+-- 
+2.56.0
+

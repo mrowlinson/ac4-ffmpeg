@@ -1,0 +1,97 @@
+From 181013370494466cbc59ca48b245abde94792fd9 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 08:11:28 -0400
+Subject: [PATCH 09/23] doc: AC-4 encoder docs
+
+@anchor{ac4} section in encoders.texi documenting the 6 private
+options (iframe_interval, priming, short_blocks, joint_shorts,
+measure_loudness, loudness_target) with the 48k-only, CBR-only,
+whole-stream-buffered behavior notes plus the experimental/limits
+notes; the audio-table AC-4 row becomes the single @tab IX @tab IX
+row (this series stacks on the decoder docs, which carry the decode
+column).
+
+Re-cut (r6): M18 single-row merge onto the decoder row (drops the
+second-row brag); M11 experimental + limits paragraph.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ doc/encoders.texi         | 48 +++++++++++++++++++++++++++++++++++++++
+ doc/general_contents.texi |  2 +-
+ 2 files changed, 49 insertions(+), 1 deletion(-)
+
+diff --git a/doc/encoders.texi b/doc/encoders.texi
+index b111ca7c9b..6bf4ea85af 100644
+--- a/doc/encoders.texi
++++ b/doc/encoders.texi
+@@ -541,6 +541,54 @@ Selected by Encoder (default)
+ 
+ @end table
+ 
++@anchor{ac4}
++@section ac4
++
++Dolby AC-4 audio encoder, natively implemented into FFmpeg.
++
++The encoder buffers the whole stream, runs a loudness-measure pass at
++flush (matching file-mode behavior), and emits one raw AC-4 frame per
++packet. Only 48 kHz stereo and 5.1 input are supported (resample with
++@code{-af aresample}); the output bitrate snaps to the supported
++constant-bitrate steps. Constant bit rate only: @code{-q:a} (VBR) is
++rejected.
++
++The encoder is experimental: pass @code{-strict -2} (or @code{-strict
++experimental}) to select it. Limits of this version: the whole input
++is buffered in memory before any output is emitted (tens of MB for a
++typical song); inputs past ~1.07B samples per channel are refused;
++the default loudness correction may refuse full-scale material at
++the loudness floor (use @code{loudness_target=0} to skip the
++correction gain). A streaming (low-memory) mode is planned but not
++implemented here.
++
++@subsection Options
++
++@table @option
++@item iframe_interval @var{string}
++I-frame interval: @samp{1sec} (default) or a frame step >= 2.
++
++@item priming @var{boolean}
++Write the priming frame (default 1). Stereo only in effect: the 5.1
++path is priming-only and rejects @code{priming=0}.
++
++@item short_blocks @var{boolean}
++Allow short-block transients (default 1).
++
++@item joint_shorts @var{boolean}
++Joint-stereo short blocks (default 0). Stereo only: rejected for 5.1.
++
++@item measure_loudness @var{boolean}
++Run the pass-1 loudness measure at flush (default 1). When disabled,
++the encoder takes the neutral path (no loudness correction), whose
++output differs from file mode by design.
++
++@item loudness_target @var{double}
++Target loudness in LUFS: 0 or -31..-10 (default -24). 0 keeps the
++measure path but skips the correction gain; use it when the input is
++refused at the loudness floor.
++@end table
++
+ @anchor{flac}
+ @section flac
+ 
+diff --git a/doc/general_contents.texi b/doc/general_contents.texi
+index 0e7e289ae4..83f62eed51 100644
+--- a/doc/general_contents.texi
++++ b/doc/general_contents.texi
+@@ -1311,7 +1311,7 @@ following image formats are supported:
+ @item AAC+                   @tab  E  @tab  IX
+     @tab encoding supported through external library libfdk-aac
+ @item AC-3                   @tab IX  @tab  IX
+-@item AC-4                   @tab     @tab  X
++@item AC-4                   @tab IX  @tab  IX
+ @item ACELP.KELVIN           @tab     @tab  X
+ @item ADPCM 4X Movie         @tab     @tab  X
+ @item ADPCM Yamaha AICA      @tab     @tab  X
+-- 
+2.56.0
+

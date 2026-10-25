@@ -1,0 +1,959 @@
+From 461b0a44d1273c3b187678e5a6f7f798fc5a23b4 Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 08:16:02 -0400
+Subject: [PATCH 14/23] avcodec/ac4: emit DSI extradata via putbits serializer
+
+Vendor the DSI serializer from the parent dsi/ lib
+(ff/dsi-lavcshape-merged, DSI-11/DSI-12) into libavcodec and adopt
+the PutBitContext emitter for codec extradata in the native AC-4
+encoder wrapper.
+
+Vendored, PutBitContext emission only (the hand-rolled oracle
+ac4dsi_serialize and the legacy layout-name shim stay parent-side):
+ac4dsi.h, ac4dsi_priv.h, ac4dsi_putbits.h/.c, ac4dsi.c (init
+helpers, lavc-mask layout table, shared validation). Integer-only:
+wired under CONFIG_AC4_ENCODER without the CFLAGS-ac4enc_float list.
+
+The wrapper builds one raw ac4_dsi_v1 payload at init (no atom
+header; the MP4 muxer wraps it verbatim as dac4): lib-default
+stream params plus the snapped target bitrate, one synthesized pv1
+presentation, channel trio set explicitly for the validated
+stereo/5.1 layout (mask-table form follows). Any serializer refusal
+fails init loudly; DSI can never be silently missing.
+
+Encoder packet bytes are unchanged (fate md5 REFs untouched, .ac4
+cmp-clean); the three framecrc refs gain the #extradata line the
+framecrc muxer now prints (size 32, oracle-verified bytes).
+
+Re-cut (r3): content rebased onto the r3 stack (fuzz-guarded
+wrapper + re-pinned stereo refs); DSI bytes and #extradata
+checksums identical to r2-wire.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ libavcodec/Makefile         |   1 +
+ libavcodec/ac4dsi.c         | 175 ++++++++++++++++++++++++
+ libavcodec/ac4dsi.h         | 200 +++++++++++++++++++++++++++
+ libavcodec/ac4dsi_priv.h    |  59 ++++++++
+ libavcodec/ac4dsi_putbits.c | 264 ++++++++++++++++++++++++++++++++++++
+ libavcodec/ac4dsi_putbits.h |  55 ++++++++
+ libavcodec/ac4enc.c         |  54 +++++++-
+ tests/ref/fate/ac4-fold8    |   1 +
+ tests/ref/fate/ac4-framecrc |   1 +
+ tests/ref/fate/ac4-tail     |   1 +
+ 10 files changed, 810 insertions(+), 1 deletion(-)
+ create mode 100644 libavcodec/ac4dsi.c
+ create mode 100644 libavcodec/ac4dsi.h
+ create mode 100644 libavcodec/ac4dsi_priv.h
+ create mode 100644 libavcodec/ac4dsi_putbits.c
+ create mode 100644 libavcodec/ac4dsi_putbits.h
+
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index f7d6914377..db58b3a7fe 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -231,6 +231,7 @@ OBJS-$(CONFIG_AC4_ENCODER)             += ac4enc_lib.o \
+                                           ac4_enc_tail59.o ac4_enc_aspx.o \
+                                           ac4_enc_acpl.o ac4_pycompat.o
+ OBJS-$(CONFIG_AC4_ENCODER)             += ac4enc.o
++OBJS-$(CONFIG_AC4_ENCODER)             += ac4dsi.o ac4dsi_putbits.o
+ # AC-4 encoder core float discipline: bit-parity with the reference
+ # encoder requires the CLI float environment (no FMA contraction, no
+ # builtin sin/cos/pow folding, default signed-zero semantics). Flags
+diff --git a/libavcodec/ac4dsi.c b/libavcodec/ac4dsi.c
+new file mode 100644
+index 0000000000..ee6719a5e6
+--- /dev/null
++++ b/libavcodec/ac4dsi.c
+@@ -0,0 +1,175 @@
++/*
++ * AC-4 DSI serializer helpers and shared validation
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file ac4dsi.c
++ * @brief AC-4 DSI init helpers, layout map, and shared validation.
++ *
++ * In-tree vendoring note: the hand-rolled bitwriter and oracle emitter
++ * (bitwriter_t, v1_write, ac4dsi_serialize) stay parent-side (dsi/);
++ * in-tree emission is PutBitContext-only (ac4dsi_putbits.c). This file
++ * keeps the init helpers, the lavc-mask layout table, and the
++ * validation both emitters share (ac4dsi_priv.h).
++ */
++#include "ac4dsi.h"
++#include "ac4dsi_priv.h"
++
++#include <string.h>
++
++void ac4dsi_stream_init(ac4dsi_stream_t *s)
++{
++    memset(s, 0, sizeof(*s));
++    s->bitstream_version = 2;
++    s->fs_index = 1;
++    s->frame_rate_index = 13;
++    s->b_program_id = 0;
++    s->bit_rate_mode = 2;
++    s->bit_rate = 0; /* NOT emittable in mode 2: serialize rejects it
++                      * (DSI-7), so the caller must set a target rate */
++    s->bit_rate_precision = 0xFFFFFFFFu;
++}
++
++void ac4dsi_pres_init_v1(ac4dsi_pres_t *p)
++{
++    memset(p, 0, sizeof(*p));
++    p->presentation_version = 1;
++    p->md_compat = 0;
++    p->b_presentation_id = 1;
++    p->presentation_id = 0;
++    p->ch_mode = 1;
++    p->channel_groups = 0x000001u;
++    p->b_content_type = 1;
++    p->content_classifier = 0;
++    p->language_tag = "en";
++    p->de_indicator = 1;
++    p->immersive_indicator = 0;
++}
++
++/* lavc channel_layout mask -> DSI channel trio (DSI-12). Row order is
++ * the stereo/5.1 pair the lavc encoder wrapper accepts; keep in sync
++ * with the ac4dsi_chmask_t enum. */
++const ac4dsi_layout_map_t ac4dsi_layout_map[AC4DSI_N_LAYOUTS] = {
++    { AC4DSI_CHMASK_STEREO, 0, 1, 0x000001u },
++    { AC4DSI_CHMASK_5POINT1, 1, 4, 0x000047u },
++};
++
++int ac4dsi_pres_set_layout_mask(ac4dsi_pres_t *p, uint64_t lavc_mask)
++{
++    size_t i;
++    if (!p)
++        return AC4DSI_EINVAL;
++    for (i = 0; i < AC4DSI_N_LAYOUTS; i++) {
++        if (ac4dsi_layout_map[i].lavc_mask == lavc_mask) {
++            p->md_compat = ac4dsi_layout_map[i].md_compat;
++            p->ch_mode = ac4dsi_layout_map[i].ch_mode;
++            p->channel_groups = ac4dsi_layout_map[i].channel_groups;
++            return AC4DSI_OK;
++        }
++    }
++    return AC4DSI_EINVAL;
++}
++
++const char *ac4dsi_strerror(int rc)
++{
++    switch (rc) {
++    case AC4DSI_OK:
++        return "ok";
++    case AC4DSI_EINVAL:
++        return "invalid argument / unsupported shape";
++    case AC4DSI_ENOSPC:
++        return "output buffer too small";
++    default:
++        return "unknown error";
++    }
++}
++
++int ac4dsi_mode_for_wait_frames(int wait_frames)
++{
++    if (wait_frames == 0)
++        return 1;
++    if (wait_frames >= 1 && wait_frames <= 6)
++        return 2;
++    return 3;
++}
++
++size_t ac4dsi_v1_taglen(const char *s)
++{
++    size_t n = 0;
++    if (!s)
++        return 0;
++    while (s[n] != '\0')
++        n++;
++    return n;
++}
++
++/* Validate one v1 presentation's parameters. Shared with the PutBitContext
++ * emitter (ac4dsi_priv.h) so both agree on legality. */
++int ac4dsi_v1_check(const ac4dsi_pres_t *p)
++{
++    size_t taglen;
++    if (p->md_compat > 7u)
++        return AC4DSI_EINVAL;
++    if (p->b_presentation_id && p->presentation_id > 31u)
++        return AC4DSI_EINVAL;
++    if (p->ch_mode > 31u)
++        return AC4DSI_EINVAL;
++    /* 11-14 need back/top modifier bits; no wire vectors pin them. */
++    if (p->ch_mode >= 11u && p->ch_mode <= 14u)
++        return AC4DSI_EINVAL;
++    if (p->channel_groups > 0x3FFFFu)
++        return AC4DSI_EINVAL;
++    if (p->content_classifier > 7u)
++        return AC4DSI_EINVAL;
++    taglen = ac4dsi_v1_taglen(p->language_tag);
++    if (taglen > AC4DSI_MAX_LANG)
++        return AC4DSI_EINVAL;
++    if ((p->de_indicator & ~1) != 0 || (p->immersive_indicator & ~1) != 0)
++        return AC4DSI_EINVAL;
++    if ((p->b_presentation_id & ~1) != 0 || (p->b_content_type & ~1) != 0)
++        return AC4DSI_EINVAL;
++    return AC4DSI_OK;
++}
++
++int ac4dsi_stream_check(const ac4dsi_stream_t *s, size_t n_pres)
++{
++    if (n_pres < 1u || n_pres > AC4DSI_MAX_PRES)
++        return AC4DSI_EINVAL;
++    if (s->bitstream_version > 127u)
++        return AC4DSI_EINVAL;
++    if (s->fs_index > 1u || s->frame_rate_index > 15u)
++        return AC4DSI_EINVAL;
++    /* Table E.8 defines modes 1-3 only (DSI-15). */
++    if (s->bit_rate_mode == 0u || s->bit_rate_mode > 3u)
++        return AC4DSI_EINVAL;
++    /* Mode 2 (ABR) without a target rate is the init-default footgun:
++     * reject so a caller that forgot s.bit_rate fails loudly instead of
++     * emitting mode-2/rate-0 (DSI-7). Mode 3 (VBR) with rate 0 stays
++     * legal: wild vectors carry unknown rate. */
++    if (s->bit_rate_mode == 2u && s->bit_rate == 0u)
++        return AC4DSI_EINVAL;
++    if ((s->b_program_id & ~1) != 0 || (s->b_uuid & ~1) != 0)
++        return AC4DSI_EINVAL;
++    /* Program-id block exists on the wire only when bsv > 1. */
++    if (s->bitstream_version <= 1u && (s->b_program_id || s->b_uuid))
++        return AC4DSI_EINVAL;
++    if (!s->b_program_id && s->b_uuid)
++        return AC4DSI_EINVAL;
++    return AC4DSI_OK;
++}
+diff --git a/libavcodec/ac4dsi.h b/libavcodec/ac4dsi.h
+new file mode 100644
+index 0000000000..cd10829b4e
+--- /dev/null
++++ b/libavcodec/ac4dsi.h
+@@ -0,0 +1,200 @@
++/*
++ * AC-4 DSI (dac4 payload) serializer
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file ac4dsi.h
++ * @brief Standalone AC-4 DSI (dac4 payload) serializer, pure C.
++ *
++ * Emits one ac4_dsi_v1 structure (ETSI TS 103 190-2 Annex E) exactly as it
++ * must appear in the MP4 dac4 box payload: no box header, runs to end of box.
++ * No dependencies, no allocation; the caller supplies the output buffer.
++ *
++ * Field order/widths follow DSI-CONTRACT.md (ff-dsi-contract), itself derived
++ * from the published Annex E tables and verified against 3 corpus MP4s.
++ *
++ * Supported shape (all wire-observed stereo/5.1 vectors):
++ *  - header: dsi_version=1, program-id block, stream bitrate block
++ *  - per presentation: pv==1 synthesized v1 block with presentation_config
++ *    0x1F (exactly one channel-coded substream group); pv>=2 opaque
++ *    passthrough (bytes copied verbatim, never parsed).
++ * Not emitted (rejected with -EINVAL): pv==0 legacy v0 blocks, ch_mode 11-14
++ * back/top modifiers (no wire vectors to verify against).
++ *
++ * In-tree vendoring note: emission here is PutBitContext-only
++ * (ac4dsi_putbits.c). The hand-rolled oracle (ac4dsi_serialize) and the
++ * legacy layout-name shim stay parent-side (dsi/); new code uses
++ * ac4dsi_pres_set_layout_mask().
++ */
++#ifndef AC4DSI_H
++#define AC4DSI_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* Error codes (negative returns from the putbits serializer and helpers;
++ * Numeric values match errno EINVAL/ENOSPC so strerror(-rc) also works,
++ * but prefer ac4dsi_strerror() (stable across the sibling libs' mapping).
++ * NOTE vs sibling enc-lib (ac4enc_lib.h H8: only -EINVAL/-ENOMEM/-EIO):
++ * this module keeps a distinct -ENOSPC for short buffers so callers can
++ * tell "retry with the reported size" apart from "bad parameters".
++ * Mapping for shared plumbing: ENOSPC ~ EINVAL-with-size (like enc-lib's
++ * short-buffer -EINVAL + required size); never -ENOMEM/-EIO here. */
++#define AC4DSI_OK      0
++#define AC4DSI_EINVAL (-22)  /* bad parameter / unsupported shape */
++#define AC4DSI_ENOSPC (-28)  /* output buffer too small */
++
++/**
++ * Human-readable name for an AC4DSI_* return code ("ok",
++ * "invalid argument / unsupported shape", "output buffer too small",
++ * "unknown error"). Never returns NULL.
++ */
++const char *ac4dsi_strerror(int rc);
++
++#define AC4DSI_DSI_VERSION 1
++#define AC4DSI_MAX_OPAQUE  (255u + 65535u) /* pres_bytes 0xFF escape limit */
++#define AC4DSI_MAX_LANG    63u              /* 6-bit language-tag length */
++#define AC4DSI_MAX_PRES    511u             /* 9-bit n_presentations */
++
++/* Stream-level DSI header fields. Obtain defaults from ac4dsi_stream_init(),
++ * then override. Documented defaults below. */
++typedef struct {
++    uint8_t bitstream_version;   /* 7 bits. Default 2 (current encoder). */
++    uint8_t fs_index;            /* 1 bit. Default 1 (48 kHz base). */
++    uint8_t frame_rate_index;    /* 4 bits. Default 13 (encoder rate). */
++    /* OPEN (a): program id. Default off (b_program_id=0), matching our
++     * encoder TOC today. Wild vectors use on + short_program_id=300. */
++    int      b_program_id;
++    uint16_t short_program_id;   /* 16 bits, used iff b_program_id. */
++    int      b_uuid;             /* used iff b_program_id. Default 0. */
++    uint8_t  program_uuid[16];   /* used iff b_uuid. */
++    /* Stream bitrate block (Table E.8 rule: wait_frames==0 -> mode 1,
++     * 1..6 -> mode 2, else mode 3; see ac4dsi_mode_for_wait_frames).
++     * Default: mode 2 (our encoder wait_frames=6), rate 0, precision
++     * 0xFFFFFFFF (unknown). The rate 0 default is NOT emittable in mode 2:
++     * serialize rejects mode==2 && rate==0 with -EINVAL, so a caller that
++     * forgets to set the target bitrate fails loudly instead of emitting
++     * a dubious mode-2/rate-0 header (DSI-7). Mode 3 (VBR) with rate 0
++     * stays legal (wild vectors carry unknown rate). */
++    uint8_t  bit_rate_mode;      /* 2 bits, 1..3 (Table E.8; 0 rejected). */
++    uint32_t bit_rate;            /* Target bitrate; MUST be set for mode 2. */
++    uint32_t bit_rate_precision;
++} ac4dsi_stream_t;
++
++/* One DSI presentation entry.
++ *  - presentation_version == 1: v1_* fields are synthesized (cfg 0x1F,
++ *    single channel-coded group). Obtain defaults from ac4dsi_pres_init_v1().
++ *  - presentation_version >= 2: opaque bytes are copied verbatim under the
++ *    pv/pres_bytes framing (opaque round-trip, never parsed).
++ *  - presentation_version == 0: rejected (legacy v0, do not emit). */
++typedef struct {
++    uint8_t presentation_version;
++    /* --- v1 synthesis fields (pv == 1 only) --- */
++    uint8_t  md_compat;          /* 3 bits. Default 0 (stereo). */
++    /* OPEN (b): presentation id. Default present, = 0 (our encoder TOC).
++     * Wild vectors use 10. */
++    int      b_presentation_id;  /* Default 1. */
++    uint8_t  presentation_id;    /* 5 bits. Default 0. */
++    uint8_t  ch_mode;            /* 5 bits. Default 1 (stereo); 4 = 5.1. */
++    uint32_t channel_groups;     /* 18 bits. Default 0x000001 (L R). */
++    /* OPEN (c): content tag. Default on, classifier 0, tag "en", matching
++     * all wild vectors. Set b_content_type=0 for no content block, or
++     * language_tag=NULL for classifier-only. */
++    int         b_content_type;     /* Default 1. */
++    uint8_t     content_classifier; /* 3 bits. Default 0. */
++    /* Wire format is ISO 639-1 (2 letters, e.g. "en"), up to 63 bytes.
++     * Default "en". NULL = classifier-only, no tag. lavc-side warning:
++     * container/codec metadata usually carries ISO 639-2 ("eng") -- the
++     * caller MUST map 639-2 -> 639-1 before wiring this field; writing
++     * "eng" raw emits a corrupt 3-letter tag, and truncating to "en"
++     * without a table is wrong for codes whose 639-1 differs. */
++    const char *language_tag;
++    int de_indicator;               /* Default 1 (all vectors). */
++    int immersive_indicator;        /* Default 0 (believer v1 entry: 1). */
++    /* --- opaque passthrough (pv >= 2 only) --- */
++    const uint8_t *opaque;
++    size_t         opaque_len; /* bytes; 0 with NULL is legal (empty entry) */
++} ac4dsi_pres_t;
++
++/**
++ * Fill *s with the documented stream defaults. NOTE: the defaults are not
++ * all emittable -- bit_rate stays 0 and serialize rejects mode==2 with a
++ * zero rate (DSI-7), so set s.bit_rate before serializing.
++ */
++void ac4dsi_stream_init(ac4dsi_stream_t *s);
++
++/**
++ * Fill *p with the documented stereo v1 defaults (pv=1, md=0, pres_id=0,
++ * ch_mode=1, mask 0x1, content on/"en", DE=1, imm=0).
++ */
++void ac4dsi_pres_init_v1(ac4dsi_pres_t *p);
++
++/* DSI channel-layout ids as lavc channel_layout bitmasks
++ * (libavutil/channel_layout.h). Values are pinned to the lavc
++ * AV_CH_LAYOUT_* bits and cross-checked against the real headers by the
++ * putbits suite (_Static_assert in dsi_putbits_test.c):
++ *  - STEREO  = FL|FR (0x3)
++ *  - 5POINT1 = FL|FR|FC|LFE|SL|SR (0x60f: the SIDE variant the lavc
++ *    encoder wrapper accepts as AV_CHANNEL_LAYOUT_5POINT1).
++ * The BACK variant (0x3f) is NOT accepted: the wrapper rejects it too,
++ * so mapping it here would emit DSI the encoder can never produce. */
++typedef enum ac4dsi_chmask {
++    AC4DSI_CHMASK_STEREO  = 0x3,
++    AC4DSI_CHMASK_5POINT1 = 0x60f
++} ac4dsi_chmask_t;
++
++/* One row of the lavc-mask -> DSI channel-trio mapping table. */
++typedef struct {
++    uint64_t lavc_mask;     /* AV_CH_LAYOUT_* bits (ac4dsi_chmask_t) */
++    uint8_t  md_compat;
++    uint8_t  ch_mode;
++    uint32_t channel_groups;
++} ac4dsi_layout_map_t;
++
++#define AC4DSI_N_LAYOUTS 2
++extern const ac4dsi_layout_map_t ac4dsi_layout_map[AC4DSI_N_LAYOUTS];
++
++/**
++ * Set the channel trio (md_compat, ch_mode, channel_groups) from a lavc
++ * channel_layout bitmask (ac4dsi_chmask_t). This is the encoder-wiring
++ * form (DSI-12): pass avctx->ch_layout.u.mask straight in.
++ *
++ * On success the trio is written; on failure *p is untouched.
++ *
++ * @return AC4DSI_OK, or AC4DSI_EINVAL on NULL pres / unknown mask.
++ */
++int ac4dsi_pres_set_layout_mask(ac4dsi_pres_t *p, uint64_t lavc_mask);
++
++/**
++ * Table E.8 wait_frames -> bit_rate_mode rule: 0 -> 1 (CBR), 1..6 -> 2
++ * (ABR), else 3 (VBR). Negative inputs are nonsense but conform to the
++ * "else" row, so they also yield 3 (documented, not clamped); callers
++ * should not pass them (DSI-10).
++ */
++int ac4dsi_mode_for_wait_frames(int wait_frames);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* AC4DSI_H */
+diff --git a/libavcodec/ac4dsi_priv.h b/libavcodec/ac4dsi_priv.h
+new file mode 100644
+index 0000000000..ec300346c0
+--- /dev/null
++++ b/libavcodec/ac4dsi_priv.h
+@@ -0,0 +1,59 @@
++/*
++ * AC-4 DSI shared emitter internals
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file ac4dsi_priv.h
++ * @brief Shared internals for the two DSI emitters (DSI-11).
++ *
++ * The hand-rolled emitter (ac4dsi.c) and the PutBitContext emitter
++ * (ac4dsi_putbits.c) share validation and wire constants through this
++ * header so the two can never disagree on what is legal or on buffer
++ * bounds. Only the bit Emission differs, and the putbits suite pins
++ * the two byte-identical.
++ *
++ * Private: not installed, not part of the public API.
++ */
++#ifndef AC4DSI_PRIV_H
++#define AC4DSI_PRIV_H
++
++#include "ac4dsi.h"
++
++/* Fixed v1 synthesis constants for the observed stereo/5.1 shape. */
++#define AC4DSI_V1_CFG_SINGLE_GROUP 0x1Fu
++/* Worst case: 114 fixed bits + 63 tag bytes + align + 8 tail = 632 bits
++ * = 79 B, so 80 leaves 1 B margin. (Each tag byte adds a full byte.) */
++#define AC4DSI_V1_TMP_SIZE 80u
++
++/**
++ * strlen that tolerates NULL (NULL -> 0). Never reads past NUL.
++ */
++size_t ac4dsi_v1_taglen(const char *s);
++
++/**
++ * Validate the stream header + presentation count. AC4DSI_OK or EINVAL.
++ */
++int ac4dsi_stream_check(const ac4dsi_stream_t *s, size_t n_pres);
++
++/**
++ * Validate one v1 presentation's synthesis parameters. AC4DSI_OK/EINVAL.
++ */
++int ac4dsi_v1_check(const ac4dsi_pres_t *p);
++
++#endif /* AC4DSI_PRIV_H */
+diff --git a/libavcodec/ac4dsi_putbits.c b/libavcodec/ac4dsi_putbits.c
+new file mode 100644
+index 0000000000..ee9f60c405
+--- /dev/null
++++ b/libavcodec/ac4dsi_putbits.c
+@@ -0,0 +1,264 @@
++/*
++ * AC-4 DSI PutBitContext-based serializer implementation
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file ac4dsi_putbits.c
++ * @brief PutBitContext-based AC-4 DSI serializer implementation (DSI-11).
++ *
++ * Field order/widths mirror the parent-lib oracle (dsi/ac4dsi.c)
++ * exactly; only the writer primitive differs (put_bits/put_bits32 vs
++ * the hand-rolled loop). Validation is shared (ac4dsi_priv.h), so the
++ * two emitters agree on legality by construction; byte-identity
++ * (including short-buffer partials) is pinned by the parent
++ * dsi_putbits_test.c against the real lavc headers.
++ *
++ * Overflow accounting: lavc's put_bits() has no "count past the end"
++ * mode (overflowing it hits an av_log + assert path), so this file
++ * keeps its own honest room count (capbits - total, like the
++ * hand-rolled nbits/cap pair) and never offers lavc more bits than
++ * fit. A field that straddles the end emits its top bits that fit,
++ * exactly like the bit-by-bit writer's prefix.
++ */
++#include "ac4dsi_putbits.h"
++#include "ac4dsi_priv.h"
++
++#include <limits.h>
++#include <string.h>
++
++#include "put_bits.h"
++
++typedef struct {
++    PutBitContext pb;
++    size_t capbits; /* honest capacity: out_cap * 8, saturating */
++    size_t total;   /* bits attempted (== hand-rolled nbits) */
++    int over;       /* sticky overflow flag */
++} pbw_t;
++
++static void pbw_init(pbw_t *w, uint8_t *buf, size_t cap)
++{
++    int initsize;
++    w->capbits = cap > SIZE_MAX / 8u ? SIZE_MAX : cap * 8u;
++    /* lavc takes an int size. need is always far below INT_MAX and the
++     * honest room accounting below never lets lavc see more bits than
++     * fit, so clamping a gigantic cap is safe. */
++    initsize = cap > (size_t)INT_MAX ? INT_MAX : (int)cap;
++    init_put_bits(&w->pb, buf, initsize);
++    w->total = 0;
++    w->over = 0;
++}
++
++/* Mirror of bw_put: big-endian, sticky overflow, keeps counting.
++ * nbits is 1..32; 32-bit values go through put_bits32 (put_bits caps
++ * at 31 bits per call). */
++static void pbw_put(pbw_t *w, uint32_t val, int nbits)
++{
++    size_t room;
++    if (nbits <= 0)
++        return;
++    if (w->over) {
++        w->total += (size_t)nbits;
++        return;
++    }
++    room = w->capbits > w->total ? w->capbits - w->total : 0u;
++    w->total += (size_t)nbits;
++    if ((size_t)nbits <= room) {
++        if (nbits == 32)
++            put_bits32(&w->pb, val);
++        else
++            put_bits(&w->pb, nbits, val);
++        return;
++    }
++    /* Partial field: emit the top `room` bits that fit, then stick.
++     * room < nbits <= 32, so room <= 31 and put_bits() is legal. */
++    if (room > 0)
++        put_bits(&w->pb, (int)room, val >> (nbits - (int)room));
++    w->over = 1;
++}
++
++static void pbw_align(pbw_t *w)
++{
++    int pad = (int)((8u - (w->total & 7u)) & 7u);
++    pbw_put(w, 0, pad);
++}
++
++static void pbw_bytes(pbw_t *w, const uint8_t *p, size_t n)
++{
++    size_t i;
++    for (i = 0; i < n; i++)
++        pbw_put(w, p[i], 8);
++}
++
++/* Write one synthesized v1 block (no pv/pb framing). Field-for-field
++ * mirror of the parent-lib oracle v1_write() (dsi/ac4dsi.c); keep the
++ * two in sync. */
++static void pbw_v1_write(pbw_t *w, const ac4dsi_pres_t *p)
++{
++    size_t taglen = ac4dsi_v1_taglen(p->language_tag);
++    size_t i;
++    pbw_put(w, AC4DSI_V1_CFG_SINGLE_GROUP, 5);
++    pbw_put(w, p->md_compat, 3);
++    pbw_put(w, (uint32_t)(p->b_presentation_id != 0), 1);
++    if (p->b_presentation_id)
++        pbw_put(w, p->presentation_id, 5);
++    pbw_put(w, 0, 2); /* dsi_frame_rate_multiply_info */
++    pbw_put(w, 0, 2); /* dsi_frame_rate_fraction_info */
++    pbw_put(w, 0, 5); /* presentation_emdf_version */
++    pbw_put(w, 0, 10); /* presentation_key_id */
++    pbw_put(w, 1, 1); /* b_presentation_channel_coded */
++    pbw_put(w, p->ch_mode, 5);
++    pbw_put(w, 0, 6); /* reserved */
++    pbw_put(w, p->channel_groups, 18);
++    pbw_put(w, 0, 1); /* b_presentation_core_differs */
++    pbw_put(w, 0, 1); /* b_presentation_filter */
++    /* single substream group (cfg 0x1F): */
++    pbw_put(w, 1, 1); /* b_substreams_present */
++    pbw_put(w, 0, 1); /* b_hsf_ext */
++    pbw_put(w, 1, 1); /* b_channel_coded */
++    pbw_put(w, 1, 8); /* n_substreams */
++    pbw_put(w, 0, 2); /* dsi_sf_multiplier */
++    pbw_put(w, 0, 1); /* no substream_bitrate_indicator */
++    pbw_put(w, 0, 6); /* reserved */
++    pbw_put(w, p->channel_groups, 18); /* mask mirrors presentation mask */
++    pbw_put(w, (uint32_t)(p->b_content_type != 0), 1);
++    if (p->b_content_type) {
++        pbw_put(w, p->content_classifier, 3);
++        pbw_put(w, taglen != 0, 1);
++        if (taglen != 0) {
++            pbw_put(w, (uint32_t)taglen, 6);
++            for (i = 0; i < taglen; i++)
++                pbw_put(w, (uint8_t)p->language_tag[i], 8);
++        }
++    }
++    pbw_put(w, 0, 1); /* b_pre_virtualized */
++    pbw_put(w, 0, 1); /* b_add_emdf_substreams */
++    pbw_put(w, 0, 1); /* b_presentation_bitrate_info */
++    pbw_put(w, 0, 1); /* b_alternative */
++    pbw_align(w);
++    /* DE/immersive tail (space always remains: block is byte-exact). */
++    pbw_put(w, (uint32_t)(p->de_indicator != 0), 1);
++    pbw_put(w, (uint32_t)(p->immersive_indicator != 0), 1);
++    pbw_put(w, 0, 4); /* reserved */
++    pbw_put(w, 0, 1); /* no extended presentation id */
++    pbw_put(w, 0, 1); /* pad */
++}
++
++int ac4dsi_serialize_putbits(const ac4dsi_stream_t *s,
++                             const ac4dsi_pres_t *pres, size_t n_pres,
++                             uint8_t *out, size_t out_cap, size_t *out_len)
++{
++    pbw_t w;
++    uint8_t v1tmp[AC4DSI_V1_TMP_SIZE];
++    size_t i, need = 0;
++    int rc;
++
++    if (!s || !pres || !out)
++        return AC4DSI_EINVAL;
++    rc = ac4dsi_stream_check(s, n_pres);
++    if (rc != AC4DSI_OK)
++        return rc;
++    for (i = 0; i < n_pres; i++) {
++        const ac4dsi_pres_t *p = &pres[i];
++        if (p->presentation_version == 0u)
++            return AC4DSI_EINVAL; /* v0 legacy: do not emit */
++        if (p->presentation_version == 1u) {
++            rc = ac4dsi_v1_check(p);
++            if (rc != AC4DSI_OK)
++                return rc;
++        } else {
++            if (p->opaque_len > AC4DSI_MAX_OPAQUE)
++                return AC4DSI_EINVAL;
++            if (p->opaque_len != 0u && p->opaque == NULL)
++                return AC4DSI_EINVAL;
++        }
++    }
++
++    memset(out, 0, out_cap);
++    pbw_init(&w, out, out_cap);
++
++    /* Header. */
++    pbw_put(&w, AC4DSI_DSI_VERSION, 3);
++    pbw_put(&w, s->bitstream_version, 7);
++    pbw_put(&w, s->fs_index, 1);
++    pbw_put(&w, s->frame_rate_index, 4);
++    pbw_put(&w, (uint32_t)n_pres, 9);
++    if (s->bitstream_version > 1u) {
++        pbw_put(&w, (uint32_t)(s->b_program_id != 0), 1);
++        if (s->b_program_id) {
++            pbw_put(&w, s->short_program_id, 16);
++            pbw_put(&w, (uint32_t)(s->b_uuid != 0), 1);
++            if (s->b_uuid)
++                pbw_bytes(&w, s->program_uuid, 16);
++        }
++    }
++    pbw_put(&w, s->bit_rate_mode, 2);
++    pbw_put(&w, s->bit_rate, 32);
++    pbw_put(&w, s->bit_rate_precision, 32);
++    pbw_align(&w);
++
++    /* Presentations. */
++    for (i = 0; i < n_pres; i++) {
++        const ac4dsi_pres_t *p = &pres[i];
++        if (p->presentation_version == 1u) {
++            pbw_t v;
++            size_t pb;
++            memset(v1tmp, 0, sizeof(v1tmp));
++            pbw_init(&v, v1tmp, sizeof(v1tmp));
++            pbw_v1_write(&v, p);
++            flush_put_bits(&v.pb);
++            if (v.over || (v.total & 7u) != 0u)
++                return AC4DSI_EINVAL; /* defensive: ac4dsi_v1_check bounds
++                                       * the shape to <= 79 B, so v1tmp
++                                       * (80 B) cannot overflow; kept in
++                                       * case the synthesis shape grows */
++            pb = (size_t)put_bits_count(&v.pb) >> 3;
++            pbw_put(&w, 1, 8);
++            if (pb < 255u) {
++                pbw_put(&w, (uint32_t)pb, 8);
++            } else {
++                /* Dead today: pb <= 79 < 255 by the bound above. Kept
++                 * symmetric with the opaque path (where the escape is
++                 * live) so a future larger v1 shape stays correct. */
++                pbw_put(&w, 255, 8);
++                pbw_put(&w, (uint32_t)(pb - 255u), 16);
++            }
++            pbw_bytes(&w, v1tmp, pb);
++        } else {
++            pbw_put(&w, p->presentation_version, 8);
++            if (p->opaque_len < 255u) {
++                pbw_put(&w, (uint32_t)p->opaque_len, 8);
++            } else {
++                pbw_put(&w, 255, 8);
++                pbw_put(&w, (uint32_t)(p->opaque_len - 255u), 16);
++            }
++            if (p->opaque_len != 0u)
++                pbw_bytes(&w, p->opaque, p->opaque_len);
++        }
++    }
++
++    need = (w.total + 7u) >> 3;
++    if (out_len)
++        *out_len = need;
++    /* Push lavc's cached bits into out. Safe: the honest accounting
++     * above never offered lavc more bits than fit. */
++    flush_put_bits(&w.pb);
++    if (w.over)
++        return AC4DSI_ENOSPC;
++    return AC4DSI_OK;
++}
+diff --git a/libavcodec/ac4dsi_putbits.h b/libavcodec/ac4dsi_putbits.h
+new file mode 100644
+index 0000000000..97513e09a9
+--- /dev/null
++++ b/libavcodec/ac4dsi_putbits.h
+@@ -0,0 +1,55 @@
++/*
++ * AC-4 DSI PutBitContext-based serializer
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file ac4dsi_putbits.h
++ * @brief PutBitContext-based AC-4 DSI serializer (DSI-11).
++ *
++ * Same wire format and API contract as the parent-lib hand-rolled
++ * ac4dsi_serialize() oracle, but the bit emission is written against
++ * libavcodec's PutBitContext instead of the hand-rolled bitwriter.
++ * This is the lavc-submit-shaped emitter: the field sequence maps 1:1
++ * onto put_bits()/put_bits32() calls (both share validation via
++ * ac4dsi_priv.h, and the parent putbits suite pins them byte-identical
++ * on goldens plus fuzzed shapes).
++ *
++ * Only the .c file needs lavc headers; this header is standalone.
++ * Adopted by the native AC-4 encoder wrapper (ac4enc.c), which emits
++ * this payload as codec extradata.
++ */
++#ifndef AC4DSI_PUTBITS_H
++#define AC4DSI_PUTBITS_H
++
++#include "ac4dsi.h"
++
++/**
++ * Serialize one ac4_dsi_v1 payload with PutBitContext emission.
++ *
++ * Parameters, return codes, and failure semantics follow the
++ * parent-lib oracle contract (EINVAL leaves out and *out_len
++ * untouched, ENOSPC leaves the zero-padded partial payload and
++ * reports the full need). Output is byte-identical to the oracle for
++ * every input, including short-buffer partials.
++ */
++int ac4dsi_serialize_putbits(const ac4dsi_stream_t *s,
++                             const ac4dsi_pres_t *pres, size_t n_pres,
++                             uint8_t *out, size_t out_cap, size_t *out_len);
++
++#endif /* AC4DSI_PUTBITS_H */
+diff --git a/libavcodec/ac4enc.c b/libavcodec/ac4enc.c
+index 15fea61dac..ee54b16d64 100644
+--- a/libavcodec/ac4enc.c
++++ b/libavcodec/ac4enc.c
+@@ -46,6 +46,8 @@
+ #include "ac4enc.h"
+ #include "ac4enc_lib.h"
+ #include "ac4_enc_core.h"
++#include "ac4dsi.h"
++#include "ac4dsi_putbits.h"
+ #include "codec_internal.h"
+ #include "encode.h"
+ #include "ac4_pycompat.h"
+@@ -119,12 +121,56 @@ static int lib_err_to_averror(int rc)
+     return AVERROR(EINVAL);
+ }
+ 
++/* Build the codec extradata: one raw ac4_dsi_v1 payload (no atom
++ * header; the MP4 muxer wraps it verbatim as dac4). Stream params are
++ * the lib defaults (bsv 2, 48 kHz base, encoder frame-rate index,
++ * mode 2 ABR) plus our snapped target bitrate; the presentation is a
++ * synthesized pv1 block whose channel trio is set explicitly for the
++ * validated layout (the mask-table form follows separately). The
++ * encoder shape needs ~32 B, so the 128 B buffer can never overflow;
++ * any serializer refusal fails init loudly rather than emitting a
++ * stream with missing or wrong DSI. */
++static int build_dsi_extradata(AVCodecContext *avctx)
++{
++    AC4EncodeContext *s = avctx->priv_data;
++    ac4dsi_stream_t ds;
++    ac4dsi_pres_t dp;
++    uint8_t dsi[128];
++    size_t dsi_len = 0;
++    int rc;
++
++    ac4dsi_stream_init(&ds);
++    ds.bit_rate = (uint32_t)s->rate_kbps * 1000u;
++    ac4dsi_pres_init_v1(&dp);
++    if (s->nch == 2) {
++        dp.md_compat      = 0;
++        dp.ch_mode        = 1;
++        dp.channel_groups = 0x000001u;
++    } else {
++        dp.md_compat      = 1;
++        dp.ch_mode        = 4;
++        dp.channel_groups = 0x000047u;
++    }
++    rc = ac4dsi_serialize_putbits(&ds, &dp, 1, dsi, sizeof dsi, &dsi_len);
++    if (rc) {
++        av_log(avctx, AV_LOG_ERROR, "DSI build failed: %s\n",
++               ac4dsi_strerror(rc));
++        return AVERROR(EINVAL);
++    }
++    avctx->extradata = av_mallocz(dsi_len + AV_INPUT_BUFFER_PADDING_SIZE);
++    if (!avctx->extradata)
++        return AVERROR(ENOMEM);
++    memcpy(avctx->extradata, dsi, dsi_len);
++    avctx->extradata_size = (int)dsi_len;
++    return 0;
++}
++
+ static av_cold int ac4_encode_init(AVCodecContext *avctx)
+ {
+     AC4EncodeContext *s = avctx->priv_data;
+     static const AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+     static const AVChannelLayout mc51   = AV_CHANNEL_LAYOUT_5POINT1;
+-    int kbps, floor, snapped;
++    int kbps, floor, snapped, ret;
+     int probe[48];
+ 
+     if (!av_channel_layout_compare(&avctx->ch_layout, &stereo)) {
+@@ -206,6 +252,12 @@ static av_cold int ac4_encode_init(AVCodecContext *avctx)
+         return AVERROR(EINVAL);
+     }
+ 
++    /* DSI extradata: layout (s->nch) and target rate are validated
++     * above; a DSI failure aborts init (no silent missing dac4). */
++    ret = build_dsi_extradata(avctx);
++    if (ret < 0)
++        return ret;
++
+     avctx->frame_size = AC4ENC_FRAME_SAMPLES;
+ 
+     /* M1: leading non-content delay is 2 frames (4096 samples) on the
+diff --git a/tests/ref/fate/ac4-fold8 b/tests/ref/fate/ac4-fold8
+index da08b13431..15f731f35e 100644
+--- a/tests/ref/fate/ac4-fold8
++++ b/tests/ref/fate/ac4-fold8
+@@ -1,3 +1,4 @@
++#extradata 0:       32, 0xbafa0ae9
+ #tb 0: 1/48000
+ #media_type 0: audio
+ #codec_id 0: ac4
+diff --git a/tests/ref/fate/ac4-framecrc b/tests/ref/fate/ac4-framecrc
+index ce774f27e2..b3d1b9a7c7 100644
+--- a/tests/ref/fate/ac4-framecrc
++++ b/tests/ref/fate/ac4-framecrc
+@@ -1,3 +1,4 @@
++#extradata 0:       32, 0xb7a30a0b
+ #tb 0: 1/48000
+ #media_type 0: audio
+ #codec_id 0: ac4
+diff --git a/tests/ref/fate/ac4-tail b/tests/ref/fate/ac4-tail
+index f6ebafd1f3..24b0eae8ef 100644
+--- a/tests/ref/fate/ac4-tail
++++ b/tests/ref/fate/ac4-tail
+@@ -1,3 +1,4 @@
++#extradata 0:       32, 0xb7a30a0b
+ #tb 0: 1/48000
+ #media_type 0: audio
+ #codec_id 0: ac4
+-- 
+2.56.0
+

@@ -1,0 +1,862 @@
+From 188cc1ebc5806ed7c4391e010f3695e7d82c3d4e Mon Sep 17 00:00:00 2001
+From: Michael Rowlinson <mrowlinson@gmail.com>
+Date: Fri, 16 Oct 2026 08:11:24 -0400
+Subject: [PATCH 08/23] avcodec: add native AC-4 encoder
+
+lavc wrapper (ENCODE_CB) registering the ff_ac4_encoder codec,
+wiring the C1/C2 objects live: allcodecs extern, wrapper OBJS,
+configure per-flag probe feeding CFLAGS-ac4enc_float (per-object
+only, never global), Changelog entry.
+First patch defining codec behavior.
+
+Re-cut (r3): harden the two wrapper s64 sites found by fuzzing
+(FUZZ-CENC crash-1 pts_base add -> av_sat_add64, crash-3
+bit_rate + 500 -> top-500 early EINVAL); behavior otherwise
+identical to r2.
+
+Re-cut (r6): M10 _tab in the float-discipline list; M11 carry
+AV_CODEC_CAP_EXPERIMENTAL (fate CMDs take -strict -2 in 05/10 and
+08/10); M12 drop ENCODER_REORDERED_OPAQUE (unplumbed); M13
+configure-probe sincos; M15 wrapper reads ctx-carried
+ac4enc_err_detail; M16 drop the lavc minor bump (no public API
+change). Encoder bytes unchanged.
+
+Signed-off-by: Michael Rowlinson <mrowlinson@gmail.com>
+---
+ Changelog              |   1 +
+ configure              |  19 ++
+ libavcodec/Makefile    |  17 ++
+ libavcodec/ac4enc.c    | 643 +++++++++++++++++++++++++++++++++++++++++
+ libavcodec/ac4enc.h    |  73 +++++
+ libavcodec/allcodecs.c |   1 +
+ 6 files changed, 754 insertions(+)
+ create mode 100644 libavcodec/ac4enc.c
+ create mode 100644 libavcodec/ac4enc.h
+
+diff --git a/Changelog b/Changelog
+index 461e453d98..262f79dfeb 100644
+--- a/Changelog
++++ b/Changelog
+@@ -3,6 +3,7 @@ releases are sorted from youngest to oldest.
+ 
+ version <next>:
+ - native AC-4 audio decoder
++- native AC-4 audio encoder
+ 
+ version 9.1:
+ - ASTC image encoding and decoding via libastcenc, with .astc and KTX 1.0 muxers and demuxers
+diff --git a/configure b/configure
+index 083bd652c4..bbec53ac26 100755
+--- a/configure
++++ b/configure
+@@ -2540,6 +2540,7 @@ SYSTEM_FUNCS="
+     setrlimit
+     sigaction
+     siglongjmp
++    sincos
+     Sleep
+     strerror_r
+     sysconf
+@@ -7960,6 +7961,23 @@ check_optflags $optflags
+ check_optflags -fno-math-errno
+ check_optflags -fno-signed-zeros
+ 
++# AC-4 encoder float discipline: probe per-flag, apply per-object
++# only (libavcodec/Makefile consumes CFLAGS-ac4enc_float). Probes a
++# toolchain rejects with an error fail closed; ones it merely warns
++# about (e.g. cl D9002, exit 0) still land in the var but are
++# ignored, hence harmless. Default cl /fp:precise already satisfies
++# the discipline (no contraction, no libm rewrites, signed zeros
++# kept), and the global -fno-signed-zeros never reaches MSVC either.
++ac4enc_float_cflags=""
++for ac4flag in -ffp-contract=off -fno-builtin-sin -fno-builtin-cos \
++               -fno-builtin-pow -fsigned-zeros; do
++    test_cflags "$ac4flag" && \
++        ac4enc_float_cflags="$ac4enc_float_cflags $ac4flag"
++done
++# M13: probe sincos(3) for libavcodec/ac4_loudness.c. Toolchains
++# without it (e.g. MSVC) take the separate sin()+cos() fallback.
++check_func_headers math.h sincos -lm
++
+ if [ -n "$lto" ]; then
+     test "$cc_type" != "$ld_type" && die "LTO requires same compiler and linker"
+     check_allcflags $lto
+@@ -8582,6 +8600,7 @@ TARGET_EXEC=$target_exec $target_exec_args
+ TARGET_PATH=$target_path
+ TARGET_SAMPLES=${target_samples:-\$(SAMPLES)}
+ CFLAGS-ffplay=${sdl2_cflags}
++CFLAGS-ac4enc_float=${ac4enc_float_cflags}
+ CFLAGS_HEADERS=$CFLAGS_HEADERS
+ LIB_INSTALL_EXTRA_CMD=$LIB_INSTALL_EXTRA_CMD
+ EXTRALIBS=$extralibs
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index 703b03d592..f7d6914377 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -230,6 +230,23 @@ OBJS-$(CONFIG_AC4_ENCODER)             += ac4enc_lib.o \
+                                           ac4_enc_mc3.o ac4_enc_jshort.o \
+                                           ac4_enc_tail59.o ac4_enc_aspx.o \
+                                           ac4_enc_acpl.o ac4_pycompat.o
++OBJS-$(CONFIG_AC4_ENCODER)             += ac4enc.o
++# AC-4 encoder core float discipline: bit-parity with the reference
++# encoder requires the CLI float environment (no FMA contraction, no
++# builtin sin/cos/pow folding, default signed-zero semantics). Flags
++# are configure-probed per-flag into CFLAGS-ac4enc_float (flags the
++# toolchain rejects with an error fail closed; flags it merely warns
++# about still land in the var but are ignored, hence harmless),
++# never applied globally.
++libavcodec/ac4enc_lib.o libavcodec/ac4_enc_core_enc.o \
++libavcodec/ac4_enc_core_long51.o libavcodec/ac4_enc_core_fit51.o \
++libavcodec/ac4_bits.o libavcodec/ac4_asf.o libavcodec/ac4_mdct.o \
++libavcodec/ac4_loudness.o libavcodec/ac4_enc_mc3.o libavcodec/ac4_enc_jshort.o \
++libavcodec/ac4_enc_tail59.o libavcodec/ac4_enc_aspx.o \
++libavcodec/ac4_enc_acpl.o \
++libavcodec/ac4_huffman_tab.o libavcodec/ac4_aspx_tab.o \
++libavcodec/ac4_sfb_offsets.o libavcodec/ac4_pycompat.o libavcodec/ac4enc.o: \
++    CFLAGS += $(CFLAGS-ac4enc_float)
+ OBJS-$(CONFIG_AC3_MF_ENCODER)          += mfenc.o mf_utils.o
+ # AC-4 decoder: wrapper + vendored streaming core (in-tree port).
+ # No extra libs/flags.
+diff --git a/libavcodec/ac4enc.c b/libavcodec/ac4enc.c
+new file mode 100644
+index 0000000000..15fea61dac
+--- /dev/null
++++ b/libavcodec/ac4enc.c
+@@ -0,0 +1,643 @@
++/*
++ * AC-4 audio encoder (thin wrapper over the in-tree encoder core)
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file
++ * Native AC-4 encoder. Thin lavc wrapper: buffers the whole stream,
++ * runs the caller-measured loudness pass at flush (CLI file-mode
++ * parity), feeds the in-tree core (ac4enc_lib.c) once, and emits one
++ * bare raw frame per packet (TOC..pad, no sync/size/CRC -- the raw
++ * AC-4 muxer adds framing). No DSP lives here.
++ *
++ * Threading: the R2 core keeps zero shared mutable state (ctx-owned
++ * scratch, thread-local diagnostics), so concurrent encodes on
++ * separate contexts are safe; one context stays single-threaded.
++ * This encoder claims no intra-instance thread capabilities.
++ */
++
++#include <errno.h>
++#include <limits.h>
++#include <math.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "libavutil/channel_layout.h"
++#include "libavutil/common.h"
++#include "libavutil/mem.h"
++#include "libavutil/opt.h"
++
++#include "ac4enc.h"
++#include "ac4enc_lib.h"
++#include "ac4_enc_core.h"
++#include "codec_internal.h"
++#include "encode.h"
++#include "ac4_pycompat.h"
++
++#define AC4ENC_PARAM (AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM)
++
++static const AVOption ac4_options[] = {
++    { "iframe_interval", "I-frame interval (1sec or frame step)",
++      offsetof(AC4EncodeContext, iframe_interval),
++      AV_OPT_TYPE_STRING, { .str = "1sec" }, 0, 0, AC4ENC_PARAM },
++    { "priming", "write priming frame",
++      offsetof(AC4EncodeContext, priming),
++      AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, AC4ENC_PARAM },
++    { "short_blocks", "allow short-block transients",
++      offsetof(AC4EncodeContext, short_blocks),
++      AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, AC4ENC_PARAM },
++    { "joint_shorts", "joint-stereo short blocks",
++      offsetof(AC4EncodeContext, joint_shorts),
++      AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, AC4ENC_PARAM },
++    { "measure_loudness", "pass-1 loudness measure at flush "
++                          "(CLI file-mode parity)",
++      offsetof(AC4EncodeContext, measure_loudness),
++      AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, AC4ENC_PARAM },
++    { "loudness_target", "target loudness in LUFS (0 or -31..-10)",
++      offsetof(AC4EncodeContext, loudness_target),
++      AV_OPT_TYPE_DOUBLE, { .dbl = -24.0 }, -31.0, 0.0, AC4ENC_PARAM },
++    { NULL },
++};
++
++static const AVClass ac4enc_class = {
++    .class_name = "AC-4 Encoder",
++    .item_name  = av_default_item_name,
++    .option     = ac4_options,
++    .version    = LIBAVUTIL_VERSION_INT,
++};
++
++static const AVChannelLayout ac4_ch_layouts[] = {
++    AV_CHANNEL_LAYOUT_STEREO,
++    AV_CHANNEL_LAYOUT_5POINT1,
++    { 0 },
++};
++
++static const FFCodecDefault ac4_enc_defaults[] = {
++    { "b", "0" },
++    { NULL },
++};
++
++static const int ac4_data_rates[] = {
++    48, 64, 96, 128, 144, 192, 256, 288, 320, 384, 448, 512, 768
++};
++
++/* Nearest DATA_RATES step; steps are ascending. */
++static int snap_rate(int kbps)
++{
++    unsigned best = 0;
++    unsigned i;
++
++    for (i = 1; i < sizeof ac4_data_rates / sizeof ac4_data_rates[0]; i++) {
++        if (abs(ac4_data_rates[i] - kbps) < abs(ac4_data_rates[best] - kbps))
++            best = i;
++    }
++    return ac4_data_rates[best];
++}
++
++static int lib_err_to_averror(int rc)
++{
++    if (rc == -ENOMEM)
++        return AVERROR(ENOMEM);
++    if (rc == -EIO)
++        return AVERROR(EIO);
++    return AVERROR(EINVAL);
++}
++
++static av_cold int ac4_encode_init(AVCodecContext *avctx)
++{
++    AC4EncodeContext *s = avctx->priv_data;
++    static const AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
++    static const AVChannelLayout mc51   = AV_CHANNEL_LAYOUT_5POINT1;
++    int kbps, floor, snapped;
++    int probe[48];
++
++    if (!av_channel_layout_compare(&avctx->ch_layout, &stereo)) {
++        s->nch = 2;
++    } else if (!av_channel_layout_compare(&avctx->ch_layout, &mc51)) {
++        s->nch = 6;
++    } else {
++        av_log(avctx, AV_LOG_ERROR, "unsupported channel layout: "
++               "only stereo and 5.1 are supported\n");
++        return AVERROR(EINVAL);
++    }
++
++    if (avctx->sample_rate != 48000) {
++        av_log(avctx, AV_LOG_ERROR, "unsupported sample rate %d: "
++               "only 48000 Hz is supported (resample with -af aresample)\n",
++               avctx->sample_rate);
++        return AVERROR(EINVAL);
++    }
++
++    /* M2: the 5.1 core entry takes neither priming nor joint_shorts;
++     * fail loudly instead of silently ignoring user options (the R2
++     * lib would refuse these at open; fail fast at init). */
++    if (s->nch == 6 && (!s->priming || s->joint_shorts)) {
++        av_log(avctx, AV_LOG_ERROR, "5.1 ignores priming=0 and "
++               "joint_shorts=1: the 5.1 core path is priming-only "
++               "with no joint short blocks\n");
++        return AVERROR(EINVAL);
++    }
++
++    if (avctx->flags & AV_CODEC_FLAG_QSCALE) {
++        av_log(avctx, AV_LOG_ERROR, "-q:a (VBR) is not supported: "
++               "the core is CBR-only, use -b:a\n");
++        return AVERROR(EINVAL);
++    }
++
++    if (avctx->cutoff)
++        av_log(avctx, AV_LOG_WARNING, "-cutoff is not supported by "
++               "the AC-4 core and will be ignored\n");
++
++    /* -b:a unset (bit_rate 0 via defaults) follows CLI --data-rate
++     * auto: stereo defaults to 64k, 5.1 to 128k. */
++    floor = s->nch == 2 ? 48 : 96;
++    if (!avctx->bit_rate) {
++        kbps = s->nch == 2 ? 64 : 128;
++    } else if (avctx->bit_rate > INT64_MAX - 500) {
++        /* fuzz crash-3: bit_rate + 500 below would overflow s64;
++         * these values exceed 768k either way, so refuse like the
++         * range gate. */
++        av_log(avctx, AV_LOG_ERROR, "bitrate too large: range is "
++               "%d..768k for this layout\n", floor);
++        return AVERROR(EINVAL);
++    } else {
++        kbps = (int)((avctx->bit_rate + 500) / 1000);
++        if (kbps < floor || kbps > 768) {
++            av_log(avctx, AV_LOG_ERROR, "bitrate %dk too low/high: "
++                   "range is %d..768k for this layout\n", kbps, floor);
++            return AVERROR(EINVAL);
++        }
++    }
++    snapped = snap_rate(kbps);
++    if (snapped != kbps)
++        av_log(avctx, AV_LOG_WARNING, "bitrate %dk is not a DATA_RATES "
++               "step, using %dk\n", kbps, snapped);
++    s->rate_kbps = snapped;
++
++    if (isnan(s->loudness_target) ||
++        (s->loudness_target > -10.0 && s->loudness_target < 0.0)) {
++        av_log(avctx, AV_LOG_ERROR, "loudness_target must be 0 or "
++               "in [-31,-10], got %g\n", s->loudness_target);
++        return AVERROR(EINVAL);
++    }
++
++    /* Fail fast on a bad interval string: the lib only opens at
++     * flush, so validate the parse here. */
++    if (ac4_enc_core_iframe_set(48, s->iframe_interval, NULL, 0, probe) < 0) {
++        av_log(avctx, AV_LOG_ERROR, "bad iframe_interval %s: want "
++               "1sec or a frame step >= 2\n",
++               s->iframe_interval ? s->iframe_interval : "(null)");
++        return AVERROR(EINVAL);
++    }
++
++    avctx->frame_size = AC4ENC_FRAME_SAMPLES;
++
++    /* M1: leading non-content delay is 2 frames (4096 samples) on the
++     * priming path (stereo+priming) and always on 5.1 (which is
++     * priming-only); joint stereo (priming=0) starts content at
++     * packet 0. Precedent: aac 1024, ac3 AC3_BLOCK_SIZE. */
++    avctx->initial_padding = (s->priming || s->nch == 6) ? 4096 : 0;
++
++    av_log(avctx, AV_LOG_VERBOSE, "whole-stream buffered encode: "
++           "packets are emitted at flush after the loudness pass\n");
++    return 0;
++}
++
++/* Append one FLTP frame to the int rows (CLI f32-ingest rule:
++ * round-half-even + s16 clamp, non-finite refused loudly). */
++static int append_frame(AC4EncodeContext *s, AVCodecContext *avctx,
++                        const AVFrame *frame)
++{
++    int ch, i;
++
++    if (frame->ch_layout.nb_channels != s->nch) {
++        av_log(avctx, AV_LOG_ERROR, "channel count changed mid-stream\n");
++        return AVERROR(EINVAL);
++    }
++    if (!frame->nb_samples)
++        return 0;
++    if (s->nsamples > INT_MAX - frame->nb_samples) {
++        av_log(avctx, AV_LOG_ERROR, "input too long\n");
++        return AVERROR(EINVAL);
++    }
++    /* m1: anchor packet timestamps to the input start offset so
++     * nonzero-start input (seek/trim/concat) stays in sync. */
++    if (!s->have_pts_base && frame->pts != AV_NOPTS_VALUE) {
++        s->pts_base = frame->pts;
++        s->have_pts_base = 1;
++    }
++    /* m4: size_t growth (the int want *= 2 overflowed past ~1.07B
++     * samples); capped at INT_MAX since cap/nsamples are int. */
++    if ((size_t)s->nsamples + (size_t)frame->nb_samples > (size_t)s->cap) {
++        size_t need = (size_t)s->nsamples + (size_t)frame->nb_samples;
++        size_t want = s->cap > 0 ? (size_t)s->cap : 8192;
++        while (want < need)
++            want *= 2;
++        if (want > (size_t)INT_MAX)
++            want = need;
++        for (ch = 0; ch < s->nch; ch++) {
++            int *row = av_realloc_array(s->pcm[ch], want, sizeof *row);
++            if (!row)
++                return AVERROR(ENOMEM);
++            s->pcm[ch] = row;
++        }
++        s->cap = (int)want;
++    }
++    for (ch = 0; ch < s->nch; ch++) {
++        const float *src = (const float *)frame->extended_data[ch];
++        int *dst = s->pcm[ch] + s->nsamples;
++        for (i = 0; i < frame->nb_samples; i++) {
++            double d = (double)src[i] * 32768.0;
++            long long v = 0;
++            if (ac4_pycompat_round_half_even_ll(d, &v)) {
++                av_log(avctx, AV_LOG_ERROR, "non-finite sample on "
++                       "channel %d: input must be finite\n", ch);
++                return AVERROR(EINVAL);
++            }
++            if (v > 32767)
++                v = 32767;
++            else if (v < -32768)
++                v = -32768;
++            dst[i] = (int)v;
++        }
++    }
++    s->nsamples += frame->nb_samples;
++    return 0;
++}
++
++/* Collect one emitted bare frame into the packet blob. */
++static int append_packet(AC4EncodeContext *s, AVCodecContext *avctx,
++                         const uint8_t *data, size_t len, int is_iframe)
++{
++    int *nl;
++
++    if (len > INT_MAX || s->blob_used > (size_t)INT_MAX - len) {
++        av_log(avctx, AV_LOG_ERROR, "frame too large\n");
++        return AVERROR(EINVAL);
++    }
++    if (s->blob_cap < s->blob_used + len) {
++        size_t want = s->blob_cap > 0 ? s->blob_cap : 65536;
++        uint8_t *nb;
++        while (want < s->blob_used + len)
++            want *= 2;
++        nb = av_realloc(s->blob, want);
++        if (!nb)
++            return AVERROR(ENOMEM);
++        s->blob = nb;
++        s->blob_cap = want;
++    }
++    /* m5: exponential index growth (per-frame triple realloc was
++     * O(n^2) on long streams). */
++    if (s->nframes >= s->frames_cap) {
++        int ncap = s->frames_cap > 0 ? s->frames_cap * 2 : 64;
++        if (ncap <= s->frames_cap)
++            return AVERROR(EINVAL);
++        nl = av_realloc_array(s->lens, ncap, sizeof *nl);
++        if (!nl)
++            return AVERROR(ENOMEM);
++        s->lens = nl;
++        nl = av_realloc_array(s->offs, ncap, sizeof *nl);
++        if (!nl)
++            return AVERROR(ENOMEM);
++        s->offs = nl;
++        nl = av_realloc_array(s->iframes, ncap, sizeof *nl);
++        if (!nl)
++            return AVERROR(ENOMEM);
++        s->iframes = nl;
++        s->frames_cap = ncap;
++    }
++    memcpy(s->blob + s->blob_used, data, len);
++    s->offs[s->nframes]    = (int)s->blob_used;
++    s->lens[s->nframes]    = (int)len;
++    s->iframes[s->nframes] = !!is_iframe;
++    s->blob_used          += len;
++    s->nframes++;
++    return 0;
++}
++
++/* Run the whole-stream encode once: measure, open, feed, drain. All
++ * lib failures are logged loudly here and never silenced -- a core
++ * refusal (bake peak overflow, sparse-impulse class) aborts the
++ * encode rather than emitting corrupt output. */
++static int encode_stream(AC4EncodeContext *s, AVCodecContext *avctx)
++{
++    ac4enc_opts_t opts;
++    ac4enc_ctx_t *ctx = NULL;
++    uint8_t *tmp = NULL;
++    int lens[AC4ENC_MAX_CHANNELS];
++    int full, rem, f, ch, rc, ret = 0;
++
++    memset(&opts, 0, sizeof opts);
++    opts.layout       = s->nch == 2 ? "stereo" : "5.1";
++    opts.rate_kbps    = s->rate_kbps;
++    opts.interval     = s->iframe_interval;
++    /* m9: hardcoded lib opts mirror the CLI file-mode defaults
++     * (parity source: dolby-ac4-cleanroom encoder/enc.py encode_pcm
++     * signature -- ns2_tone=True, iframe_base=0, iframe_total=None,
++     * i.e. open-ended; base 0 keeps the R2 joint open-ended edge
++     * exact). */
++    opts.ns2_tone     = 1;
++    opts.shorts       = !!s->short_blocks;
++    opts.joint_shorts = !!s->joint_shorts;
++    opts.priming      = !!s->priming;
++    opts.iframe_base  = 0;
++    opts.iframe_total = -1;
++    opts.target_db    = s->loudness_target;
++    opts.sample_rate  = 48000;
++
++    if (s->measure_loudness && s->nsamples > 0) {
++        ac4enc_measure_t m;
++        const int *rows[AC4ENC_MAX_CHANNELS];
++        for (ch = 0; ch < s->nch; ch++) {
++            rows[ch] = s->pcm[ch];
++            lens[ch] = s->nsamples;
++        }
++        rc = ac4enc_measure2(rows, lens, s->nch, &m);
++        if (rc) {
++            av_log(avctx, AV_LOG_ERROR, "loudness measure failed: %s\n",
++                   rc == -ENOMEM ? "out of memory" : "bad input");
++            return lib_err_to_averror(rc);
++        }
++        opts.has_measure = 1;
++        opts.m_db        = m.m_db;
++        opts.f_flat      = m.f_flat;
++        opts.tf_tone     = m.tf_tone;
++        opts.in_peak     = m.in_peak;
++        opts.d_peak      = m.d_peak;
++        opts.has_d_peak  = m.has_d_peak;
++        av_log(avctx, AV_LOG_VERBOSE, "pass-1 measure: m=%g f=%g "
++               "tf=%g peak=%d\n", m.m_db, m.f_flat, m.tf_tone,
++               m.in_peak);
++        /* H6 pass-1 for measured stereo: caller-estimated spec
++         * lines over the full L row (the 5.1 core path takes no
++         * lines). Without these the lib falls back to the neutral
++         * default, which diverges from CLI file mode on tonal
++         * content by design. */
++        if (s->nch == 2) {
++            double *L = av_malloc_array(s->nsamples, sizeof *L);
++            int nlines = 0, lines[7] = { 0 }, k;
++            if (!L)
++                return AVERROR(ENOMEM);
++            for (k = 0; k < s->nsamples; k++)
++                L[k] = (double)s->pcm[0][k];
++            rc = ac4enc_spectral_lines(L, s->nsamples, &m,
++                                      s->loudness_target, 0, 0.0,
++                                      &nlines, lines);
++            av_free(L);
++            if (rc) {
++                av_log(avctx, AV_LOG_ERROR, "spectral-lines pass-1 "
++                       "failed (rc=%d): input refused at the loudness "
++                       "floor; no output written\n", rc);
++                return lib_err_to_averror(rc);
++            }
++            opts.has_spec_lines = 1;
++            opts.n_spec_lines   = nlines;
++            memcpy(opts.spec_lines, lines, sizeof lines);
++        }
++    } else if (!s->measure_loudness) {
++        av_log(avctx, AV_LOG_VERBOSE, "measure_loudness=0: neutral "
++               "stamp (no loudness correction); output differs from "
++               "CLI file mode by design\n");
++    }
++
++    rc = ac4enc_open(&ctx, &opts);
++    if (rc) {
++        const char *why = rc == -EINVAL
++            ? "this is a bug, options were validated at init"
++            : rc == -ENOMEM ? "out of memory"
++            : "float environment check failed";
++        av_log(avctx, AV_LOG_ERROR, "encoder open failed (rc=%d): %s\n",
++               rc, why);
++        return lib_err_to_averror(rc);
++    }
++
++    /* Incremental feed: each call returns 1 frame ready / 0
++     * need-more-input; ready frames are collected as they come
++     * (1-frame lookahead, 2 for priming=0 joint mode). */
++    tmp = av_malloc(AC4ENC_OUTCAP_SAFE);
++    if (!tmp) {
++        ret = AVERROR(ENOMEM);
++        goto done;
++    }
++    full = s->nsamples / AC4ENC_FRAME_SAMPLES;
++    rem  = s->nsamples % AC4ENC_FRAME_SAMPLES;
++    s->tail_rem = rem;
++    for (f = 0; f < full; f++) {
++        const int *rows[AC4ENC_MAX_CHANNELS];
++        size_t olen = 0;
++        int is_if = 0;
++        for (ch = 0; ch < s->nch; ch++)
++            rows[ch] = s->pcm[ch] + f * AC4ENC_FRAME_SAMPLES;
++        rc = ac4enc_encode_frame2(ctx, rows, tmp,
++                                 AC4ENC_OUTCAP_SAFE, &olen,
++                                 &is_if);
++        if (rc < 0) {
++            av_log(avctx, AV_LOG_ERROR, "encoder feed failed on "
++                   "frame %d (rc=%d, %s)\n", f, rc,
++                   ac4enc_subcode_str(ac4enc_err_sub(ctx)));
++            ret = lib_err_to_averror(rc);
++            goto done;
++        }
++        if (rc == 1) {
++            ret = append_packet(s, avctx, tmp, olen, is_if);
++            if (ret < 0)
++                goto done;
++        }
++    }
++    if (rem > 0) {
++        const int *rows[AC4ENC_MAX_CHANNELS];
++        size_t olen = 0;
++        int is_if = 0;
++        for (ch = 0; ch < s->nch; ch++)
++            rows[ch] = s->pcm[ch] + full * AC4ENC_FRAME_SAMPLES;
++        rc = ac4enc_encode_tail2(ctx, rows, rem, tmp,
++                                AC4ENC_OUTCAP_SAFE, &olen,
++                                &is_if);
++        if (rc < 0) {
++            av_log(avctx, AV_LOG_ERROR, "encoder tail feed failed "
++                   "(rc=%d, %s)\n", rc,
++                   ac4enc_subcode_str(ac4enc_err_sub(ctx)));
++            ret = lib_err_to_averror(rc);
++            goto done;
++        }
++        if (rc == 1) {
++            ret = append_packet(s, avctx, tmp, olen, is_if);
++            if (ret < 0)
++                goto done;
++        }
++    }
++
++    for (;;) {
++        size_t olen = 0;
++        int is_if = 0;
++        rc = ac4enc_flush2(ctx, tmp, AC4ENC_OUTCAP_SAFE, &olen, &is_if);
++        if (rc < 0) {
++            /* m7: distinct messages -- the loudness advice only fits
++             * bake refusals; other failures (framing -EIO, short
++             * buffer, protocol) carry the sticky subcode/stage/frame
++             * plus the ctx-carried detail when one was recorded. */
++            ac4enc_subcode_t sub = ac4enc_err_sub(ctx);
++            const char *core_msg = ac4enc_err_detail(ctx);
++            if (sub == AC4ENC_EBAKE_OVERFLOW ||
++                sub == AC4ENC_EBAKE_PEAK) {
++                av_log(avctx, AV_LOG_ERROR, "AC-4 core encode FAILED "
++                       "(rc=%d, %s): input refused -- bake peak overflow "
++                       "at the loudness floor; no output written. Try "
++                       "loudness_target=0 to skip the correction "
++                       "gain.\n", rc, ac4enc_subcode_str(sub));
++            } else {
++                av_log(avctx, AV_LOG_ERROR, "AC-4 core encode FAILED "
++                       "(rc=%d, %s at %s frame %d%s%s): no output "
++                       "written.\n", rc, ac4enc_subcode_str(sub),
++                       ac4enc_err_stage(ctx), ac4enc_err_frame(ctx),
++                       core_msg[0] ? ": " : "", core_msg);
++            }
++            ret = lib_err_to_averror(rc);
++            goto done;
++        }
++        if (!rc)
++            break;
++        ret = append_packet(s, avctx, tmp, olen, is_if);
++        if (ret < 0)
++            goto done;
++    }
++    if (!s->nframes)
++        av_log(avctx, AV_LOG_WARNING, "encoder produced no frames\n");
++
++done:
++    av_free(tmp);
++    ac4enc_close(ctx);
++    return ret;
++}
++
++static int ac4_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
++                            const AVFrame *frame, int *got_packet_ptr)
++{
++    AC4EncodeContext *s = avctx->priv_data;
++    int ret;
++
++    if (s->failed)
++        return s->failed;
++
++    if (frame) {
++        ret = append_frame(s, avctx, frame);
++        if (ret < 0) {
++            s->failed = ret;
++            return ret;
++        }
++        *got_packet_ptr = 0;
++        return 0;
++    }
++
++    if (!s->opened) {
++        s->opened = 1;
++        ret = encode_stream(s, avctx);
++        if (ret < 0) {
++            s->failed = ret;
++            return ret;
++        }
++    }
++
++    if (s->cursor >= s->nframes) {
++        *got_packet_ptr = 0;
++        return 0;
++    }
++
++    ret = ff_get_encode_buffer(avctx, avpkt, s->lens[s->cursor], 0);
++    if (ret < 0)
++        return ret;
++    memcpy(avpkt->data, s->blob + s->offs[s->cursor],
++           s->lens[s->cursor]);
++    /* m1: timestamps honor the input start offset; m2: the short
++     * last packet claims its real sample count, not 2048. Saturating
++     * add (fuzz crash-1): input starting at the s64 edge would
++     * otherwise overflow signed addition. */
++    avpkt->pts = av_sat_add64(s->have_pts_base ? s->pts_base : 0,
++                              (int64_t)s->cursor * AC4ENC_FRAME_SAMPLES);
++    avpkt->duration = (s->cursor == s->nframes - 1 && s->tail_rem > 0)
++        ? s->tail_rem : AC4ENC_FRAME_SAMPLES;
++    if (s->iframes[s->cursor])
++        avpkt->flags |= AV_PKT_FLAG_KEY;
++    s->cursor++;
++    *got_packet_ptr = 1;
++    return 0;
++}
++
++static av_cold int ac4_encode_close(AVCodecContext *avctx)
++{
++    AC4EncodeContext *s = avctx->priv_data;
++    int ch;
++
++    for (ch = 0; ch < AC4ENC_MAX_CHANNELS; ch++)
++        av_freep(&s->pcm[ch]);
++    av_freep(&s->blob);
++    av_freep(&s->offs);
++    av_freep(&s->lens);
++    av_freep(&s->iframes);
++    return 0;
++}
++
++/* m6: reset the whole-stream buffers so the context is reusable
++ * after avcodec_flush_buffers (without this, buffered input and
++ * drained packets from the previous stream leak into the next). */
++static void ac4_encode_flush(AVCodecContext *avctx)
++{
++    AC4EncodeContext *s = avctx->priv_data;
++    int ch;
++
++    for (ch = 0; ch < AC4ENC_MAX_CHANNELS; ch++)
++        av_freep(&s->pcm[ch]);
++    av_freep(&s->blob);
++    av_freep(&s->offs);
++    av_freep(&s->lens);
++    av_freep(&s->iframes);
++    s->nsamples = 0;
++    s->cap = 0;
++    s->blob_cap = 0;
++    s->blob_used = 0;
++    s->nframes = 0;
++    s->frames_cap = 0;
++    s->cursor = 0;
++    s->tail_rem = 0;
++    s->opened = 0;
++    s->failed = 0;
++    s->pts_base = 0;
++    s->have_pts_base = 0;
++}
++
++const FFCodec ff_ac4_encoder = {
++    .p.name          = "ac4",
++    CODEC_LONG_NAME("Dolby AC-4"),
++    .p.type          = AVMEDIA_TYPE_AUDIO,
++    .p.id            = AV_CODEC_ID_AC4,
++    .p.capabilities  = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_DELAY |
++                       AV_CODEC_CAP_SMALL_LAST_FRAME |
++                       AV_CODEC_CAP_EXPERIMENTAL,
++    .priv_data_size  = sizeof(AC4EncodeContext),
++    .init            = ac4_encode_init,
++    FF_CODEC_ENCODE_CB(ac4_encode_frame),
++    .close           = ac4_encode_close,
++    .flush           = ac4_encode_flush,
++    CODEC_SAMPLEFMTS(AV_SAMPLE_FMT_FLTP),
++    .p.priv_class    = &ac4enc_class,
++    CODEC_SAMPLERATES(48000),
++    CODEC_CH_LAYOUTS_ARRAY(ac4_ch_layouts),
++    .defaults        = ac4_enc_defaults,
++    .caps_internal   = FF_CODEC_CAP_INIT_CLEANUP,
++};
+diff --git a/libavcodec/ac4enc.h b/libavcodec/ac4enc.h
+new file mode 100644
+index 0000000000..15951997c1
+--- /dev/null
++++ b/libavcodec/ac4enc.h
+@@ -0,0 +1,73 @@
++/*
++ * AC-4 audio encoder private context
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#ifndef AVCODEC_AC4ENC_H
++#define AVCODEC_AC4ENC_H
++
++#include <stdint.h>
++
++#include "libavutil/opt.h"
++
++#include "ac4enc_lib.h"
++
++#define AC4ENC_MAX_CHANNELS 6
++
++typedef struct AC4EncodeContext {
++    const AVClass *class;
++
++    /* AVOptions (see ac4enc.c). */
++    char *iframe_interval;
++    int   priming;
++    int   short_blocks;
++    int   joint_shorts;
++    int   measure_loudness;
++    double loudness_target;
++
++    /* Validated at init; lib opened at first flush. */
++    int rate_kbps;
++    int nch;
++
++    /* Whole-stream input buffer: nch ch-major int rows in s16
++     * scale (CLI f32-ingest rule: round-half-even + clamp). */
++    int *pcm[AC4ENC_MAX_CHANNELS];
++    int  nsamples;
++    int  cap;
++
++    /* Drained packets (bare raw frames), served one per call. */
++    uint8_t *blob;
++    size_t   blob_cap;
++    size_t   blob_used;
++    int     *offs;
++    int     *lens;
++    int     *iframes;
++    int      nframes;
++    int      frames_cap; /* m5: exponential index growth */
++    int      cursor;
++    int      tail_rem;   /* m2: input samples in the short last frame */
++
++    /* m1: first non-NOPTS input pts, anchoring packet timestamps. */
++    int64_t  pts_base;
++    int      have_pts_base;
++
++    int opened;   /* lib encode done (success or loud failure) */
++    int failed;   /* sticky encode-side error (already logged) */
++} AC4EncodeContext;
++
++#endif /* AVCODEC_AC4ENC_H */
+diff --git a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
+index e76c3574d4..e89f493c29 100644
+--- a/libavcodec/allcodecs.c
++++ b/libavcodec/allcodecs.c
+@@ -432,6 +432,7 @@ extern const FFCodec ff_ac3_decoder;
+ extern const FFCodec ff_ac3_fixed_encoder;
+ extern const FFCodec ff_ac3_fixed_decoder;
+ extern const FFCodec ff_ac4_decoder;
++extern const FFCodec ff_ac4_encoder;
+ extern const FFCodec ff_acelp_kelvin_decoder;
+ extern const FFCodec ff_ahx_decoder;
+ extern const FFCodec ff_alac_encoder;
+-- 
+2.56.0
+
